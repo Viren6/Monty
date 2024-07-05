@@ -13,12 +13,12 @@ impl SearchHelpers {
 
         // scale CPUCT as visits increase
         let scale = params.cpuct_visits_scale() * 128.0;
-        cpuct *= (1.0 + ((parent.visits() as f32) / scale).ln_1p()).powf(0.95);
+        cpuct *= 1.0 + ((parent.visits() as f32) / scale).ln_1p();
 
         // scale CPUCT with variance of Q
         if parent.visits() > 1 {
             let frac = parent.var().sqrt() / params.cpuct_var_scale();
-            cpuct *= 1.0 + params.cpuct_var_weight() * (frac - 1.0);
+            cpuct *= (1.0 + params.cpuct_var_weight() * (frac - 1.0)).powf(1.05);
         }
 
         cpuct
