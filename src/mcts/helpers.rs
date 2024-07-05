@@ -18,7 +18,7 @@ impl SearchHelpers {
         // scale CPUCT with variance of Q
         if parent.visits() > 1 {
             let frac = parent.var().sqrt() / params.cpuct_var_scale();
-            cpuct *= (1.0 + params.cpuct_var_weight() * (frac - 1.0)).powf(0.95);
+            cpuct *= 1.0 + params.cpuct_var_weight() * (frac - 1.0);
         }
 
         cpuct
@@ -29,7 +29,7 @@ impl SearchHelpers {
     }
 
     pub fn get_fpu(parent: &Edge) -> f32 {
-        1.0 - parent.q()
+        (1.0 - parent.q()).powf(1.02)
     }
 
     pub fn get_action_value(action: &Edge, fpu: f32) -> f32 {
