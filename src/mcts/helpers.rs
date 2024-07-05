@@ -1,4 +1,6 @@
 use crate::{mcts::MctsParams, tree::Edge};
+extern crate fastapprox;
+use fastapprox::fast::{ln, exp};
 
 pub struct SearchHelpers;
 
@@ -13,7 +15,7 @@ impl SearchHelpers {
 
         // scale CPUCT as visits increase
         let scale = params.cpuct_visits_scale() * 128.0;
-        cpuct *= 1.0 + ((parent.visits() as f32 + scale) / scale).ln();
+        cpuct *= 1.0 + ln((parent.visits() as f32 + scale) / scale);
 
         // scale CPUCT with variance of Q
         if parent.visits() > 1 {
@@ -25,7 +27,7 @@ impl SearchHelpers {
     }
 
     pub fn get_explore_scaling(params: &MctsParams, parent: &Edge) -> f32 {
-        (params.expl_tau() * (parent.visits().max(1) as f32).ln()).exp()
+        exp(params.expl_tau() * ln(parent.visits().max(1) as f32))
     }
 
     pub fn get_fpu(parent: &Edge) -> f32 {
