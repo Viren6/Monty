@@ -29,7 +29,7 @@ impl SearchHelpers {
     }
 
     pub fn get_fpu(parent: &Edge) -> f32 {
-        (1.0 - parent.q()).powf(1.02)
+        (1.0 - parent.q()).powf(0.98)
     }
 
     pub fn get_action_value(action: &Edge, fpu: f32) -> f32 {
