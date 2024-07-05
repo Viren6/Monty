@@ -1,4 +1,5 @@
 use crate::{mcts::MctsParams, tree::Edge};
+use fastapprox::faster::{pow};
 
 pub struct SearchHelpers;
 
@@ -17,7 +18,7 @@ impl SearchHelpers {
 
         // scale CPUCT with variance of Q
         if parent.visits() > 1 {
-            let frac = parent.var().powf(0.52) / params.cpuct_var_scale();
+            let frac = pow(parent.var(), 0.48) / params.cpuct_var_scale();
             cpuct *= 1.0 + params.cpuct_var_weight() * (frac - 1.0);
         }
 

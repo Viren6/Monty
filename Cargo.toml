@@ -12,6 +12,7 @@ codegen-units = 1
 
 [dependencies]
 goober = { git = 'https://github.com/jw1912/goober.git' }
+fastapprox = "0.3.1"
 
 [features]
 nonet = []
