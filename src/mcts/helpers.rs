@@ -1,6 +1,6 @@
 use crate::{mcts::MctsParams, tree::Edge};
 extern crate fastapprox;
-use fastapprox::fast::{ln, exp};
+use fastapprox::faster::{ln, exp};
 
 pub struct SearchHelpers;
 
