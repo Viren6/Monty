@@ -1,5 +1,6 @@
 use crate::{mcts::MctsParams, tree::Edge};
 use std::hint::black_box;
+use fastapprox::faster::{pow};
 
 pub struct SearchHelpers;
 
@@ -21,7 +22,7 @@ impl SearchHelpers {
             let frac = parent.var().sqrt() / params.cpuct_var_scale();
             let multipler = 1.0 + params.cpuct_var_weight() * (frac - 1.0);
             cpuct *= multipler;
-            let _ = black_box(multipler.powf(0.95));
+            let _ = black_box(pow(multipler, 0.95));
         }
 
         cpuct
