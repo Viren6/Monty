@@ -18,8 +18,8 @@ impl SearchHelpers {
 
         // scale CPUCT with variance of Q
         if parent.visits() > 1 {
-            let frac = pow(parent.var(), 0.52) / params.cpuct_var_scale();
-            cpuct *= 1.0 + params.cpuct_var_weight() * (frac - 1.0);
+            let frac = parent.var().sqrt() / params.cpuct_var_scale();
+            cpuct *= pow(1.0 + params.cpuct_var_weight() * (frac - 1.0), 0.95);
         }
 
         cpuct
