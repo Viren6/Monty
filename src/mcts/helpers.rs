@@ -47,10 +47,14 @@ impl SearchHelpers {
     /// #### Note
     /// Must return a value in [0, 1].
     pub fn get_action_value(action: &Edge, fpu: f32) -> f32 {
-        if action.visits() == 0 {
+        let weight = action.visits();
+        if weight == 0 {
             fpu
         } else {
-            action.q()
+            let numerator = fpu  + action.q() * (weight as f32);
+            let denominator = (1 + weight) as f32;
+            let value = numerator / denominator;
+            value.clamp(0.0, 1.0)
         }
     }
 
