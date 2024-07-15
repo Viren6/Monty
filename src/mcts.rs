@@ -98,7 +98,7 @@ impl<'a> Searcher<'a> {
 
             nodes += 1;
 
-            if nodes % 512 == 0 {
+            if nodes % 512 == 0 { 
                 if self.abort.load(Ordering::Relaxed) {
                     break;
                 }
