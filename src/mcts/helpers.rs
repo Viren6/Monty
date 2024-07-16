@@ -24,7 +24,7 @@ impl SearchHelpers {
             cpuct *= 1.0 + params.cpuct_var_weight() * (frac - 1.0);
 
             let certainty = (0.5 - parent.q()) * (0.5 - parent.q());
-            cpuct *= 1.0 - certainty;
+            cpuct *= 1.0 - certainty * 3.0;
         }
 
         cpuct
