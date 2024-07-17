@@ -271,7 +271,11 @@ impl<'a> Searcher<'a> {
 
         self.tree.get_best_child_by_key(ptr, |action| {
             let q = SearchHelpers::get_action_value(action, fpu);
-            let u = expl * action.policy() / (1 + action.visits()) as f32;
+            let p = action.policy();
+            
+            let adj_p = p.sqrt() / 5.0;
+
+            let u = expl * adj_p / (1 + action.visits()) as f32;
 
             q + u
         })
