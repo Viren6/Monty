@@ -273,7 +273,7 @@ impl<'a> Searcher<'a> {
             let q = SearchHelpers::get_action_value(action, fpu);
             let p = action.policy();
             
-            let adj_p = p.sqrt() / 5.0;
+            let adj_p = p * (0.85 + (1.0 / (((p * 100.0) + 0.2)*((p * 100.0) + 0.2))));
 
             let u = expl * adj_p / (1 + action.visits()) as f32;
 
