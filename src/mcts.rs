@@ -254,6 +254,11 @@ impl<'a> Searcher<'a> {
         }
     }
 
+    fn calculate_gini_impurity(probabilities: &Vec<f32>) -> f32 {
+        let sum_of_squares: f32 = probabilities.iter().map(|&p| p * p).sum();
+        1.0 - sum_of_squares
+    }
+
     fn pick_action(&self, ptr: i32) -> usize {
         if !self.tree[ptr].has_children() {
             panic!("trying to pick from no children!");
@@ -269,9 +274,27 @@ impl<'a> Searcher<'a> {
 
         let expl = cpuct * expl_scale;
 
+        let parent_index = node.parent();
+        let gini = if parent_index != -1 {
+            let parent_node = &self.tree[parent_index];
+            let policies: Vec<f32> = parent_node.actions()
+                .iter()
+                .filter_map(|&action| {
+                    if action.ptr() != -1 {
+                        Some(action.policy())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            // Calculate Gini Impurity
+            Self::calculate_gini_impurity(&policies)
+        } else {
+            0.0
+        };
         self.tree.get_best_child_by_key(ptr, |action| {
             let q = SearchHelpers::get_action_value(action, fpu);
-            let u = expl * action.policy() / (1 + action.visits()) as f32;
+            let u = expl * action.policy() * (0.9 + gini / 5.0) / (1 + action.visits()) as f32;
 
             q + u
         })
