@@ -267,11 +267,12 @@ impl<'a> Searcher<'a> {
         let fpu = SearchHelpers::get_fpu(edge);
         let expl_scale = SearchHelpers::get_explore_scaling(&self.params, edge);
 
-        let expl = cpuct * expl_scale;
+        let gini_scale = 0.83 + node.gini_impurity().to_f32() / 5.0;
+        let expl = cpuct * expl_scale * gini_scale;
 
         self.tree.get_best_child_by_key(ptr, |action| {
             let q = SearchHelpers::get_action_value(action, fpu);
-            let u = expl * action.policy() * (0.83 + node.gini_impurity().to_f32() / 5.0) / (1 + action.visits()) as f32;
+            let u = expl * action.policy() / (1 + action.visits()) as f32;
 
             q + u
         })
