@@ -315,10 +315,10 @@ fn go(
 
     // 20ms move overhead
     if let Some(t) = opt_time.as_mut() {
-        *t = t.saturating_sub(20);
+        *t = t.saturating_sub(40);
     }
     if let Some(t) = max_time.as_mut() {
-        *t = t.saturating_sub(20);
+        *t = t.saturating_sub(40);
     }
 
     let abort = AtomicBool::new(false);
