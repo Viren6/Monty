@@ -24,7 +24,8 @@ impl ValueNetwork {
         let l3 = self.l2.forward_from_i16::<SCReLU>(&l2);
         let l4 = self.l3.forward::<SCReLU>(&l3);
         let l5 = self.l4.forward::<SCReLU>(&l4);
-        let out = self.l5.forward::<SCReLU>(&l5);
+        let l6 = self.l5.forward::<SCReLU>(&l5);
+        let out = self.l6.forward::<SCReLU>(&l6);
 
         (out.0[0] * SCALE as f32) as i32
     }
