@@ -20,7 +20,8 @@ impl ValueNetwork {
     pub fn eval(&self, board: &Board) -> i32 {
         let l2 = self.l1.forward(board);
         let l3 = self.l2.forward_from_i16::<SCReLU>(&l2);
-        let out = self.l3.forward::<SCReLU>(&l3);
+        let l4 = self.l3.forward::<SCReLU>(&l3);
+        let out = self.l4.forward::<SCReLU>(&l4);
 
         (out.0[0] * SCALE as f32) as i32
     }
