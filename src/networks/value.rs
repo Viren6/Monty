@@ -4,7 +4,7 @@ use super::{activation::SCReLU, layer::Layer, QA};
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals)]
-pub const ValueFileDefaultName: &str = "nn-f68015705a1e.network";
+pub const ValueFileDefaultName: &str = "nn-937a0f05c840.network";
 
 const SCALE: i32 = 400;
 
@@ -12,8 +12,8 @@ const SCALE: i32 = 400;
 pub struct ValueNetwork {
     l1: Layer<i16, { 768 * 4 }, 2048>,
     l2: Layer<f32, 2048, 16>,
-    l3: Layer<f32, 16, 64>,
-    l4: Layer<f32, 64, 1>,
+    l3: Layer<f32, 16, 32>,
+    l4: Layer<f32, 32, 1>,
 }
 
 impl ValueNetwork {
@@ -31,8 +31,8 @@ impl ValueNetwork {
 pub struct UnquantisedValueNetwork {
     l1: Layer<f32, { 768 * 4 }, 2048>,
     l2: Layer<f32, 2048, 16>,
-    l3: Layer<f32, 16, 64>,
-    l4: Layer<f32, 64, 1>,
+    l3: Layer<f32, 16, 32>,
+    l4: Layer<f32, 32, 1>,
 }
 
 impl UnquantisedValueNetwork {
