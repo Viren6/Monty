@@ -165,8 +165,8 @@ impl<'a> Searcher<'a> {
             return true;
         }
 
-        // Assume each iteration can take 8ms
-        if tm_nodes - *prev_iterations as usize > (*prev_time_remaining / 4) as usize {
+        // Assume each iteration can take 16ms
+        if tm_nodes - *prev_iterations as usize > (*prev_time_remaining / 16) as usize && tm_nodes >= *prev_iterations as usize + 2 {
             if let Some(time) = limits.max_time {
                 let time_elapsed = timer.elapsed().as_millis();
                 if time_elapsed >= time {
@@ -248,7 +248,7 @@ impl<'a> Searcher<'a> {
 
         // Initialize variables at the start of the search
         let mut prev_iterations = 0;
-        let mut prev_time_remaining = limits.max_time.unwrap_or_default() as u128; // Initialize with max_time or 0 if None
+        let mut prev_time_remaining = 0 as u128; // Initialize with max_time or 0 if None
 
         // attempt to reuse the current tree stored in memory
         let node = self.tree.root_node();
