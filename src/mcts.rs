@@ -248,7 +248,7 @@ impl<'a> Searcher<'a> {
 
         // Initialize variables at the start of the search
         let mut prev_iterations = 0;
-        let mut prev_time_remaining = limits.max_time.unwrap_or_default() as u128; // Initialize with max_time or 0 if None
+        let mut prev_time_remaining = 0 as u128; // Initialize with max_time or 0 if None
 
         // attempt to reuse the current tree stored in memory
         let node = self.tree.root_node();
