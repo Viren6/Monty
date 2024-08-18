@@ -166,7 +166,7 @@ impl<'a> Searcher<'a> {
         }
 
         // Check more often if time is getting low
-        if tm_nodes - *prev_iterations as usize > (*prev_time_remaining / 16) as usize && tm_nodes >= *prev_iterations as usize + 2 {
+        if tm_nodes - *prev_iterations as usize > (*prev_time_remaining / 32) as usize {
             if let Some(time) = limits.max_time {
                 let time_elapsed = timer.elapsed().as_millis();
                 if time_elapsed >= time {
