@@ -165,8 +165,8 @@ impl<'a> Searcher<'a> {
             return true;
         }
 
-        // Assume each iteration can take 8ms
-        if tm_nodes - *prev_iterations as usize > (*prev_time_remaining / 16) as usize {
+        // Check more often if time is getting low
+        if tm_nodes - *prev_iterations as usize > (*prev_time_remaining / 16) as usize && tm_nodes >= *prev_iterations as usize + 2 {
             if let Some(time) = limits.max_time {
                 let time_elapsed = timer.elapsed().as_millis();
                 if time_elapsed >= time {
