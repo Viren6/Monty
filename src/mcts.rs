@@ -11,7 +11,7 @@ use crate::{
 };
 
 use std::{
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, AtomicU64, Ordering},
     thread,
     time::Instant,
 };
@@ -29,7 +29,22 @@ pub struct SearchStats {
     pub total_nodes: AtomicUsize,
     pub total_iters: AtomicUsize,
     pub main_iters: AtomicUsize,
+    pub main_nodes: AtomicUsize,
     pub avg_depth: AtomicUsize,
+    pub total_policy_time: AtomicU64,
+    pub total_policy_cnt: AtomicU64,
+    pub max_policy_amt: AtomicU64,
+    pub total_feats_time: AtomicU64,
+    pub max_feats_time: AtomicU64,
+    pub total_policy_nn_time: AtomicU64,
+    pub max_policy_nn_time: AtomicU64,
+    pub total_value_time: AtomicU64,
+    pub total_value_cnt: AtomicU64,
+    pub max_value_amt: AtomicU64,
+    pub total_iter_amt: AtomicU64,
+    pub max_iter_amt: AtomicU64,
+    pub sp_iter_amt: AtomicU64,
+    pub max_this_depth: AtomicUsize,
 }
 
 pub struct Searcher<'a> {
@@ -69,6 +84,8 @@ impl<'a> Searcher<'a> {
         best_move: &mut Move,
         best_move_changes: &mut i32,
         previous_score: &mut f32,
+        prev_iterations: &mut i32,
+        prev_time_remaining: &mut u128,
         #[cfg(not(feature = "uci-minimal"))] uci_output: bool,
     ) {
         if self.playout_until_full_internal(search_stats, true, || {
@@ -79,6 +96,8 @@ impl<'a> Searcher<'a> {
                 best_move,
                 best_move_changes,
                 previous_score,
+                prev_iterations,
+                prev_time_remaining,
                 #[cfg(not(feature = "uci-minimal"))]
                 uci_output,
             )
@@ -104,24 +123,42 @@ impl<'a> Searcher<'a> {
             let mut pos = self.root_position.clone();
             let mut this_depth = 0;
 
+            let time = Instant::now();
             if let Some(u) = self.perform_one_iteration(
                 &mut pos,
                 self.tree.root_node(),
                 self.tree.root_stats(),
                 &mut this_depth,
+                search_stats,
             ) {
                 self.tree.root_stats().update(u);
             } else {
                 return false;
             }
 
+            let elapsed = time.elapsed().as_micros();
             search_stats.total_iters.fetch_add(1, Ordering::Relaxed);
             search_stats
                 .total_nodes
                 .fetch_add(this_depth, Ordering::Relaxed);
             if main_thread {
                 search_stats.main_iters.fetch_add(1, Ordering::Relaxed);
+                search_stats
+                    .main_nodes
+                    .fetch_add(this_depth, Ordering::Relaxed);
             }
+            search_stats
+                .max_this_depth
+                .fetch_max(this_depth, Ordering::Relaxed);
+            search_stats
+                .total_iter_amt
+                .fetch_add(elapsed as u64, Ordering::Relaxed);
+            search_stats
+                .max_iter_amt
+                .fetch_max(elapsed as u64, Ordering::Relaxed);
+            search_stats
+                .sp_iter_amt
+                .fetch_add((elapsed > 1000) as u64, Ordering::Relaxed);
 
             // proven checkmate
             if self.tree[self.tree.root_node()].is_terminal() {
@@ -148,21 +185,37 @@ impl<'a> Searcher<'a> {
         best_move: &mut Move,
         best_move_changes: &mut i32,
         previous_score: &mut f32,
+        prev_iterations: &mut i32,
+        prev_time_remaining: &mut u128,
         #[cfg(not(feature = "uci-minimal"))] uci_output: bool,
     ) -> bool {
         let iters = search_stats.main_iters.load(Ordering::Relaxed);
+        let tm_nodes = search_stats.main_nodes.load(Ordering::Relaxed);
 
         if search_stats.total_iters.load(Ordering::Relaxed) >= limits.max_nodes {
             return true;
         }
 
-        if iters % 128 == 0 {
+        // Assume each iteration can take 8ms
+        if tm_nodes - *prev_iterations as usize > (*prev_time_remaining / 4) as usize {
+            // output the search stats: total_iter_amt, max_iter_amt, sp_iter_amt
+            if (search_stats.total_iters.load(Ordering::Relaxed) % 32) == 0 {
+                self.dbg_stats(search_stats);
+            }
             if let Some(time) = limits.max_time {
-                if timer.elapsed().as_millis() >= time {
+                let time_elapsed = timer.elapsed().as_millis();
+                if time_elapsed >= time {
+                    println!("STOPPING");
+                    self.dbg_stats(search_stats);
                     return true;
+                } else {
+                    *prev_time_remaining = time - time_elapsed;
+                    *prev_iterations = tm_nodes as i32;
                 }
             }
+        }
 
+        if iters % 128 == 0 {
             let new_best_move = self.get_best_move();
             if new_best_move != *best_move {
                 *best_move = new_best_move;
@@ -221,6 +274,39 @@ impl<'a> Searcher<'a> {
         false
     }
 
+    fn dbg_stats(&self, search_stats: &SearchStats) {
+        println!(
+            "iters: {}, Total iter time: {} Max iter time: {}, iter amt > threshold: {}, max depth: {}",
+            search_stats.total_iters.load(Ordering::Relaxed),
+            search_stats.total_iter_amt.load(Ordering::Relaxed),
+            search_stats.max_iter_amt.load(Ordering::Relaxed),
+            search_stats.sp_iter_amt.load(Ordering::Relaxed),
+            search_stats.max_this_depth.load(Ordering::Relaxed)
+        );
+        println!(
+            "Total policy time: {} Total count: {} Max time: {}",
+            search_stats.total_policy_time.load(Ordering::Relaxed),
+            search_stats.total_policy_cnt.load(Ordering::Relaxed),
+            search_stats.max_policy_amt.load(Ordering::Relaxed),
+        );
+        println!(
+            "Total value time: {} Total count: {} Max time: {}",
+            search_stats.total_value_time.load(Ordering::Relaxed),
+            search_stats.total_value_cnt.load(Ordering::Relaxed),
+            search_stats.max_value_amt.load(Ordering::Relaxed),
+        );
+        println!(
+            "Total feats time: {} Max feats time: {}",
+            search_stats.total_feats_time.load(Ordering::Relaxed),
+            search_stats.max_feats_time.load(Ordering::Relaxed),
+        );
+        println!(
+            "Total policy nn time: {} Max policy nn time: {}",
+            search_stats.total_policy_nn_time.load(Ordering::Relaxed),
+            search_stats.max_policy_nn_time.load(Ordering::Relaxed),
+        );
+    }
+
     pub fn search(
         &self,
         threads: usize,
@@ -230,6 +316,10 @@ impl<'a> Searcher<'a> {
     ) -> (Move, f32) {
         let timer = Instant::now();
 
+        // Initialize variables at the start of the search
+        let mut prev_iterations = 0;
+        let mut prev_time_remaining = limits.max_time.unwrap_or_default() as u128; // Initialize with max_time or 0 if None
+
         // attempt to reuse the current tree stored in memory
         let node = self.tree.root_node();
 
@@ -237,7 +327,7 @@ impl<'a> Searcher<'a> {
         if self.tree[node].has_children() {
             self.tree[node].relabel_policy(&self.root_position, self.params, self.policy);
         } else {
-            self.tree[node].expand::<true>(&self.root_position, self.params, self.policy);
+            self.tree[node].expand::<true>(&self.root_position, self.params, self.policy, None);
         }
 
         let search_stats = SearchStats::default();
@@ -257,6 +347,8 @@ impl<'a> Searcher<'a> {
                         &mut best_move,
                         &mut best_move_changes,
                         &mut previous_score,
+                        &mut prev_iterations,
+                        &mut prev_time_remaining,
                         #[cfg(not(feature = "uci-minimal"))]
                         uci_output,
                     );
@@ -292,6 +384,7 @@ impl<'a> Searcher<'a> {
         ptr: NodePtr,
         node_stats: &ActionStats,
         depth: &mut usize,
+        search_stats: &SearchStats,
     ) -> Option<f32> {
         *depth += 1;
 
@@ -305,15 +398,27 @@ impl<'a> Searcher<'a> {
                 if let Some(entry) = self.tree.probe_hash(hash) {
                     entry.q()
                 } else {
-                    self.get_utility(ptr, pos)
+                    self.get_utility(ptr, pos, search_stats)
                 }
             } else {
-                self.get_utility(ptr, pos)
+                self.get_utility(ptr, pos, search_stats)
             }
         } else {
             // expand node on the second visit
             if self.tree[ptr].is_not_expanded() {
-                self.tree[ptr].expand::<false>(pos, self.params, self.policy);
+                // time the amount of time spent expanding
+                let start = Instant::now();
+                self.tree[ptr].expand::<false>(pos, self.params, self.policy, Some(search_stats));
+                let elapsed = start.elapsed().as_micros();
+                search_stats
+                    .total_policy_time
+                    .fetch_add(elapsed as u64, Ordering::Relaxed);
+                search_stats
+                    .total_policy_cnt
+                    .fetch_add(1, Ordering::Relaxed);
+                search_stats
+                    .max_policy_amt
+                    .fetch_max(elapsed as u64, Ordering::Relaxed);
             }
 
             // select action to take via PUCT
@@ -327,7 +432,8 @@ impl<'a> Searcher<'a> {
 
             self.tree[child_ptr].inc_threads();
 
-            let maybe_u = self.perform_one_iteration(pos, child_ptr, &edge.stats(), depth);
+            let maybe_u =
+                self.perform_one_iteration(pos, child_ptr, &edge.stats(), depth, search_stats);
 
             self.tree[child_ptr].dec_threads();
 
@@ -346,9 +452,21 @@ impl<'a> Searcher<'a> {
         Some(1.0 - u)
     }
 
-    fn get_utility(&self, ptr: NodePtr, pos: &ChessState) -> f32 {
+    fn get_utility(&self, ptr: NodePtr, pos: &ChessState, search_stats: &SearchStats) -> f32 {
         match self.tree[ptr].state() {
-            GameState::Ongoing => pos.get_value_wdl(self.value, self.params),
+            GameState::Ongoing => {
+                let time = Instant::now();
+                let x = pos.get_value_wdl(self.value, self.params);
+                let elapsed = time.elapsed().as_micros();
+                search_stats
+                    .total_value_time
+                    .fetch_add(elapsed as u64, Ordering::Relaxed);
+                search_stats.total_value_cnt.fetch_add(1, Ordering::Relaxed);
+                search_stats
+                    .max_value_amt
+                    .fetch_max(elapsed as u64, Ordering::Relaxed);
+                x
+            }
             GameState::Draw => 0.5,
             GameState::Lost(_) => 0.0,
             GameState::Won(_) => 1.0,
