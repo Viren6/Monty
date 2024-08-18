@@ -114,6 +114,7 @@ impl<'a> Searcher<'a> {
                 self.tree.root_node(),
                 self.tree.root_stats(),
                 &mut this_depth,
+                &search_stats,
             ) {
                 self.tree.root_stats().update(u);
             } else {
@@ -126,7 +127,6 @@ impl<'a> Searcher<'a> {
                 .fetch_add(this_depth, Ordering::Relaxed);
             if main_thread {
                 search_stats.main_iters.fetch_add(1, Ordering::Relaxed);
-                search_stats.main_nodes.fetch_add(this_depth, Ordering::Relaxed);
             }
 
             // proven checkmate
@@ -253,14 +253,15 @@ impl<'a> Searcher<'a> {
         // attempt to reuse the current tree stored in memory
         let node = self.tree.root_node();
 
+        let search_stats = SearchStats::default();
+
         // relabel root policies with root PST value
         if self.tree[node].has_children() {
             self.tree[node].relabel_policy(&self.root_position, self.params, self.policy);
         } else {
+            search_stats.main_nodes.fetch_add(1, Ordering::Relaxed);
             self.tree[node].expand::<true>(&self.root_position, self.params, self.policy);
         }
-
-        let search_stats = SearchStats::default();
 
         let mut best_move = Move::NULL;
         let mut best_move_changes = 0;
@@ -314,6 +315,7 @@ impl<'a> Searcher<'a> {
         ptr: NodePtr,
         node_stats: &ActionStats,
         depth: &mut usize,
+        search_stats: &SearchStats,
     ) -> Option<f32> {
         *depth += 1;
 
@@ -335,6 +337,7 @@ impl<'a> Searcher<'a> {
         } else {
             // expand node on the second visit
             if self.tree[ptr].is_not_expanded() {
+                search_stats.main_nodes.fetch_add(1, Ordering::Relaxed);
                 self.tree[ptr].expand::<false>(pos, self.params, self.policy);
             }
 
@@ -349,7 +352,7 @@ impl<'a> Searcher<'a> {
 
             self.tree[child_ptr].inc_threads();
 
-            let maybe_u = self.perform_one_iteration(pos, child_ptr, &edge.stats(), depth);
+            let maybe_u = self.perform_one_iteration(pos, child_ptr, &edge.stats(), depth, &search_stats);
 
             self.tree[child_ptr].dec_threads();
 
