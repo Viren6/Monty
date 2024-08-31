@@ -46,7 +46,7 @@ impl SearchHelpers {
             let mut scale = Self::base_explore_scaling(params, node_stats);
 
             let gini = node.gini_impurity();
-            scale *= (0.679 - 1.634 * (gini + 0.001).ln()).min(2.1);
+            scale *= f32::exp(-gini);
             scale
         }
 
