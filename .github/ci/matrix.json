@@ -39,117 +39,34 @@
     }
   ],
   "binaries": [
-    "x86-64",
-    "x86-64-sse41-popcnt",
-    "x86-64-avx2",
-    "x86-64-bmi2",
-    "x86-64-avxvnni",
-    "x86-64-avx512",
-    "x86-64-vnni256",
-    "x86-64-vnni512",
-    "apple-silicon"
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc"
   ],
   "exclude": [
     {
-      "binaries": "x86-64",
+      "binaries": "x86_64-apple-darwin",
       "config": {
         "os": "macos-14"
       }
     },
     {
-      "binaries": "x86-64-sse41-popcnt",
-      "config": {
-        "os": "macos-14"
-      }
-    },
-    {
-      "binaries": "x86-64-avx2",
-      "config": {
-        "os": "macos-14"
-      }
-    },
-    {
-      "binaries": "x86-64-bmi2",
-      "config": {
-        "os": "macos-14"
-      }
-    },
-    {
-      "binaries": "x86-64-avxvnni",
-      "config": {
-        "os": "macos-14"
-      }
-    },
-    {
-      "binaries": "x86-64-avxvnni",
-      "config": {
-        "os": "macos-14"
-      }
-    },
-    {
-      "binaries": "x86-64-avx512",
-      "config": {
-        "os": "macos-14"
-      }
-    },
-    {
-      "binaries": "x86-64-vnni256",
-      "config": {
-        "os": "macos-14"
-      }
-    },
-    {
-      "binaries": "x86-64-vnni512",
-      "config": {
-        "os": "macos-14"
-      }
-    },
-    {
-      "binaries": "x86-64-avxvnni",
-      "config": {
-        "ubuntu-20.04": null
-      }
-    },
-    {
-      "binaries": "x86-64-avxvnni",
+      "binaries": "aarch64-apple-darwin",
       "config": {
         "os": "macos-13"
       }
     },
     {
-      "binaries": "x86-64-avx512",
-      "config": {
-        "os": "macos-13"
-      }
-    },
-    {
-      "binaries": "x86-64-vnni256",
-      "config": {
-        "os": "macos-13"
-      }
-    },
-    {
-      "binaries": "x86-64-vnni512",
-      "config": {
-        "os": "macos-13"
-      }
-    },
-    {
-      "binaries": "apple-silicon",
+      "binaries": "aarch64-apple-darwin",
       "config": {
         "os": "windows-2022"
       }
     },
     {
-      "binaries": "apple-silicon",
+      "binaries": "x86_64-unknown-linux-gnu",
       "config": {
-        "os": "macos-13"
-      }
-    },
-    {
-      "binaries": "apple-silicon",
-      "config": {
-        "os": "ubuntu-20.04"
+        "os": "macos-14"
       }
     }
   ]
