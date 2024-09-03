@@ -86,8 +86,8 @@ jobs:
     with:
       matrix: ${{ needs.Matrix.outputs.arm_matrix }}
 
-  IWYU:
-    uses: ./.github/workflows/analysis.yml
+  Checks:
+    uses: ./.github/workflows/checks.yml
 
   Sanitizers:
     uses: ./.github/workflows/sanitizers.yml
