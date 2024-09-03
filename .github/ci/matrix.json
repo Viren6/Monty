@@ -48,25 +48,36 @@
     {
       "binaries": "x86_64-apple-darwin",
       "config": {
-        "os": "macos-14"
+        "os": "macos-14",
+        "simple_name": "macos-m1"
       }
     },
     {
       "binaries": "aarch64-apple-darwin",
       "config": {
-        "os": "macos-13"
+        "os": "macos-13",
+        "simple_name": "macos"
       }
     },
     {
       "binaries": "aarch64-apple-darwin",
       "config": {
-        "os": "windows-2022"
+        "os": "windows-2022",
+        "simple_name": "windows"
       }
     },
     {
       "binaries": "x86_64-unknown-linux-gnu",
       "config": {
-        "os": "macos-14"
+        "os": "macos-13",
+        "simple_name": "macos"
+      }
+    },
+    {
+      "binaries": "x86_64-unknown-linux-gnu",
+      "config": {
+        "os": "macos-14",
+        "simple_name": "macos-m1"
       }
     }
   ]
