@@ -34,6 +34,10 @@ jobs:
           toolchain: stable
           override: true
 
+      - name: Install required Rust targets
+        run: |
+          rustup target add $BINARY
+
       - name: Setup msys and install required packages
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
