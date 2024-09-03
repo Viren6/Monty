@@ -1,0 +1,77 @@
+name: Compilation
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        type: string
+        required: true
+jobs:
+  Compilation:
+    name: ${{ matrix.config.name }} ${{ matrix.binaries }}
+    runs-on: ${{ matrix.config.os }}
+    env:
+      CARGO_TARGET: ${{ matrix.config.target }}
+      RUSTUP_TOOLCHAIN: ${{ matrix.config.toolchain }}
+      BINARY: ${{ matrix.binaries }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(inputs.matrix) }}
+    defaults:
+      run:
+        working-directory: src
+        shell: ${{ matrix.config.shell }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.config.toolchain }}
+          override: true
+
+      - name: Install additional Rust components
+        run: |
+          rustup component add rustfmt clippy
+
+      - name: Extract the bench number from the commit history
+        run: |
+          for hash in $(git rev-list -100 HEAD); do
+            benchref=$(git show -s $hash | tac | grep -m 1 -o -x '[[:space:]]*\b[Bb]ench[ :]\+[1-9][0-9]\{5,7\}\b[[:space:]]*' | sed 's/[^0-9]//g') && break || true
+          done
+          [[ -n "$benchref" ]] && echo "benchref=$benchref" >> $GITHUB_ENV && echo "From commit: $hash" && echo "Reference bench: $benchref" || echo "No bench found"
+
+      - name: Download the used network from the montytest framework
+        run: make embed
+
+      - name: Check Rust toolchain
+        run: rustc --version
+
+      - name: Test cargo help
+        run: cargo help
+
+      - name: Check git
+        run: git --version
+
+      - name: Compile ${{ matrix.binaries }} build
+        run: |
+          cargo clean
+          cargo build --release --target $CARGO_TARGET
+          cargo test --release --target $CARGO_TARGET
+          cargo strip --target $CARGO_TARGET
+          WINE_PATH=$EMU ../tests/signature.sh $benchref
+          mv ./target/$CARGO_TARGET/release/${{ matrix.config.binary_name }} ../${{ matrix.config.simple_name }}-$BINARY
+
+      - name: Remove non src files
+        run: git clean -fx
+
+      - name: Upload artifact for (pre)-release
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.config.simple_name }} ${{ matrix.binaries }}
+          path: |
+            .
+            !.git
+            !.output

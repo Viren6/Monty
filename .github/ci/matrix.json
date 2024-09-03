@@ -1,0 +1,156 @@
+{
+  "config": [
+    {
+      "name": "Ubuntu 20.04 Rust",
+      "os": "ubuntu-20.04",
+      "simple_name": "ubuntu",
+      "compiler": "rustc",
+      "comp": "rust",
+      "shell": "bash",
+      "archive_ext": "tar"
+    },
+    {
+      "name": "MacOS 13 Rust",
+      "os": "macos-13",
+      "simple_name": "macos",
+      "compiler": "rustc",
+      "comp": "rust",
+      "shell": "bash",
+      "archive_ext": "tar"
+    },
+    {
+      "name": "MacOS 14 Rust M1",
+      "os": "macos-14",
+      "simple_name": "macos-m1",
+      "compiler": "rustc",
+      "comp": "rust",
+      "shell": "bash",
+      "archive_ext": "tar"
+    },
+    {
+      "name": "Windows 2022 Rust x86_64",
+      "os": "windows-2022",
+      "simple_name": "windows",
+      "compiler": "rustc",
+      "comp": "rust",
+      "shell": "cmd {0}",
+      "ext": ".exe",
+      "archive_ext": "zip"
+    }
+  ],
+  "binaries": [
+    "x86-64",
+    "x86-64-sse41-popcnt",
+    "x86-64-avx2",
+    "x86-64-bmi2",
+    "x86-64-avxvnni",
+    "x86-64-avx512",
+    "x86-64-vnni256",
+    "x86-64-vnni512",
+    "apple-silicon"
+  ],
+  "exclude": [
+    {
+      "binaries": "x86-64",
+      "config": {
+        "os": "macos-14"
+      }
+    },
+    {
+      "binaries": "x86-64-sse41-popcnt",
+      "config": {
+        "os": "macos-14"
+      }
+    },
+    {
+      "binaries": "x86-64-avx2",
+      "config": {
+        "os": "macos-14"
+      }
+    },
+    {
+      "binaries": "x86-64-bmi2",
+      "config": {
+        "os": "macos-14"
+      }
+    },
+    {
+      "binaries": "x86-64-avxvnni",
+      "config": {
+        "os": "macos-14"
+      }
+    },
+    {
+      "binaries": "x86-64-avxvnni",
+      "config": {
+        "os": "macos-14"
+      }
+    },
+    {
+      "binaries": "x86-64-avx512",
+      "config": {
+        "os": "macos-14"
+      }
+    },
+    {
+      "binaries": "x86-64-vnni256",
+      "config": {
+        "os": "macos-14"
+      }
+    },
+    {
+      "binaries": "x86-64-vnni512",
+      "config": {
+        "os": "macos-14"
+      }
+    },
+    {
+      "binaries": "x86-64-avxvnni",
+      "config": {
+        "ubuntu-20.04": null
+      }
+    },
+    {
+      "binaries": "x86-64-avxvnni",
+      "config": {
+        "os": "macos-13"
+      }
+    },
+    {
+      "binaries": "x86-64-avx512",
+      "config": {
+        "os": "macos-13"
+      }
+    },
+    {
+      "binaries": "x86-64-vnni256",
+      "config": {
+        "os": "macos-13"
+      }
+    },
+    {
+      "binaries": "x86-64-vnni512",
+      "config": {
+        "os": "macos-13"
+      }
+    },
+    {
+      "binaries": "apple-silicon",
+      "config": {
+        "os": "windows-2022"
+      }
+    },
+    {
+      "binaries": "apple-silicon",
+      "config": {
+        "os": "macos-13"
+      }
+    },
+    {
+      "binaries": "apple-silicon",
+      "config": {
+        "os": "ubuntu-20.04"
+      }
+    }
+  ]
+}

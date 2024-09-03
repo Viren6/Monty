@@ -1,0 +1,201 @@
+name: Tests
+on:
+  workflow_call:
+jobs:
+  Test-Targets:
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
+    env:
+      RUSTFLAGS: "-D warnings"
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - name: Ubuntu 20.04
+            os: ubuntu-20.04
+            run_32bit_tests: true
+            run_64bit_tests: true
+            shell: bash
+          - name: Ubuntu 22.04
+            os: ubuntu-22.04
+            run_32bit_tests: true
+            run_64bit_tests: true
+            shell: bash
+          - name: Android NDK aarch64
+            os: ubuntu-22.04
+            run_armv8_tests: true
+            shell: bash
+          - name: Android NDK arm
+            os: ubuntu-22.04
+            run_armv7_tests: true
+            shell: bash
+          - name: Linux GCC riscv64
+            os: ubuntu-22.04
+            run_riscv64_tests: true
+            base_image: "riscv64/alpine:edge"
+            platform: linux/riscv64
+            shell: bash
+          - name: Linux GCC ppc64
+            os: ubuntu-22.04
+            run_ppc64_tests: true
+            base_image: "ppc64le/alpine:latest"
+            platform: linux/ppc64le
+            shell: bash
+          - name: MacOS 13 Apple Clang
+            os: macos-13
+            run_64bit_tests: true
+            shell: bash
+          - name: MacOS 14 Apple Clang M1
+            os: macos-14
+            run_64bit_tests: false
+            run_m1_tests: true
+            shell: bash
+          - name: Windows 2022 Mingw-w64 GCC x86_64
+            os: windows-2022
+            run_64bit_tests: true
+            msys_sys: mingw64
+            shell: msys2 {0}
+          - name: Windows 2022 Mingw-w64 GCC i686
+            os: windows-2022
+            run_32bit_tests: true
+            msys_sys: mingw32
+            shell: msys2 {0}
+    defaults:
+      run:
+        working-directory: src
+        shell: ${{ matrix.config.shell }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download required Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt update
+          sudo apt install expect valgrind qemu-user-static
+
+      - name: Install NDK
+        if: runner.os == 'Linux'
+        run: |
+          if [ "${{ matrix.config.os }}" == "Android NDK aarch64" ] || [ "${{ matrix.config.os }}" == "Android NDK arm" ]; then
+            NDKV="21.4.7075529"
+            ANDROID_ROOT=/usr/local/lib/android
+            ANDROID_SDK_ROOT=$ANDROID_ROOT/sdk
+            SDKMANAGER=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager
+            echo "y" | $SDKMANAGER "ndk;$NDKV"
+            ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$NDKV
+            ANDROID_NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
+            echo "ANDROID_NDK_BIN=$ANDROID_NDK_BIN" >> $GITHUB_ENV
+          fi
+
+      - name: Set up QEMU
+        if: matrix.config.base_image
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: matrix.config.base_image
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker container
+        if: matrix.config.base_image
+        run: |
+          docker buildx build --load -t monty_builder - << EOF
+          FROM ${{ matrix.config.base_image }}
+          WORKDIR /app
+          RUN apk update && apk add make g++ cargo
+          CMD ["sh", "script.sh"]
+          EOF
+
+      - name: Download required macOS packages
+        if: runner.os == 'macOS'
+        run: brew install coreutils gcc@11
+
+      - name: Setup msys and install required packages
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.config.msys_sys }}
+          install: mingw-w64-${{ matrix.config.msys_sys }} make git expect
+
+      - name: Test help target
+        run: make help
+
+      - name: Check git
+        run: git --version
+
+      # x86-32 tests
+
+      - name: Test debug x86-32 build
+        if: matrix.config.run_32bit_tests
+        run: |
+          export RUSTFLAGS="-D warnings"
+          make clean
+          make embed ARCH=x86-32
+          cargo test --target i686-unknown-linux-gnu
+
+      # x86-64 tests
+
+      - name: Test debug x86-64-avx2 build
+        if: matrix.config.run_64bit_tests
+        run: |
+          export RUSTFLAGS="-D warnings"
+          make clean
+          make embed ARCH=x86-64
+          cargo test --target x86_64-unknown-linux-gnu
+
+      # ARM tests
+
+      - name: Test armv8 build
+        if: matrix.config.run_armv8_tests
+        run: |
+          export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
+          export RUSTFLAGS="-D warnings"
+          make clean
+          make embed ARCH=armv8
+          cargo test --target aarch64-linux-android
+
+      - name: Test armv7 build
+        if: matrix.config.run_armv7_tests
+        run: |
+          export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
+          export RUSTFLAGS="-D warnings"
+          make clean
+          make embed ARCH=armv7
+          cargo test --target armv7-linux-androideabi
+
+      # riscv64 tests
+
+      - name: Test riscv64 build
+        if: matrix.config.run_riscv64_tests
+        run: |
+          echo "export RUSTFLAGS='-D warnings' && make clean && make embed ARCH=riscv64 && cargo test --target riscv64gc-unknown-linux-gnu" > script.sh
+          docker run --rm --platform ${{ matrix.config.platform }} -v ${{ github.workspace }}/src:/app monty_builder
+          
+      # ppc64 tests
+
+      - name: Test ppc64 build
+        if: matrix.config.run_ppc64_tests
+        run: |
+          echo "export RUSTFLAGS='-D warnings' && make clean && make embed ARCH=ppc64 && cargo test --target powerpc64-unknown-linux-gnu" > script.sh
+          docker run --rm --platform ${{ matrix.config.platform }} -v ${{ github.workspace }}/src:/app monty_builder
+
+      # MacOS tests
+
+      - name: Test apple-silicon build
+        if: matrix.config.run_m1_tests
+        run: |
+          make clean
+          make embed ARCH=apple-silicon
+          cargo test --target aarch64-apple-darwin
+
+      # Other tests
+
+      - name: Check perft and search reproducibility
+        if: matrix.config.run_64bit_tests
+        run: |
+          make clean
+          make embed ARCH=x86-64
+          cargo test --test perft
+          cargo test --test reprosearch
