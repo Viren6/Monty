@@ -1,0 +1,41 @@
+name: Games
+on:
+  workflow_call:
+jobs:
+  Matetrack:
+    name: Games
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Monty repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: Monty
+          persist-credentials: false
+
+      - name: Build Monty with embed option
+        working-directory: Monty
+        run: make embed
+
+      - name: Checkout fast-chess repo
+        uses: actions/checkout@v4
+        with:
+          repository: Disservin/fast-chess
+          path: fast-chess
+          ref: d54af1910d5479c669dc731f1f54f9108a251951
+          persist-credentials: false
+
+      - name: Build fast-chess
+        working-directory: fast-chess
+        run: make -j
+
+      - name: Run games
+        working-directory: fast-chess
+        run: |
+          ./fast-chess  -rounds 4 -games 2 -repeat -concurrency 4 -openings file=app/tests/data/openings.epd format=epd order=random -srand $RANDOM\
+               -engine name=monty1 cmd=/home/runner/work/Monty/Monty/monty\
+               -engine name=monty2 cmd=/home/runner/work/Monty/Monty/monty\
+               -ratinginterval 1 -report penta=true -each proto=uci tc=4+0.04 -log file=fast.log | tee fast.out
+          cat fast.log
+          ! grep "Assertion" fast.log > /dev/null
+          ! grep "disconnect" fast.out > /dev/null

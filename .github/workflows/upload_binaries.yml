@@ -1,0 +1,110 @@
+name: Upload Binaries
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        type: string
+        required: true
+    secrets:
+      token:
+        required: true
+
+jobs:
+  Artifacts:
+    name: ${{ matrix.config.name }} ${{ matrix.binaries }}
+    runs-on: ${{ matrix.config.os }}
+    env:
+      COMPILER: ${{ matrix.config.compiler }}
+      EXT: ${{ matrix.config.ext }}
+      NAME: ${{ matrix.config.simple_name }}
+      BINARY: ${{ matrix.binaries }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(inputs.matrix) }}
+    defaults:
+      run:
+        shell: ${{ matrix.config.shell }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download artifact from compilation
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.config.simple_name }} ${{ matrix.binaries }}
+          path: ${{ matrix.config.simple_name }} ${{ matrix.binaries }}
+
+      - name: Setup msys and install required packages
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.config.msys_sys }}
+          install: mingw-w64-${{ matrix.config.msys_env }} make git zip
+
+      - name: Create Package Directory
+        run: |
+          mkdir monty
+
+      - name: Download Documentation
+        run: |
+          git clone https://github.com/official-monty/Monty.wiki.git wiki
+          rm -rf wiki/.git
+          mv wiki monty/
+
+      - name: Copy Files
+        run: |
+          mv "${{ matrix.config.simple_name }} ${{ matrix.binaries }}" monty-workflow
+          cd monty-workflow
+          cp -r src ../monty/
+          cp monty-$NAME-$BINARY$EXT ../monty/
+          cp LICENSE.txt ../monty/
+          cp AUTHORS ../monty/
+          cp CONTRIBUTING.txt ../monty/
+          cp README.md ../monty/
+          cp Cargo.toml ../monty/
+          cp Cargo.lock ../monty/
+
+      - name: Create Tarball
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x ./monty/monty-$NAME-$BINARY$EXT
+          tar -cvf monty-$NAME-$BINARY.tar monty
+
+      - name: Create Zip Archive
+        if: runner.os == 'Windows'
+        run: |
+          zip -r monty-$NAME-$BINARY.zip monty
+
+      - name: Release
+        if: startsWith(github.ref_name, 'monty_') && github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: monty-${{ matrix.config.simple_name }}-${{ matrix.binaries }}.${{ matrix.config.archive_ext }}
+          token: ${{ secrets.token }}
+
+      - name: Get Last Commit SHA
+        id: last_commit
+        run: echo "COMMIT_SHA=$(git rev-parse HEAD | cut -c 1-8)" >> $GITHUB_ENV
+
+      - name: Get Commit Date
+        id: commit_date
+        run: echo "COMMIT_DATE=$(git show -s --date=format:'%Y%m%d' --format=%cd HEAD)" >> $GITHUB_ENV
+
+      - name: Check Pullable Commits
+        id: check_commits
+        run: |
+          git fetch
+          CHANGES=$(git rev-list HEAD..origin/master --count)
+          echo "CHANGES=$CHANGES" >> $GITHUB_ENV
+
+      - name: Prerelease
+        if: github.ref_name == 'master' && env.CHANGES == '0'
+        continue-on-error: true
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Monty dev-${{ env.COMMIT_DATE }}-${{ env.COMMIT_SHA }}
+          tag_name: monty-dev-${{ env.COMMIT_DATE }}-${{ env.COMMIT_SHA }}
+          prerelease: true
+          files: monty-${{ matrix.config.simple_name }}-${{ matrix.binaries }}.${{ matrix.config.archive_ext }}
+          token: ${{ secrets.token }}

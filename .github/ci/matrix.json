@@ -1,0 +1,85 @@
+{
+  "config": [
+    {
+      "name": "Ubuntu 20.04 Rust",
+      "os": "ubuntu-20.04",
+      "simple_name": "ubuntu",
+      "compiler": "rustc",
+      "comp": "rust",
+      "shell": "bash",
+      "archive_ext": "tar"
+    },
+    {
+      "name": "MacOS 13 Rust",
+      "os": "macos-13",
+      "simple_name": "macos",
+      "compiler": "rustc",
+      "comp": "rust",
+      "shell": "bash",
+      "archive_ext": "tar"
+    },
+    {
+      "name": "MacOS 14 Rust M1",
+      "os": "macos-14",
+      "simple_name": "macos-m1",
+      "compiler": "rustc",
+      "comp": "rust",
+      "shell": "bash",
+      "archive_ext": "tar"
+    },
+    {
+      "name": "Windows 2022 Rust x86_64",
+      "os": "windows-2022",
+      "simple_name": "windows",
+      "compiler": "rustc",
+      "comp": "rust",
+      "shell": "cmd {0}",
+      "ext": ".exe",
+      "archive_ext": "zip"
+    }
+  ],
+  "binaries": [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc"
+  ],
+  "exclude": [
+    {
+      "binaries": "x86_64-apple-darwin",
+      "config": {
+        "os": "macos-14"
+      }
+    },
+    {
+      "binaries": "aarch64-apple-darwin",
+      "config": {
+        "os": "macos-13"
+      }
+    },
+    {
+      "binaries": "aarch64-apple-darwin",
+      "config": {
+        "os": "windows-2022"
+      }
+    },
+    {
+      "binaries": "x86_64-unknown-linux-gnu",
+      "config": {
+        "os": "macos-13"
+      }
+    },
+    {
+      "binaries": "x86_64-unknown-linux-gnu",
+      "config": {
+        "os": "macos-14"
+      }
+    },
+    {
+      "binaries": "x86_64-pc-windows-msvc",
+      "config": {
+        "os": "ubuntu-20.04"
+      }
+    }
+  ]
+}
