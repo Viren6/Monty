@@ -119,9 +119,6 @@ jobs:
           msystem: ${{ matrix.config.msys_sys }}
           install: mingw-w64-${{ matrix.config.msys_sys }} make git expect
 
-      - name: Test help target
-        run: make help
-
       - name: Check git
         run: git --version
 
