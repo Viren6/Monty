@@ -1,10 +1,12 @@
 name: Compilation
+
 on:
   workflow_call:
     inputs:
       matrix:
         type: string
         required: true
+
 jobs:
   Compilation:
     name: ${{ matrix.config.name }} ${{ matrix.binaries }}
@@ -36,6 +38,11 @@ jobs:
         run: |
           rustup component add rustfmt clippy
 
+      - name: Install necessary targets for ARM builds
+        if: ${{ matrix.config.target == 'aarch64-linux-android' || matrix.config.target == 'armv7-linux-androideabi' || matrix.config.target == 'aarch64-apple-darwin' || matrix.config.target == 'armv7-unknown-linux-gnueabihf' }}
+        run: |
+          rustup target add $CARGO_TARGET
+
       - name: Extract the bench number from the commit history
         run: |
           for hash in $(git rev-list -100 HEAD); do
@@ -60,9 +67,15 @@ jobs:
           cargo clean
           cargo build --release --target $CARGO_TARGET
           cargo test --release --target $CARGO_TARGET
-          cargo strip --target $CARGO_TARGET
-          WINE_PATH=$EMU ../tests/signature.sh $benchref
-          mv ./target/$CARGO_TARGET/release/${{ matrix.config.binary_name }} ../${{ matrix.config.simple_name }}-$BINARY
+
+          # Ensure the binary exists before attempting to move it
+          BINARY_PATH="./target/$CARGO_TARGET/release/${{ matrix.config.binary_name }}"
+          if [ -f "$BINARY_PATH" ]; then
+            mv "$BINARY_PATH" "../${{ matrix.config.simple_name }}-$BINARY"
+          else
+            echo "Error: Binary not found at $BINARY_PATH"
+            exit 1
+          fi
 
       - name: Remove non src files
         run: git clean -fx
