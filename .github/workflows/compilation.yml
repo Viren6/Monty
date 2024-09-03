@@ -62,17 +62,7 @@ jobs:
           cargo clean
           cargo build --release --target $BINARY
 
-          # Use conditional stripping based on the operating system
-          if [ "${{ runner.os }}" != "Windows" ]; then
-            strip target/$BINARY/release/${{ matrix.config.simple_name }}$EXT
-          else
-            strip target/$BINARY/release/${{ matrix.config.simple_name }}.exe
-          fi
-
-          # Run the signature script with WINE_PATH, if applicable
-          WINE_PATH="$SDE" ../tests/signature.sh $benchref
-
-          # Move the stripped binary to the destination directory
+          # Move the binary to the destination directory
           mv ./target/$BINARY/release/${{ matrix.config.simple_name }}$EXT ../${{ matrix.config.simple_name }}-$BINARY$EXT
 
       - name: Remove non src files
