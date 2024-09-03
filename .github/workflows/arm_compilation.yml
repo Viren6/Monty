@@ -18,7 +18,7 @@ jobs:
       matrix: ${{ fromJson(inputs.matrix) }}
     defaults:
       run:
-        working-directory: src
+        working-directory: .
         shell: ${{ matrix.config.shell }}
     steps:
       - uses: actions/checkout@v4
@@ -53,9 +53,6 @@ jobs:
 
       - name: Check Rust toolchain
         run: rustc --version
-
-      - name: Test cargo help
-        run: cargo help
 
       - name: Check git
         run: git --version
