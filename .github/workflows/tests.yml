@@ -62,7 +62,6 @@ jobs:
             shell: msys2 {0}
     defaults:
       run:
-        working-directory: src
         shell: ${{ matrix.config.shell }}
     steps:
       - uses: actions/checkout@v4
@@ -124,21 +123,19 @@ jobs:
 
       # x86-32 tests
 
-      - name: Test debug x86-32 build
+      - name: Test x86-32 build
         if: matrix.config.run_32bit_tests
         run: |
-          export RUSTFLAGS="-D warnings"
-          make clean
+          cargo clean
           make embed ARCH=x86-32
           cargo test --target i686-unknown-linux-gnu
 
       # x86-64 tests
 
-      - name: Test debug x86-64-avx2 build
+      - name: Test x86-64-avx2 build
         if: matrix.config.run_64bit_tests
         run: |
-          export RUSTFLAGS="-D warnings"
-          make clean
+          cargo clean
           make embed ARCH=x86-64
           cargo test --target x86_64-unknown-linux-gnu
 
@@ -148,8 +145,7 @@ jobs:
         if: matrix.config.run_armv8_tests
         run: |
           export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
-          export RUSTFLAGS="-D warnings"
-          make clean
+          cargo clean
           make embed ARCH=armv8
           cargo test --target aarch64-linux-android
 
@@ -157,8 +153,7 @@ jobs:
         if: matrix.config.run_armv7_tests
         run: |
           export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
-          export RUSTFLAGS="-D warnings"
-          make clean
+          cargo clean
           make embed ARCH=armv7
           cargo test --target armv7-linux-androideabi
 
@@ -167,23 +162,23 @@ jobs:
       - name: Test riscv64 build
         if: matrix.config.run_riscv64_tests
         run: |
-          echo "export RUSTFLAGS='-D warnings' && make clean && make embed ARCH=riscv64 && cargo test --target riscv64gc-unknown-linux-gnu" > script.sh
-          docker run --rm --platform ${{ matrix.config.platform }} -v ${{ github.workspace }}/src:/app monty_builder
-          
+          echo "cargo clean && make embed ARCH=riscv64 && cargo test --target riscv64gc-unknown-linux-gnu" > script.sh
+          docker run --rm --platform ${{ matrix.config.platform }} -v ${{ github.workspace }}:/app monty_builder
+
       # ppc64 tests
 
       - name: Test ppc64 build
         if: matrix.config.run_ppc64_tests
         run: |
-          echo "export RUSTFLAGS='-D warnings' && make clean && make embed ARCH=ppc64 && cargo test --target powerpc64-unknown-linux-gnu" > script.sh
-          docker run --rm --platform ${{ matrix.config.platform }} -v ${{ github.workspace }}/src:/app monty_builder
+          echo "cargo clean && make embed ARCH=ppc64 && cargo test --target powerpc64-unknown-linux-gnu" > script.sh
+          docker run --rm --platform ${{ matrix.config.platform }} -v ${{ github.workspace }}:/app monty_builder
 
       # MacOS tests
 
       - name: Test apple-silicon build
         if: matrix.config.run_m1_tests
         run: |
-          make clean
+          cargo clean
           make embed ARCH=apple-silicon
           cargo test --target aarch64-apple-darwin
 
@@ -192,7 +187,7 @@ jobs:
       - name: Check perft and search reproducibility
         if: matrix.config.run_64bit_tests
         run: |
-          make clean
+          cargo clean
           make embed ARCH=x86-64
           cargo test --test perft
           cargo test --test reprosearch
