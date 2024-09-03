@@ -1,3 +1,10 @@
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+
 name: Basic Checks
 jobs:
   check:
