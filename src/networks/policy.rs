@@ -14,12 +14,12 @@ pub const PolicyFileDefaultName: &str = "nn-1b01b6e89ea1.network";
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct SubNet {
-    ft: Layer<i16, 768, 32>,
-    l2: Layer<f32, 32, 32>,
+    ft: Layer<i16, 768, 64>,
+    l2: Layer<f32, 64, 64>,
 }
 
 impl SubNet {
-    fn out(&self, feats: &[usize]) -> Accumulator<f32, 32> {
+    fn out(&self, feats: &[usize]) -> Accumulator<f32, 64> {
         let l2 = self.ft.forward_from_slice(feats);
         self.l2.forward_from_i16::<ReLU, QA>(&l2)
     }
@@ -63,8 +63,8 @@ impl PolicyNetwork {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct UnquantisedSubNet {
-    ft: Layer<f32, 768, 32>,
-    l2: Layer<f32, 32, 32>,
+    ft: Layer<f32, 768, 64>,
+    l2: Layer<f32, 64, 64>,
 }
 
 impl UnquantisedSubNet {
