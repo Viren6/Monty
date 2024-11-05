@@ -61,17 +61,20 @@ impl Iterator for ThreatInputsIter {
             let c = usize::from(piece & 8 > 0);
             let pc = 64 * usize::from(piece & 7);
             let sq = usize::from(square);
-            let mut feat = [0, 384][c] + pc + (sq ^ usize::from(self.flip));
+            let mut stm = [0, 384][c] + pc + (sq ^ usize::from(self.flip));
+            let mut ntm = [384, 0][c] + pc + (sq ^ usize::from(self.flip) ^ 56);
 
             if self.threats & (1 << sq) > 0 {
-                feat += 768;
+                stm += 768;
+                ntm += 768 * 2;
             }
 
             if self.defences & (1 << sq) > 0 {
-                feat += 768 * 2;
+                stm += 768 * 2;
+                ntm += 768;
             }
 
-            (feat, feat)
+            (stm, ntm)
         })
     }
 }

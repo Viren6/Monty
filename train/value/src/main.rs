@@ -12,7 +12,6 @@ fn main() {
     let mut trainer = TrainerBuilder::default()
         .optimiser(optimiser::AdamW)
         .loss_fn(Loss::SigmoidMSE)
-        .single_perspective()
         .input(input::ThreatInputs)
         .output_buckets(outputs::Single)
         .feature_transformer(HIDDEN_SIZE)
@@ -39,7 +38,7 @@ fn main() {
             final_lr: 0.0000001,
             final_superbatch: 3000,
         },
-        save_rate: 20,
+        save_rate: 40,
     };
 
     let optimiser_params = optimiser::AdamWParams {
@@ -59,7 +58,7 @@ fn main() {
         batch_queue_size: 256,
     };
 
-    let data_loader = loader::BinpackLoader::new("../binpacks/bestmove-q.binpack", 48000);
+    let data_loader = loader::BinpackLoader::new("/home/privateclient/monty_value_training/interleaved-value.binpack", 96000);
 
     trainer.run(&schedule, &settings, &data_loader);
 
