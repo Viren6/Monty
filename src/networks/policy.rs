@@ -9,7 +9,7 @@ const QA: i16 = 512;
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals)]
-pub const PolicyFileDefaultName: &str = "nn-1b01b6e89ea1.network";
+pub const PolicyFileDefaultName: &str = "nn-c478b9ff103e.network";
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -67,7 +67,7 @@ struct UnquantisedSubNet {
 impl UnquantisedSubNet {
     fn quantise(&self, qa: i16) -> SubNet {
         SubNet {
-            ft: self.ft.quantise_i16(qa, 4.0),
+            ft: self.ft.quantise_i16(qa, 1.98),
         }
     }
 }
