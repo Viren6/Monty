@@ -1,7 +1,5 @@
 use std::ops::{AddAssign, Mul};
 
-use super::activation::Activation;
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Accumulator<T: Copy, const N: usize>(pub [T; N]);
@@ -57,17 +55,19 @@ impl<const N: usize> Accumulator<i16, N> {
     }
 }
 
-impl<const N: usize> Accumulator<f32, N> {
-    pub fn dot<T: Activation>(&self, other: &Self) -> f32 {
-        let mut res = 0.0;
+impl<const N: usize> Accumulator<i16, N> {
+    pub fn dot_relu<const QA: i16>(&self, other: &Self) -> f32 {
+        let mut res = 0;
 
-        for (i, j) in self.0.iter().zip(other.0.iter()) {
-            res += T::activate(*i) * T::activate(*j);
+        for (&i, &j) in self.0.iter().zip(other.0.iter()) {
+            res += i32::from(i.max(0)) * i32::from(j.max(0)) / i32::from(QA);
         }
 
-        res
+        res as f32 / f32::from(QA)
     }
+}
 
+impl<const N: usize> Accumulator<f32, N> {
     pub fn quantise_i16(&self, qa: i16, warn_limit: f32) -> Accumulator<i16, N> {
         let mut res = Accumulator([0; N]);
 
