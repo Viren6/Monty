@@ -4,7 +4,7 @@ use monty::{read_into_struct_unchecked, UnquantisedValueNetwork, ValueNetwork};
 
 fn main() {
     let unquantised: Box<UnquantisedValueNetwork> =
-        unsafe { read_into_struct_unchecked("params.bin") };
+        unsafe { read_into_struct_unchecked("raw.bin") };
 
     let quantised = unquantised.quantise();
 
