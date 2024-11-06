@@ -7,8 +7,7 @@ use std::io::Write;
 #[repr(C)]
 #[derive(Clone, Copy, FeedForwardNetwork)]
 pub struct SubNet {
-    ft: layer::SparseConnected<activation::ReLU, 768, 32>,
-    l2: layer::DenseConnected<activation::ReLU, 32, 32>,
+    ft: layer::SparseConnected<activation::ReLU, 768, 64>,
 }
 
 impl SubNet {
@@ -16,12 +15,8 @@ impl SubNet {
         let matrix = Matrix::from_fn(|_, _| f());
         let vector = Vector::from_fn(|_| f());
 
-        let matrix2 = Matrix::from_fn(|_, _| f());
-        let vector2 = Vector::from_fn(|_| f());
-
         Self {
-            ft: layer::SparseConnected::from_raw(matrix, vector),
-            l2: layer::DenseConnected::from_raw(matrix2, vector2),
+            ft: layer::SparseConnected::from_raw(matrix, vector),        
         }
     }
 }
