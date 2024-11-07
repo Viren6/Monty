@@ -78,19 +78,19 @@ pub struct TransposedLayer<T: Copy, const M: usize, const N: usize> {
     pub biases: Accumulator<T, N>,
 }
 
-impl TransposedLayer<i16, 8192, 16> {
+impl TransposedLayer<i16, 4096, 16> {
     pub fn forward_from_i16<T: Activation, const QA: i16, const QB: i16, const FACTOR: i16>(
         &self,
-        stm: &Accumulator<i16, 4096>,
-        ntm: &Accumulator<i16, 4096>,
+        stm: &Accumulator<i16, 2048>,
+        ntm: &Accumulator<i16, 2048>,
     ) -> Accumulator<f32, 16> {
-        let mut act = [0; 8192];
+        let mut act = [0; 4096];
 
-        for (a, &i) in act.iter_mut().take(4096).zip(stm.0.iter()) {
+        for (a, &i) in act.iter_mut().take(2048).zip(stm.0.iter()) {
             *a = (i32::from(i).clamp(0, i32::from(QA)).pow(2) / i32::from(QA / FACTOR)) as i16;
         }
 
-        for (a, &i) in act.iter_mut().skip(4096).zip(ntm.0.iter()) {
+        for (a, &i) in act.iter_mut().skip(2048).zip(ntm.0.iter()) {
             *a = (i32::from(i).clamp(0, i32::from(QA)).pow(2) / i32::from(QA / FACTOR)) as i16;
         }
 
