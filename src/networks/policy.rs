@@ -10,13 +10,13 @@ use super::{
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals)]
-pub const PolicyFileDefaultName: &str = "nn-5e45d73042ed.network";
+pub const PolicyFileDefaultName: &str = "nn-2f9491f0e187.network";
 
 const QA: i16 = 256;
 const QB: i16 = 512;
 const FACTOR: i16 = 32;
 
-const L1: usize = 4096;
+const L1: usize = 2048;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
