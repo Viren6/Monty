@@ -18,8 +18,8 @@ const FACTOR: i16 = 32;
 #[repr(C)]
 pub struct ValueNetwork {
     l1: Layer<i16, { 768 * 4 }, 4096>,
-    l2: TransposedLayer<i16, 4096, 16>,
-    l3: Layer<f32, 16, 128>,
+    l2: TransposedLayer<i16, 4096, 32>,
+    l3: Layer<f32, 32, 128>,
     l4: Layer<f32, 128, 1>,
 }
 
@@ -37,8 +37,8 @@ impl ValueNetwork {
 #[repr(C)]
 pub struct UnquantisedValueNetwork {
     l1: Layer<f32, { 768 * 4 }, 4096>,
-    l2: Layer<f32, 4096, 16>,
-    l3: Layer<f32, 16, 128>,
+    l2: Layer<f32, 4096, 32>,
+    l3: Layer<f32, 32, 128>,
     l4: Layer<f32, 128, 1>,
 }
 
