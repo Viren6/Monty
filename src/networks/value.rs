@@ -7,7 +7,7 @@ use super::{
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals)]
-pub const ValueFileDefaultName: &str = "nn-4587c7cdf848.network";
+pub const ValueFileDefaultName: &str = "nn-921f7ea3cd11.network";
 
 const QA: i16 = 512;
 const QB: i16 = 1024;
@@ -21,16 +21,30 @@ pub struct ValueNetwork {
     l2: TransposedLayer<i16, 4096, 16>,
     l3: Layer<f32, 16, 128>,
     l4: Layer<f32, 128, 1>,
+    pst: Layer<f32, { 768 * 4 }, 1>,
 }
 
 impl ValueNetwork {
     pub fn eval(&self, board: &Board) -> i32 {
-        let l2 = self.l1.forward(board);
+        let mut pst = self.pst.biases.0[0];
+
+        let mut count = 0;
+        let mut feats = [0; 32];
+        board.map_value_features(|feat| {
+            feats[count] = feat;
+            pst += self.pst.weights[feat].0[0];
+            count += 1;
+        });
+
+        let mut l2 = self.l1.biases;
+
+        l2.add_multi(&feats[..count], &self.l1.weights);
+
         let l3 = self.l2.forward_from_i16::<SCReLU, QA, QB, FACTOR>(&l2);
         let l4 = self.l3.forward::<SCReLU>(&l3);
         let out = self.l4.forward::<SCReLU>(&l4);
 
-        (out.0[0] * SCALE as f32) as i32
+        ((pst + out.0[0]) * SCALE as f32) as i32
     }
 }
 
@@ -40,6 +54,7 @@ pub struct UnquantisedValueNetwork {
     l2: Layer<f32, 4096, 16>,
     l3: Layer<f32, 16, 128>,
     l4: Layer<f32, 128, 1>,
+    pst: Layer<f32, { 768 * 4 }, 1>,
 }
 
 impl UnquantisedValueNetwork {
@@ -52,6 +67,7 @@ impl UnquantisedValueNetwork {
 
         quantised.l3 = self.l3;
         quantised.l4 = self.l4;
+        quantised.pst = self.pst;
 
         quantised
     }
