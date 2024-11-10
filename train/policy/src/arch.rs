@@ -73,7 +73,7 @@ impl PolicyNetwork {
         let board = Board::from(pos.pos);
 
         let mut feats = SparseVector::with_capacity(32);
-        board.map_policy_features(|feat| feats.push(feat));
+        board.map_value_features(|feat| feats.push(feat));
 
         let mut policies = Vec::with_capacity(pos.num);
         let mut total = 0.0;
