@@ -4,7 +4,7 @@ use monty::{read_into_struct_unchecked, MappedWeights, PolicyNetwork, Unquantise
 
 fn main() {
     let unquantised: MappedWeights<UnquantisedPolicyNetwork> =
-        unsafe { read_into_struct_unchecked("policy001-300.network") };
+        unsafe { read_into_struct_unchecked("policygen11-75.network") };
 
     let quantised = unquantised.data.quantise();
 
