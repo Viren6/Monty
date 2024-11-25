@@ -4,9 +4,9 @@ use super::{accumulator::Accumulator, activation::SCReLU, layer::Layer};
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals)]
-pub const ValueFileDefaultName: &str = "nn-3f56cbc2597d.network";
+pub const ValueFileDefaultName: &str = "nn-7582517b793b.network";
 
-const INPUT_CHANNELS: usize = 64;
+const INPUT_CHANNELS: usize = 768;
 const INPUT_DIM: usize = 8;
 const INPUT_SIZE: usize = INPUT_DIM * INPUT_DIM;
 const INPUT_EMBED: usize = INPUT_CHANNELS * INPUT_SIZE;
@@ -18,8 +18,8 @@ const OUTPUT_DIM: usize = 4;
 const OUTPUT_SIZE: usize = OUTPUT_DIM * OUTPUT_DIM;
 const OUTPUT_EMBED: usize = OUTPUT_CHANNELS * OUTPUT_SIZE;
 
-const L3: usize = 64;
-const L4: usize = 64;
+const L3: usize = 1024;
+const L4: usize = 32;
 
 #[repr(C)]
 pub struct ValueNetwork {
