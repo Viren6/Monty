@@ -40,14 +40,10 @@ impl ValueNetwork {
         unsafe { core::arch::x86_64::_mm_prefetch(&self.pst.biases as *const _ as *const i8, _MM_HINT_T0) };
 
         // Prefetch f32 weights and biases for l3, l4, and pst (no filtering here)
-        for weight in self.l3.weights.iter() {
-            unsafe { core::arch::x86_64::_mm_prefetch(weight as *const _ as *const i8, _MM_HINT_T0) };
-        }
+        unsafe { core::arch::x86_64::_mm_prefetch(&self.l3.weights as *const _ as *const i8, _MM_HINT_T0) };
         unsafe { core::arch::x86_64::_mm_prefetch(&self.l3.biases as *const _ as *const i8, _MM_HINT_T0) };
 
-        for weight in self.l4.weights.iter() {
-            unsafe { core::arch::x86_64::_mm_prefetch(weight as *const _ as *const i8, _MM_HINT_T0) };
-        }
+        unsafe { core::arch::x86_64::_mm_prefetch(&self.l4.weights as *const _ as *const i8, _MM_HINT_T0) };
         unsafe { core::arch::x86_64::_mm_prefetch(&self.l4.biases as *const _ as *const i8, _MM_HINT_T0) };
     
         let mut pst = self.pst.biases;
