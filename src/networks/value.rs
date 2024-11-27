@@ -4,30 +4,30 @@ use super::{accumulator::Accumulator, activation::SCReLU, layer::Layer};
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals)]
-pub const ValueFileDefaultName: &str = "nn-7582517b793b.network";
+pub const ValueFileDefaultName: &str = "nn-6fc12bc71140.network";
 
 const INPUT_CHANNELS: usize = 128;
 const INPUT_DIM: usize = 8;
 const INPUT_SIZE: usize = INPUT_DIM * INPUT_DIM;
 const INPUT_EMBED: usize = INPUT_CHANNELS * INPUT_SIZE;
 
-const KERNEL_DIM: usize = 3;
+const KERNEL_DIM: usize = 8;
 
 const OUTPUT_CHANNELS: usize = 24;
-const OUTPUT_DIM: usize = 6;
+const OUTPUT_DIM: usize = 1;
 const OUTPUT_SIZE: usize = OUTPUT_DIM * OUTPUT_DIM;
 const OUTPUT_EMBED: usize = OUTPUT_CHANNELS * OUTPUT_SIZE;
 
-const L3: usize = 128;
-const L4: usize = 512;
+const L3: usize = 512;
+//const L4: usize = 512;
 
 #[repr(C)]
 pub struct ValueNetwork {
     l1: Layer<f32, 3072, INPUT_EMBED>,
     l2: ConvLayer,
     l3: Layer<f32, OUTPUT_EMBED, L3>,
-    l4: Layer<f32, L3, L4>,
-    l5: Layer<f32, L4, 3>,
+    //l4: Layer<f32, L3, L4>,
+    l5: Layer<f32, L3, 3>,
 }
 
 impl ValueNetwork {
@@ -46,8 +46,8 @@ impl ValueNetwork {
         l2.screlu();
 
         let l3 = self.l2.forward(&l2);
-        let l4 = self.l3.forward::<SCReLU>(&l3);
-        let l5 = self.l4.forward::<SCReLU>(&l4);
+        //let l4 = self.l3.forward::<SCReLU>(&l3);
+        let l5 = self.l3.forward::<SCReLU>(&l3);
         let out = self.l5.forward::<SCReLU>(&l5);
 
         let mut win = out.0[2];
