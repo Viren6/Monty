@@ -8,6 +8,8 @@ use super::{
     layer::{Layer, TransposedLayer},
 };
 
+use core::arch::x86_64::_MM_HINT_T0;
+
 // DO NOT MOVE
 #[allow(non_upper_case_globals)]
 pub const PolicyFileDefaultName: &str = "nn-658ca1d47406.network";
@@ -27,6 +29,13 @@ pub struct PolicyNetwork {
 
 impl PolicyNetwork {
     pub fn hl(&self, pos: &Board) -> Accumulator<i16, { L1 / 2 }> {
+
+        // Prefetch active weights and biases for l1
+        pos.map_features(|feat| {
+            unsafe { core::arch::x86_64::_mm_prefetch(&self.l1.weights[feat] as *const _ as *const i8, _MM_HINT_T0) };
+            unsafe { core::arch::x86_64::_mm_prefetch(&self.l1.biases.0[feat] as *const _ as *const i8, _MM_HINT_T0) };
+        });
+    
         let mut l1 = Accumulator([0; L1]);
 
         for (r, &b) in l1.0.iter_mut().zip(self.l1.biases.0.iter()) {
@@ -55,8 +64,12 @@ impl PolicyNetwork {
     }
 
     pub fn get(&self, pos: &Board, mov: &Move, hl: &Accumulator<i16, { L1 / 2 }>) -> f32 {
+
+        // Prefetch active weights for l2 (specific to the move index)
         let idx = map_move_to_index(pos, *mov);
         let weights = &self.l2.weights[idx];
+        unsafe { core::arch::x86_64::_mm_prefetch(weights as *const _ as *const i8, _MM_HINT_T0) };
+        unsafe { core::arch::x86_64::_mm_prefetch(&self.l2.biases.0[idx] as *const _ as *const i8, _MM_HINT_T0) };
 
         let mut res = 0;
 
