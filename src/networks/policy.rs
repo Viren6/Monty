@@ -29,13 +29,8 @@ pub struct PolicyNetwork {
 
 impl PolicyNetwork {
     pub fn hl(&self, pos: &Board) -> Accumulator<i16, { L1 / 2 }> {
-
-        // Prefetch active weights and biases for l1
-        pos.map_features(|feat| {
-            unsafe { core::arch::x86_64::_mm_prefetch(&self.l1.weights[feat] as *const _ as *const i8, _MM_HINT_T0) };
-            unsafe { core::arch::x86_64::_mm_prefetch(&self.l1.biases.0[feat] as *const _ as *const i8, _MM_HINT_T0) };
-        });
     
+        unsafe { core::arch::x86_64::_mm_prefetch(&self.l1.biases.0 as *const _ as *const i8, _MM_HINT_T0) };
         let mut l1 = Accumulator([0; L1]);
 
         for (r, &b) in l1.0.iter_mut().zip(self.l1.biases.0.iter()) {
@@ -43,6 +38,7 @@ impl PolicyNetwork {
         }
 
         pos.map_features(|feat| {
+            unsafe { core::arch::x86_64::_mm_prefetch(&self.l1.weights[feat] as *const _ as *const i8, _MM_HINT_T0) };
             for (r, &w) in l1.0.iter_mut().zip(self.l1.weights[feat].0.iter()) {
                 *r += i16::from(w);
             }
@@ -67,13 +63,12 @@ impl PolicyNetwork {
 
         // Prefetch active weights for l2 (specific to the move index)
         let idx = map_move_to_index(pos, *mov);
-        let weights = &self.l2.weights[idx];
-        unsafe { core::arch::x86_64::_mm_prefetch(weights as *const _ as *const i8, _MM_HINT_T0) };
+        unsafe { core::arch::x86_64::_mm_prefetch(&self.l2.weights[idx] as *const _ as *const i8, _MM_HINT_T0) };
         unsafe { core::arch::x86_64::_mm_prefetch(&self.l2.biases.0[idx] as *const _ as *const i8, _MM_HINT_T0) };
 
         let mut res = 0;
 
-        for (&w, &v) in weights.0.iter().zip(hl.0.iter()) {
+        for (&w, &v) in self.l2.weights[idx].0.iter().zip(hl.0.iter()) {
             res += i32::from(w) * i32::from(v);
         }
 

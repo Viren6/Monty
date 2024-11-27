@@ -30,11 +30,14 @@ pub struct ValueNetwork {
 impl ValueNetwork {
     pub fn eval(&self, board: &Board) -> (f32, f32, f32) {
 
-        // Prefetch active weights and biases for l1
+        // Prefetch active weights and biases for l1 and pst
         board.map_features(|feat| {
             unsafe { core::arch::x86_64::_mm_prefetch(&self.l1.weights[feat] as *const _ as *const i8, _MM_HINT_T0) };
             unsafe { core::arch::x86_64::_mm_prefetch(&self.l1.biases.0[feat] as *const _ as *const i8, _MM_HINT_T0) };
+            unsafe { core::arch::x86_64::_mm_prefetch(&self.pst.weights[feat] as *const _ as *const i8, _MM_HINT_T0) };
         });
+
+        unsafe { core::arch::x86_64::_mm_prefetch(&self.pst.biases as *const _ as *const i8, _MM_HINT_T0) };
 
         // Prefetch f32 weights and biases for l3, l4, and pst (no filtering here)
         for weight in self.l3.weights.iter() {
@@ -46,11 +49,6 @@ impl ValueNetwork {
             unsafe { core::arch::x86_64::_mm_prefetch(weight as *const _ as *const i8, _MM_HINT_T0) };
         }
         unsafe { core::arch::x86_64::_mm_prefetch(&self.l4.biases as *const _ as *const i8, _MM_HINT_T0) };
-
-        board.map_features(|feat| {
-            unsafe { core::arch::x86_64::_mm_prefetch(&self.pst.weights[feat] as *const _ as *const i8, _MM_HINT_T0) };
-            unsafe { core::arch::x86_64::_mm_prefetch(&self.pst.biases as *const _ as *const i8, _MM_HINT_T0) };
-        });
     
         let mut pst = self.pst.biases;
 
