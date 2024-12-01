@@ -397,7 +397,7 @@ impl<'a> Searcher<'a> {
         let score = win + draw / 2.0;
         match self.tree[ptr].state() {
             GameState::Ongoing => (score, draw),
-            GameState::Draw => (0.0, 0.5),
+            GameState::Draw => (0.5, 1.0),
             GameState::Lost(_) => (0.0, 0.0),
             GameState::Won(_) => (1.0, 0.0),
         }

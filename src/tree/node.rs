@@ -200,6 +200,7 @@ impl Node {
         self.visits.store(other.visits.load(Relaxed), Relaxed);
         self.q.store(other.q.load(Relaxed), Relaxed);
         self.sq_q.store(other.sq_q.load(Relaxed), Relaxed);
+        self.d.store(0, Ordering::Relaxed);
     }
 
     pub fn clear(&self) {
@@ -209,6 +210,7 @@ impl Node {
         self.visits.store(0, Ordering::Relaxed);
         self.q.store(0, Ordering::Relaxed);
         self.sq_q.store(0, Ordering::Relaxed);
+        self.d.store(0, Ordering::Relaxed);
         self.threads.store(0, Ordering::Relaxed);
     }
 
