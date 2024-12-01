@@ -238,7 +238,9 @@ impl<'a> Searcher<'a> {
             self.tree
                 .expand_node(ptr, &self.root_position, self.params, self.policy, 1);
 
-            let root_eval = self.root_position.get_value_wdl(self.value, self.params);
+            let (win, draw) = self.root_position.get_value(self.value, self.params);
+            let score = win + draw / 2.0;
+            let root_eval = score;
             self.tree[ptr].update(1.0 - root_eval);
         }
         // relabel preexisting root policies with root PST value
@@ -392,8 +394,10 @@ impl<'a> Searcher<'a> {
     }
 
     fn get_utility(&self, ptr: NodePtr, pos: &ChessState) -> f32 {
+        let (win, draw) = pos.get_value(self.value, self.params);
+        let score = win + draw / 2.0;
         match self.tree[ptr].state() {
-            GameState::Ongoing => pos.get_value_wdl(self.value, self.params),
+            GameState::Ongoing => score,
             GameState::Draw => 0.5,
             GameState::Lost(_) => 0.0,
             GameState::Won(_) => 1.0,

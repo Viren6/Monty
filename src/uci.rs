@@ -84,10 +84,6 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
             }
             "perft" => run_perft(&commands, &pos),
             "quit" => std::process::exit(0),
-            "eval" => {
-                println!("cp: {}", pos.get_value(value, &params));
-                println!("wdl: {:.2}%", 100.0 * pos.get_value_wdl(value, &params));
-            }
             "policy" => {
                 let f = pos.get_policy_feats(policy);
                 let mut max = f32::NEG_INFINITY;
