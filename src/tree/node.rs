@@ -60,6 +60,7 @@ pub struct Node {
     sq_q: AtomicU32,
     d: AtomicU32,
     gini_impurity: AtomicU32,
+    gini_impurity_value: AtomicU32,
 }
 
 impl Node {
@@ -76,6 +77,7 @@ impl Node {
             sq_q: AtomicU32::new(0),
             d: AtomicU32::new(0),
             gini_impurity: AtomicU32::new(0),
+            gini_impurity_value:  AtomicU32::new(0),
         }
     }
 
@@ -179,6 +181,15 @@ impl Node {
             .store(f32::to_bits(gini_impurity), Ordering::Relaxed);
     }
 
+    pub fn gini_impurity_value(&self) -> f32 {
+        f32::from_bits(self.gini_impurity_value.load(Ordering::Relaxed))
+    }
+
+    pub fn set_gini_impurity_value(&self, gini_impurity_value: f32) {
+        self.gini_impurity_value
+            .store(f32::to_bits(gini_impurity_value), Ordering::Relaxed);
+    }
+
     pub fn clear_actions(&self) {
         *self.actions.write().unwrap() = NodePtr::NULL;
         self.num_actions.store(0, Ordering::Relaxed);
@@ -197,6 +208,8 @@ impl Node {
         self.state.store(other.state.load(Relaxed), Relaxed);
         self.gini_impurity
             .store(other.gini_impurity.load(Relaxed), Relaxed);
+        self.gini_impurity_value
+            .store(other.gini_impurity_value.load(Relaxed), Relaxed);
         self.visits.store(other.visits.load(Relaxed), Relaxed);
         self.q.store(other.q.load(Relaxed), Relaxed);
         self.sq_q.store(other.sq_q.load(Relaxed), Relaxed);
@@ -207,6 +220,7 @@ impl Node {
         self.clear_actions();
         self.set_state(GameState::Ongoing);
         self.set_gini_impurity(0.0);
+        self.set_gini_impurity_value(0.0);
         self.visits.store(0, Ordering::Relaxed);
         self.q.store(0, Ordering::Relaxed);
         self.sq_q.store(0, Ordering::Relaxed);
@@ -223,6 +237,12 @@ impl Node {
         let sq_q = (self.sq_q() * v + r.powi(2)) / (v + 1.0);
 
         let d = (self.d64() * v + dr) / (v + 1.0);
+
+        let w = q - d / 2.0;
+        let l = 1.0 - w - d;
+        let sum_of_squares = d * d + w * w + l * l;
+        let gini_impurity_value = (1.0 - sum_of_squares).clamp(0.0, 1.0);
+        self.set_gini_impurity_value(gini_impurity_value as f32);
 
         self.q
             .store((q * f64::from(u32::MAX)) as u32, Ordering::Relaxed);
