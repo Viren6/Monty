@@ -240,8 +240,7 @@ impl<'a> Searcher<'a> {
 
             let (win, draw) = self.root_position.get_value(self.value, self.params);
             let score = win + draw / 2.0;
-            let root_eval = score;
-            self.tree[ptr].update(1.0 - root_eval);
+            self.tree[ptr].update(1.0 - score, draw);
         }
         // relabel preexisting root policies with root PST value
         else if self.tree[node].has_children() {
@@ -315,13 +314,13 @@ impl<'a> Searcher<'a> {
         pos: &mut ChessState,
         ptr: NodePtr,
         depth: &mut usize,
-    ) -> Option<f32> {
+    ) -> Option<(f32, f32)> {
         *depth += 1;
 
         let hash = pos.hash();
         let node = &self.tree[ptr];
 
-        let mut u = if node.is_terminal() || node.visits() == 0 {
+        let (mut u, d) = if node.is_terminal() || node.visits() == 0 {
             if node.visits() == 0 {
                 node.set_state(pos.game_state());
             }
@@ -329,7 +328,7 @@ impl<'a> Searcher<'a> {
             // probe hash table to use in place of network
             if node.state() == GameState::Ongoing {
                 if let Some(entry) = self.tree.probe_hash(hash) {
-                    entry.q()
+                    (entry.q(), entry.d())
                 } else {
                     self.get_utility(ptr, pos)
                 }
@@ -368,18 +367,16 @@ impl<'a> Searcher<'a> {
             };
 
             // descend further
-            let maybe_u = self.perform_one_iteration(pos, child_ptr, depth);
+            let (u, d) = self.perform_one_iteration(pos, child_ptr, depth)?;
 
             drop(lock);
 
             self.tree[child_ptr].dec_threads();
 
-            let u = maybe_u?;
-
             self.tree
                 .propogate_proven_mates(ptr, self.tree[child_ptr].state());
 
-            u
+            (u, d)
         };
 
         // node scores are stored from the perspective
@@ -387,20 +384,20 @@ impl<'a> Searcher<'a> {
         // accessed from the parent's POV
         u = 1.0 - u;
 
-        let new_q = node.update(u);
-        self.tree.push_hash(hash, 1.0 - new_q);
+        let (new_q, new_d) = node.update(u, d);
+        self.tree.push_hash(hash, 1.0 - new_q, new_d);
 
-        Some(u)
+        Some((u, d))
     }
 
-    fn get_utility(&self, ptr: NodePtr, pos: &ChessState) -> f32 {
+    fn get_utility(&self, ptr: NodePtr, pos: &ChessState) -> (f32, f32) {
         let (win, draw) = pos.get_value(self.value, self.params);
         let score = win + draw / 2.0;
         match self.tree[ptr].state() {
-            GameState::Ongoing => score,
-            GameState::Draw => 0.5,
-            GameState::Lost(_) => 0.0,
-            GameState::Won(_) => 1.0,
+            GameState::Ongoing => (score, draw),
+            GameState::Draw => (0.0, 0.5),
+            GameState::Lost(_) => (0.0, 0.0),
+            GameState::Won(_) => (1.0, 0.0),
         }
     }
 

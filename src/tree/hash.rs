@@ -4,11 +4,15 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub struct HashEntry {
     hash: u16,
     q: u16,
+    d: u16,
 }
 
 impl HashEntry {
     pub fn q(&self) -> f32 {
         f32::from(self.q) / f32::from(u16::MAX)
+    }
+    pub fn d(&self) -> f32 {
+        f32::from(self.d) / f32::from(u16::MAX)
     }
 }
 
@@ -97,12 +101,13 @@ impl HashTable {
         }
     }
 
-    pub fn push(&self, hash: u64, q: f32) {
+    pub fn push(&self, hash: u64, q: f32, d: f32) {
         let idx = hash % (self.table.len() as u64);
 
         let entry = HashEntry {
             hash: Self::key(hash),
             q: (q * f32::from(u16::MAX)) as u16,
+            d: (d * f32::from(u16::MAX)) as u16,
         };
 
         self.table[idx as usize]
