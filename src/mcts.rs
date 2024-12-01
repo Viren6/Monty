@@ -367,11 +367,13 @@ impl<'a> Searcher<'a> {
             };
 
             // descend further
-            let (u, d) = self.perform_one_iteration(pos, child_ptr, depth)?;
+            let result = self.perform_one_iteration(pos, child_ptr, depth);
 
             drop(lock);
 
             self.tree[child_ptr].dec_threads();
+
+            let (u, d) = result?;
 
             self.tree
                 .propogate_proven_mates(ptr, self.tree[child_ptr].state());
