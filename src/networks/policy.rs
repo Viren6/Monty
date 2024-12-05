@@ -1,3 +1,6 @@
+use std::simd::i16x16;
+use std::simd::cmp::SimdOrd;
+
 use crate::{
     boxed_and_zeroed,
     chess::{Attacks, Board, Move},
@@ -17,6 +20,7 @@ const QB: i16 = 128;
 const FACTOR: i16 = 32;
 
 pub const L1: usize = 12288;
+const L1_SIMD_LANES: usize = L1 / 16; // Number of i16x16 lanes in L1
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -27,28 +31,44 @@ pub struct PolicyNetwork {
 
 impl PolicyNetwork {
     pub fn hl(&self, pos: &Board) -> Accumulator<i16, { L1 / 2 }> {
-        let mut l1 = Accumulator([0; L1]);
+        let mut l1_accumulator = [i16x16::splat(0); L1_SIMD_LANES];
 
-        for (r, &b) in l1.0.iter_mut().zip(self.l1.biases.0.iter()) {
-            *r = i16::from(b);
+        // Load biases into accumulator
+        for (chunk_idx, chunk) in l1_accumulator.iter_mut().enumerate() {
+            let slice = &self.l1.biases.0[chunk_idx * 16..(chunk_idx + 1) * 16];
+            let array_i8: [i8; 16] = slice.try_into().unwrap();
+            let array_i16: [i16; 16] = array_i8.map(|x| x as i16);
+            *chunk = i16x16::from_array(array_i16);
         }
 
         pos.map_features(|feat| {
-            for (r, &w) in l1.0.iter_mut().zip(self.l1.weights[feat].0.iter()) {
-                *r += i16::from(w);
+            for (chunk_idx, chunk) in l1_accumulator.iter_mut().enumerate() {
+                let slice = &self.l1.weights[feat].0[chunk_idx * 16..(chunk_idx + 1) * 16];
+                let array_i8: [i8; 16] = slice.try_into().unwrap();
+                let array_i16: [i16; 16] = array_i8.map(|x| x as i16);
+                let weights_i16 = i16x16::from_array(array_i16);
+                *chunk += weights_i16;
             }
         });
 
-        let mut res = Accumulator([0; L1 / 2]);
+        let mut l1_clipped: [i16x16; L1_SIMD_LANES] = [i16x16::splat(0); L1_SIMD_LANES];
 
-        for (elem, (&i, &j)) in res
-            .0
-            .iter_mut()
-            .zip(l1.0.iter().take(L1 / 2).zip(l1.0.iter().skip(L1 / 2)))
-        {
-            let i = i32::from(i).clamp(0, i32::from(QA));
-            let j = i32::from(j).clamp(0, i32::from(QA));
-            *elem = ((i * j) / i32::from(QA / FACTOR)) as i16;
+        for (res, &acc) in l1_clipped.iter_mut().zip(l1_accumulator.iter()) {
+            let min = i16x16::splat(0);
+            let max = i16x16::splat(QA);
+            *res = acc.simd_max(min).simd_min(max);
+        }
+
+        let mut res = Accumulator([0; L1 / 2]);
+        for output_idx in 0..L1 / 2 {
+            let sim_index = output_idx / 16;
+            let lane_index = output_idx % 16;
+
+            let i = l1_clipped[sim_index][lane_index];
+            let j = l1_clipped[L1_SIMD_LANES / 2 + sim_index][lane_index];
+
+            let prod = (i32::from(i) * i32::from(j)) / i32::from(QA / FACTOR);
+            res.0[output_idx] = prod as i16;
         }
 
         res

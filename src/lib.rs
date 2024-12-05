@@ -1,3 +1,5 @@
+#![feature(portable_simd)]
+
 mod chess;
 mod mcts;
 mod networks;
