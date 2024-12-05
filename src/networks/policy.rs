@@ -26,27 +26,27 @@ pub const L1: usize = 12288;
 
 // AVX-512: 512 bits, highest priority for x86_64
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-const CHUNK: usize = 64;
+const CHUNK: usize = 32;
 
 // AVX2: 256 bits, lower priority than AVX-512
 #[cfg(all(target_arch = "x86_64", not(target_feature = "avx512f"), target_feature = "avx2"))]
-const CHUNK: usize = 32;
+const CHUNK: usize = 16;
 
 // SSE2/SSE4.1 fallback: 128 bits, lower priority than AVX2
 #[cfg(all(target_arch = "x86_64", not(target_feature = "avx512f"), not(target_feature = "avx2")))]
-const CHUNK: usize = 16;
+const CHUNK: usize = 8;
 
 // NEON: 128 bits, applies to aarch64 architecture
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-const CHUNK: usize = 16;
+const CHUNK: usize = 8;
 
 // SVE: Scalable Vector Extension (aarch64)
 #[cfg(all(target_arch = "aarch64", target_feature = "sve"))]
-const CHUNK: usize = 128; // SVE vectors can scale to 2048 bits or more
+const CHUNK: usize = 64; // SVE vectors can scale to 2048 bits or more
 
 // RISC-V V-extension
 #[cfg(all(target_arch = "riscv64", target_feature = "v"))]
-const CHUNK: usize = 16; // Base case for vector width, adjustable
+const CHUNK: usize = 8; // Base case for vector width, adjustable
 
 // Generic fallback for any unsupported architecture
 #[cfg(not(any(
