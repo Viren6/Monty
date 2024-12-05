@@ -1,4 +1,5 @@
-use std::simd::prelude::*; 
+use std::simd::i16x16;
+use std::simd::cmp::SimdOrd;
 
 use crate::{
     boxed_and_zeroed,
@@ -19,9 +20,9 @@ const QB: i16 = 128;
 const FACTOR: i16 = 32;
 
 pub const L1: usize = 12288;
-const L1_SIMD_LANES: usize = L1 / 16;
+const L1_SIMD_LANES: usize = L1 / 16; // Number of i16x16 lanes in L1
 
-#[repr(C, align(16))]
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PolicyNetwork {
     l1: Layer<i8, { 768 * 4 }, L1>,
@@ -30,38 +31,44 @@ pub struct PolicyNetwork {
 
 impl PolicyNetwork {
     pub fn hl(&self, pos: &Board) -> Accumulator<i16, { L1 / 2 }> {
-        let mut l1_accumulators = [Simd::<i16, 16>::splat(0); L1_SIMD_LANES];
+        let mut l1_accumulator = [i16x16::splat(0); L1_SIMD_LANES];
 
-        for (chunk_idx, chunk) in l1_accumulators.iter_mut().enumerate() {
+        // Load biases into accumulator
+        for (chunk_idx, chunk) in l1_accumulator.iter_mut().enumerate() {
             let slice = &self.l1.biases.0[chunk_idx * 16..(chunk_idx + 1) * 16];
-            let bias_i16 = Simd::<i8, 16>::from_slice(slice).cast::<i16>();
-            *chunk += bias_i16;
+            let array_i8: [i8; 16] = slice.try_into().unwrap();
+            let array_i16: [i16; 16] = array_i8.map(|x| x as i16);
+            *chunk = i16x16::from_array(array_i16);
         }
 
         pos.map_features(|feat| {
-            for (chunk_idx, chunk) in l1_accumulators.iter_mut().enumerate() {
+            for (chunk_idx, chunk) in l1_accumulator.iter_mut().enumerate() {
                 let slice = &self.l1.weights[feat].0[chunk_idx * 16..(chunk_idx + 1) * 16];
-                let weight_i16 = Simd::<i8, 16>::from_slice(slice).cast::<i16>();
-                *chunk += weight_i16;
+                let array_i8: [i8; 16] = slice.try_into().unwrap();
+                let array_i16: [i16; 16] = array_i8.map(|x| x as i16);
+                let weights_i16 = i16x16::from_array(array_i16);
+                *chunk += weights_i16;
             }
         });
 
-        let min = Simd::<i16, 16>::splat(0);
-        let max = Simd::<i16, 16>::splat(QA);
-        let l1_clipped: [Simd<i16, 16>; L1_SIMD_LANES] = l1_accumulators
-            .map(|acc| acc.simd_max(min).simd_min(max));
+        let mut l1_clipped: [i16x16; L1_SIMD_LANES] = [i16x16::splat(0); L1_SIMD_LANES];
+
+        for (res, &acc) in l1_clipped.iter_mut().zip(l1_accumulator.iter()) {
+            let min = i16x16::splat(0);
+            let max = i16x16::splat(QA);
+            *res = acc.simd_max(min).simd_min(max);
+        }
 
         let mut res = Accumulator([0; L1 / 2]);
+        for output_idx in 0..L1 / 2 {
+            let sim_index = output_idx / 16;
+            let lane_index = output_idx % 16;
 
-        for sim_index in 0..(L1_SIMD_LANES / 2) {
-            let i_simd = l1_clipped[sim_index];
-            let j_simd = l1_clipped[L1_SIMD_LANES / 2 + sim_index];
+            let i = l1_clipped[sim_index][lane_index];
+            let j = l1_clipped[L1_SIMD_LANES / 2 + sim_index][lane_index];
 
-            let scaling_factor = QA / FACTOR;
-            let scaled_simd = (i_simd * j_simd) / Simd::<i16, 16>::splat(scaling_factor);
-
-            res.0[sim_index * 16..(sim_index + 1) * 16]
-                .copy_from_slice(&scaled_simd.to_array());
+            let prod = (i32::from(i) * i32::from(j)) / i32::from(QA / FACTOR);
+            res.0[output_idx] = prod as i16;
         }
 
         res
@@ -71,23 +78,10 @@ impl PolicyNetwork {
         let idx = map_move_to_index(pos, *mov);
         let weights = &self.l2.weights[idx];
 
-        let mut res = 0i32;
+        let mut res = 0;
 
-        const SIMD_WIDTH: usize = 16;
-        let chunks = hl.0.len() / SIMD_WIDTH;
-        for chunk_idx in 0..chunks {
-            let w_simd = Simd::<i8, SIMD_WIDTH>::from_slice(&weights.0[chunk_idx * SIMD_WIDTH..(chunk_idx + 1) * SIMD_WIDTH]);
-            let v_simd = Simd::<i16, SIMD_WIDTH>::from_slice(&hl.0[chunk_idx * SIMD_WIDTH..(chunk_idx + 1) * SIMD_WIDTH]);
-
-            let w_i16 = w_simd.cast::<i16>();
-
-            let prod = w_i16 * v_simd;
-
-            let array: [i16; 16] = prod.to_array();
-
-            let sum: i32 = array.iter().map(|x| *x as i32).sum();
-
-            res = res.wrapping_add(sum);
+        for (&w, &v) in weights.0.iter().zip(hl.0.iter()) {
+            res += i32::from(w) * i32::from(v);
         }
 
         (res as f32 / f32::from(QA * FACTOR) + f32::from(self.l2.biases.0[idx])) / f32::from(QB)
@@ -153,4 +147,3 @@ impl UnquantisedPolicyNetwork {
         quantised
     }
 }
-
