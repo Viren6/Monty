@@ -8,13 +8,13 @@ use super::{
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals)]
-pub const ValueFileDefaultName: &str = "nn-68b9a835a698.network";
+pub const ValueFileDefaultName: &str = "nn-370690ccb860.network";
 
 const QA: i16 = 512;
 const QB: i16 = 1024;
 const FACTOR: i16 = 32;
 
-const L1: usize = 6144;
+const L1: usize = 2048;
 
 #[repr(C)]
 pub struct ValueNetwork {
@@ -88,8 +88,8 @@ impl ValueNetwork {
 
 #[repr(C)]
 pub struct UnquantisedValueNetwork {
-    l1: Layer<f32, { 768 * 4 }, 6144>,
-    l2: Layer<f32, 3072, 16>,
+    l1: Layer<f32, { 768 * 4 }, 2048>,
+    l2: Layer<f32, 1024, 16>,
     l3: Layer<f32, 16, 128>,
     l4: Layer<f32, 128, 3>,
     pst: Layer<f32, { 768 * 4 }, 3>,
