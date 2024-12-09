@@ -29,7 +29,7 @@ impl<T: AddAssign<T> + Copy + Mul<T, Output = T> + From<i16>, const N: usize> Ac
 }
 
 impl<const N: usize> Accumulator<i16, N> {
-    pub fn add_multi(&mut self, adds: &[usize], weights: &[Self]) {
+    pub fn add_multi(&mut self, adds: &[usize], weights: &[Accumulator<i8, N>]) {
         const REGS: usize = 8;
         const PER: usize = REGS * 16;
 
@@ -46,7 +46,7 @@ impl<const N: usize> Accumulator<i16, N> {
                 let this_weight = &weights[add];
 
                 for (j, reg) in regs.iter_mut().enumerate() {
-                    *reg += this_weight.0[offset + j];
+                    *reg += i16::from(this_weight.0[offset + j]);
                 }
             }
 

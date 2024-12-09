@@ -8,14 +8,6 @@ pub struct Layer<T: Copy, const M: usize, const N: usize> {
 }
 
 impl<const M: usize, const N: usize> Layer<f32, M, N> {
-    pub fn quantise_into_i16(&self, dest: &mut Layer<i16, M, N>, qa: i16, warn_limit: f32) {
-        for (acc_i, acc_j) in dest.weights.iter_mut().zip(self.weights.iter()) {
-            *acc_i = acc_j.quantise_i16(qa, warn_limit);
-        }
-
-        dest.biases = self.biases.quantise_i16(qa, warn_limit);
-    }
-
     pub fn quantise_into_i8(&self, dest: &mut Layer<i8, M, N>, qa: i16, warn_limit: f32) {
         for (acc_i, acc_j) in dest.weights.iter_mut().zip(self.weights.iter()) {
             *acc_i = acc_j.quantise_i8(qa, warn_limit);

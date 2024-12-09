@@ -1,20 +1,20 @@
 use crate::{boxed_and_zeroed, Board};
 
-use super::layer::{Layer, TransposedLayer};
+use super::{layer::{Layer, TransposedLayer}, Accumulator};
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals)]
 pub const ValueFileDefaultName: &str = "nn-a0a560b3ac29.network";
 
-const QA: i16 = 512;
+const QA: i16 = 128;
 const QB: i16 = 1024;
-const FACTOR: i16 = 32;
+const FACTOR: i16 = 8;
 
 const L1: usize = 12288;
 
 #[repr(C)]
 pub struct ValueNetwork {
-    l1: Layer<i16, { 768 * 4 }, L1>,
+    l1: Layer<i8, { 768 * 4 }, L1>,
     l2: TransposedLayer<i16, L1, 3>,
 }
 
@@ -27,7 +27,11 @@ impl ValueNetwork {
             count += 1;
         });
 
-        let mut l2 = self.l1.biases;
+        let mut l2 = Accumulator([0; L1]);
+        
+        for (i, &j) in l2.0.iter_mut().zip(self.l1.biases.0.iter()) {
+            *i = i16::from(j);
+        }
 
         l2.add_multi(&feats[..count], &self.l1.weights);
 
@@ -59,7 +63,7 @@ impl UnquantisedValueNetwork {
     pub fn quantise(&self) -> Box<ValueNetwork> {
         let mut quantised: Box<ValueNetwork> = unsafe { boxed_and_zeroed() };
 
-        self.l1.quantise_into_i16(&mut quantised.l1, QA, 0.99);
+        self.l1.quantise_into_i8(&mut quantised.l1, QA, 0.99);
         self.l2
             .quantise_transpose_into_i16(&mut quantised.l2, QB, 0.99);
 
