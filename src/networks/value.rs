@@ -26,7 +26,15 @@ pub struct ValueNetwork {
 }
 
 impl ValueNetwork {
-    pub fn eval(&self, board: &Board) -> (f32, f32, f32) {
+    pub fn eval(
+        &self,
+        board: &Board,
+        wdl_rescale_ratio: f32,
+        wdl_rescale_diff: f32,
+        sign: f32,
+        invert: bool,
+        max_reasonable_s: f32,
+    ) -> (f32, f32, f32) {
         let mut pst = self.pst.biases;
 
         let mut count = 0;
@@ -38,11 +46,9 @@ impl ValueNetwork {
         });
 
         let mut l2 = self.l1.biases;
-
         l2.add_multi(&feats[..count], &self.l1.weights);
 
         let mut act = [0; L1 / 2];
-
         for (a, (&i, &j)) in act
             .iter_mut()
             .zip(l2.0.iter().take(L1 / 2).zip(l2.0.iter().skip(L1 / 2)))
@@ -53,7 +59,6 @@ impl ValueNetwork {
         }
 
         let mut fwd = [0; 16];
-
         for (f, row) in fwd.iter_mut().zip(self.l2.weights.iter()) {
             for (&a, &w) in act.iter().zip(row.0.iter()) {
                 *f += i32::from(a) * i32::from(w);
@@ -61,7 +66,6 @@ impl ValueNetwork {
         }
 
         let mut l3 = Accumulator([0.0; 16]);
-
         for (r, (&f, &b)) in l3.0.iter_mut().zip(fwd.iter().zip(self.l2.biases.0.iter())) {
             *r = (f as f32 / f32::from(QA * FACTOR) + f32::from(b)) / f32::from(QB);
         }
@@ -75,16 +79,81 @@ impl ValueNetwork {
         let mut loss = out.0[0];
 
         let max = win.max(draw).max(loss);
-
         win = (win - max).exp();
         draw = (draw - max).exp();
         loss = (loss - max).exp();
 
         let sum = win + draw + loss;
+        let mut v = win / sum - loss / sum;
+        let mut d = draw / sum;
 
-        (win / sum, draw / sum, loss / sum)
+        wdl_rescale(
+            &mut v,
+            &mut d,
+            wdl_rescale_ratio,
+            wdl_rescale_diff,
+            sign,
+            invert,
+            max_reasonable_s,
+        );
+
+        let w_new = (1.0 + v - d) / 2.0;
+        let l_new = (1.0 - v - d) / 2.0;
+        let d_new = d;
+
+        (w_new, d_new, l_new)
     }
 }
+
+fn wdl_rescale(
+    v: &mut f32,
+    d: &mut f32,
+    wdl_rescale_ratio: f32,
+    wdl_rescale_diff: f32,
+    sign: f32,
+    invert: bool,
+    max_reasonable_s: f32,
+) -> f32 {
+    let w = (1.0 + *v - *d) / 2.0;
+    let l = (1.0 - *v - *d) / 2.0;
+    const EPS: f32 = 0.0001;
+
+    if w > EPS && *d > EPS && l > EPS && w < (1.0 - EPS) && *d < (1.0 - EPS) && l < (1.0 - EPS) {
+        let a = fast_log(1.0 / l - 1.0);
+        let b = fast_log(1.0 / w - 1.0);
+        let mut s: f32 = 2.0 / (a + b);
+
+        if !invert {
+            s = s.min(max_reasonable_s);
+        }
+
+        let mu = (a - b) / (a + b);
+        let mut s_new = s * wdl_rescale_ratio;
+        if invert {
+            std::mem::swap(&mut s, &mut s_new);
+            s = s.min(max_reasonable_s);
+        }
+
+        let mu_new = mu + sign * s * s * wdl_rescale_diff;
+        let w_new = fast_logistic((-1.0 + mu_new) / s_new);
+        let l_new = fast_logistic((-1.0 - mu_new) / s_new);
+
+        *v = w_new - l_new;
+        *d = (1.0 - w_new - l_new).max(0.0);
+
+        return mu_new;
+    }
+    0.0
+}
+
+fn fast_log(x: f32) -> f32 {
+    x.ln()
+}
+
+fn fast_logistic(x: f32) -> f32 {
+    1.0 / (1.0 + (-x).exp())
+}
+
 
 #[repr(C)]
 pub struct UnquantisedValueNetwork {
