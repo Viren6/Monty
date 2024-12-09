@@ -142,7 +142,7 @@ impl ChessState {
 
     pub fn get_value(&self, value: &ValueNetwork, _params: &MctsParams, sign: f32) -> i32 {
         const K: f32 = 400.0;
-        let (win, draw, _) = value.eval(&self.board, 1.2, -0.05, sign, false, 10.0);
+        let (win, draw, _) = value.eval(&self.board, 0.8, -0.05, sign, false, 10.0);
 
         let score = win + draw / 2.0;
         let cp = (-K * (1.0 / score.clamp(0.0, 1.0) - 1.0).ln()) as i32;
