@@ -18,7 +18,7 @@ default:
 # Ensure latest stable rust is installed
 .PHONY: update-stable
 update-stable:
-	source $$HOME/.cargo/env && rustup update stable
+	TMPDIR=/root/.rustup/tmp source $$HOME/.cargo/env && rustup update stable
 
 montytest: update-stable
 	cargo +stable rustc --release --bin monty --features=uci-minimal,tunable -- -C target-cpu=native --emit link=$(NAME)
