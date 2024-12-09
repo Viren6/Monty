@@ -8,7 +8,7 @@ use super::{
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals)]
-pub const ValueFileDefaultName: &str = "nn-9a6bc62bab6a.network";
+pub const ValueFileDefaultName: &str = "nn-02b435bff555.network";
 
 const QA: i16 = 512;
 const QB: i16 = 1024;
