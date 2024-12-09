@@ -140,9 +140,9 @@ impl ChessState {
         self.board.piece(piece).count_ones() as i32
     }
 
-    pub fn get_value(&self, value: &ValueNetwork, _params: &MctsParams) -> i32 {
+    pub fn get_value(&self, value: &ValueNetwork, _params: &MctsParams, sign: f32) -> i32 {
         const K: f32 = 400.0;
-        let (win, draw, _) = value.eval(&self.board, 1.2, 0.05, 1.0, false, 10.0);
+        let (win, draw, _) = value.eval(&self.board, 1.2, 0.05, sign, false, 10.0);
 
         let score = win + draw / 2.0;
         let cp = (-K * (1.0 / score.clamp(0.0, 1.0) - 1.0).ln()) as i32;
@@ -165,8 +165,8 @@ impl ChessState {
         cp
     }
 
-    pub fn get_value_wdl(&self, value: &ValueNetwork, params: &MctsParams) -> f32 {
-        1.0 / (1.0 + (-(self.get_value(value, params) as f32) / 400.0).exp())
+    pub fn get_value_wdl(&self, value: &ValueNetwork, params: &MctsParams, sign: f32) -> f32 {
+        1.0 / (1.0 + (-(self.get_value(value, params, sign) as f32) / 400.0).exp())
     }
 
     pub fn perft(&self, depth: usize) -> u64 {

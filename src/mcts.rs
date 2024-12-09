@@ -238,7 +238,7 @@ impl<'a> Searcher<'a> {
             self.tree
                 .expand_node(ptr, &self.root_position, self.params, self.policy, 1);
 
-            let root_eval = self.root_position.get_value_wdl(self.value, self.params);
+            let root_eval = self.root_position.get_value_wdl(self.value, self.params, -1.0);
             self.tree[ptr].update(1.0 - root_eval);
         }
         // relabel preexisting root policies with root PST value
@@ -324,15 +324,17 @@ impl<'a> Searcher<'a> {
                 node.set_state(pos.game_state());
             }
 
+            let sign = if *depth % 2 == 0 { -1.0 } else { 1.0 };
+
             // probe hash table to use in place of network
             if node.state() == GameState::Ongoing {
                 if let Some(entry) = self.tree.probe_hash(hash) {
                     entry.q()
                 } else {
-                    self.get_utility(ptr, pos)
+                    self.get_utility(ptr, pos, sign)
                 }
             } else {
-                self.get_utility(ptr, pos)
+                self.get_utility(ptr, pos, sign)
             }
         } else {
             // expand node on the second visit
@@ -391,9 +393,9 @@ impl<'a> Searcher<'a> {
         Some(u)
     }
 
-    fn get_utility(&self, ptr: NodePtr, pos: &ChessState) -> f32 {
+    fn get_utility(&self, ptr: NodePtr, pos: &ChessState, sign: f32) -> f32 {
         match self.tree[ptr].state() {
-            GameState::Ongoing => pos.get_value_wdl(self.value, self.params),
+            GameState::Ongoing => pos.get_value_wdl(self.value, self.params, sign),
             GameState::Draw => 0.5,
             GameState::Lost(_) => 0.0,
             GameState::Won(_) => 1.0,

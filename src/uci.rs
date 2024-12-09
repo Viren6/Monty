@@ -89,7 +89,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
                 println!("win: {:.2}%", win * 100.0);
                 println!("draw: {:.2}%", draw * 100.0);
                 println!("loss: {:.2}%", loss * 100.0);
-                println!("score: {:.2}%", 100.0 * pos.get_value_wdl(value, &params));
+                println!("score: {:.2}%", 100.0 * pos.get_value_wdl(value, &params, 1.0));
             }
             "policy" => {
                 let f = pos.get_policy_feats(policy);
