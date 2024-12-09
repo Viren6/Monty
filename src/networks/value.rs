@@ -32,8 +32,6 @@ impl ValueNetwork {
         wdl_rescale_ratio: f32,
         wdl_rescale_diff: f32,
         sign: f32,
-        invert: bool,
-        max_reasonable_s: f32,
     ) -> (f32, f32, f32) {
         let mut pst = self.pst.biases;
 
@@ -93,8 +91,6 @@ impl ValueNetwork {
             wdl_rescale_ratio,
             wdl_rescale_diff,
             sign,
-            invert,
-            max_reasonable_s,
         );
 
         let w_new = (1.0 + v - d) / 2.0;
@@ -111,8 +107,6 @@ fn wdl_rescale(
     wdl_rescale_ratio: f32,
     wdl_rescale_diff: f32,
     sign: f32,
-    invert: bool,
-    max_reasonable_s: f32,
 ) -> f32 {
     let w = (1.0 + *v - *d) / 2.0;
     let l = (1.0 - *v - *d) / 2.0;
@@ -121,18 +115,10 @@ fn wdl_rescale(
     if w > EPS && *d > EPS && l > EPS && w < (1.0 - EPS) && *d < (1.0 - EPS) && l < (1.0 - EPS) {
         let a = fast_log(1.0 / l - 1.0);
         let b = fast_log(1.0 / w - 1.0);
-        let mut s: f32 = 2.0 / (a + b);
-
-        if !invert {
-            s = s.min(max_reasonable_s);
-        }
+        let s: f32 = 2.0 / (a + b);
 
         let mu = (a - b) / (a + b);
-        let mut s_new = s * wdl_rescale_ratio;
-        if invert {
-            std::mem::swap(&mut s, &mut s_new);
-            s = s.min(max_reasonable_s);
-        }
+        let s_new = s * wdl_rescale_ratio;
 
         let mu_new = mu + sign * s * s * wdl_rescale_diff;
         let w_new = fast_logistic((-1.0 + mu_new) / s_new);
