@@ -4,7 +4,7 @@ use super::{layer::{Layer, TransposedLayer}, Accumulator};
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals)]
-pub const ValueFileDefaultName: &str = "nn-a0a560b3ac29.network";
+pub const ValueFileDefaultName: &str = "nn-9de4900a477e.network";
 
 const QA: i16 = 128;
 const QB: i16 = 1024;
