@@ -85,7 +85,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
             "perft" => run_perft(&commands, &pos),
             "quit" => std::process::exit(0),
             "eval" => {
-                let (win, draw, loss) = value.eval(&pos.board(), 1.0, -0.05, 1.0);
+                let (win, draw, loss) = value.eval(&pos.board(), 0.4, 0.1, 1.0);
                 println!("win: {:.2}%", win * 100.0);
                 println!("draw: {:.2}%", draw * 100.0);
                 println!("loss: {:.2}%", loss * 100.0);
