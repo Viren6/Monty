@@ -140,7 +140,7 @@ impl ChessState {
         self.board.piece(piece).count_ones() as i32
     }
 
-    pub fn get_value(&self, value: &ValueNetwork, _params: &MctsParams) -> i32 {
+    pub fn get_value(&self, value: &ValueNetwork, _params: &MctsParams, root_eval: f32) -> i32 {
         const K: f32 = 400.0;
         let (win, draw, _) = value.eval(&self.board);
 
@@ -158,15 +158,23 @@ impl ChessState {
 
             mat = _params.material_offset() + mat / _params.material_div1();
 
-            cp * mat / _params.material_div2()
+            let matScaledEval = cp * mat / _params.material_div2();
+
+            let rootEvalcp = (-K * (1.0 / root_eval.clamp(0.0, 1.0) - 1.0).ln()) as i32;
+            matScaledEval - rootEvalcp / 700000
         }
 
         #[cfg(feature = "datagen")]
         cp
     }
 
-    pub fn get_value_wdl(&self, value: &ValueNetwork, params: &MctsParams) -> f32 {
-        1.0 / (1.0 + (-(self.get_value(value, params) as f32) / 400.0).exp())
+    pub fn get_value_wdl(
+        &self,
+        value: &ValueNetwork,
+        params: &MctsParams,
+        root_eval: f32,
+    ) -> f32 {
+        1.0 / (1.0 + (-(self.get_value(value, params, root_eval) as f32) / 400.0).exp())
     }
 
     pub fn perft(&self, depth: usize) -> u64 {
