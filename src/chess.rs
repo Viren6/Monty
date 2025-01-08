@@ -146,7 +146,7 @@ impl ChessState {
 
         let score = win + draw / 2.0;
         let clamped_score = score.clamp(0.0, 1.0);
-        let adjusted_score = (0.5 + (clamped_score - 0.5).powi(3) * 100.0).clamp(0.01, 0.99);
+        let adjusted_score = 0.5 + (clamped_score - 0.5).powi(3) * 100.0;
         let cp = (-K * (1.0 / adjusted_score - 1.0).ln()) as i32;
 
         #[cfg(not(feature = "datagen"))]
