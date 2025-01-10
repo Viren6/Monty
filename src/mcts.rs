@@ -442,17 +442,18 @@ impl<'a> Searcher<'a> {
 
             // virtual loss
             let threads = f64::from(child.threads());
-            let visits = f64::from(child.visits());
             if threads > 0.0 {
+                let visits = f64::from(child.visits());
                 let q2 = f64::from(q) * visits / (visits + threads);
                 q = q2 as f32;
             }
 
             let mut policy = child.policy();
+            let parent_visits = node.visits();
 
-            let proportionality_factor = 0.001;
+            let proportionality_factor = 0.0001;
 
-            let policy_decay_factor = 1.0 / (1.0 + proportionality_factor * visits as f32).sqrt();
+            let policy_decay_factor = 1.0 / (1.0 + proportionality_factor * parent_visits as f32).sqrt();
             policy = policy / (policy + (1.0 - policy) * policy_decay_factor);
 
             let u = expl * policy / (1 + child.visits()) as f32;
