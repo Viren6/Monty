@@ -158,7 +158,7 @@ impl ChessState {
 
             mat = _params.material_offset() + mat / _params.material_div1();
 
-            cp * mat / _params.material_div2()
+            cp * mat / _params.material_div2() * (200 - self.board.halfm() as i32) / 200
         }
 
         #[cfg(feature = "datagen")]
