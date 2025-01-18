@@ -10,9 +10,9 @@ use super::{
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals, dead_code)]
-pub const PolicyFileDefaultName: &str = "nn-658ca1d47406.network";
+pub const PolicyFileDefaultName: &str = "nn-eda39dff9183.network";
 #[allow(non_upper_case_globals, dead_code)]
-pub const CompressedPolicyName: &str = "nn-4b70c6924179.network";
+pub const CompressedPolicyName: &str = "nn-705f2b6e2af4.network";
 
 const QA: i16 = 128;
 const QB: i16 = 128;
