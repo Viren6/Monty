@@ -8,7 +8,7 @@ use super::{
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals, dead_code)]
-pub const ValueFileDefaultName: &str = "nn-57f82203fc74.network";
+pub const ValueFileDefaultName: &str = "nn-d31b014c13d4.network";
 #[allow(non_upper_case_globals, dead_code)]
 pub const CompressedValueName: &str = "nn-f004da0ebf25.network";
 
@@ -84,6 +84,6 @@ impl ValueNetwork {
 
         let sum = win + draw + loss;
 
-        (win / sum, draw / sum, loss / sum)
+        (loss / sum, draw / sum, win / sum)
     }
 }
