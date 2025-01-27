@@ -84,6 +84,6 @@ impl ValueNetwork {
 
         let sum = win + draw + loss;
 
-        (loss / sum, draw / sum, win / sum)
+        (win / sum, draw / sum, loss / sum)
     }
 }
