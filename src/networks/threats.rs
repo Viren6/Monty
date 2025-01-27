@@ -10,7 +10,7 @@ pub fn map_features<F: FnMut(usize)>(pos: &Board, mut f: F) {
     let mut bbs = pos.bbs();
 
     // flip to stm perspective
-    if pos.stm() == Side::WHITE {
+    if pos.stm() == Side::BLACK {
         bbs.swap(0, 1);
         for bb in bbs.iter_mut() {
             *bb = bb.swap_bytes()

@@ -20,16 +20,16 @@ const L1: usize = 3072;
 
 #[repr(C)]
 pub struct ValueNetwork {
-    pst: [Accumulator<f32, 3>; threats::TOTAL],
+    pst: [Accumulator<f32, 1>; threats::TOTAL],
     l1: Layer<i16, { threats::TOTAL }, L1>,
     l2: TransposedLayer<i16, { L1 / 2 }, 16>,
     l3: Layer<f32, 16, 128>,
-    l4: Layer<f32, 128, 3>,
+    l4: Layer<f32, 128, 1>,
 }
 
 impl ValueNetwork {
-    pub fn eval(&self, board: &Board) -> (f32, f32, f32) {
-        let mut pst = Accumulator([0.0; 3]);
+    pub fn eval(&self, board: &Board) -> i32 {
+        let mut pst = Accumulator([0.0]);
 
         let mut count = 0;
         let mut feats = [0; 160];
@@ -72,18 +72,6 @@ impl ValueNetwork {
         let mut out = self.l4.forward::<SCReLU>(&l4);
         out.add(&pst);
 
-        let mut win = out.0[2];
-        let mut draw = out.0[1];
-        let mut loss = out.0[0];
-
-        let max = win.max(draw).max(loss);
-
-        win = (win - max).exp();
-        draw = (draw - max).exp();
-        loss = (loss - max).exp();
-
-        let sum = win + draw + loss;
-
-        (win / sum, draw / sum, loss / sum)
+        (out.0[0] * 400.0) as i32
     }
 }
