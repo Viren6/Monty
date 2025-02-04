@@ -11,6 +11,8 @@ use std::{
     time::Instant,
 };
 
+use std::io::Write;
+
 pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
     let mut pos = ChessState::default();
     let mut root_game_ply = 0;
@@ -84,6 +86,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
             "eval" => {
                 println!("cp: {}", pos.get_value(value, &params));
                 println!("wdl: {:.2}%", 100.0 * pos.get_value_wdl(value, &params));
+                io::stdout().flush().expect("Failed to flush stdout");
             }
             "policy" => {
                 let f = pos.get_policy_feats(policy);
