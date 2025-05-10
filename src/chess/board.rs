@@ -174,14 +174,6 @@ impl Board {
         let flip = self.stm() == Side::BLACK;
         let hm = if self.king_index() % 8 > 3 { 7 } else { 0 };
 
-        let mut threats = self.threats_by(self.stm() ^ 1);
-        let mut defences = self.threats_by(self.stm());
-
-        if flip {
-            threats = threats.swap_bytes();
-            defences = defences.swap_bytes();
-        }
-
         for piece in Piece::PAWN..=Piece::KING {
             let pc = 64 * (piece - 2);
 
@@ -195,33 +187,13 @@ impl Board {
 
             while our_bb > 0 {
                 pop_lsb!(sq, our_bb);
-                let mut feat = pc + usize::from(sq ^ hm);
-
-                let bit = 1 << sq;
-                if threats & bit > 0 {
-                    feat += 768;
-                }
-
-                if defences & bit > 0 {
-                    feat += 768 * 2;
-                }
-
+                let feat = pc + usize::from(sq ^ hm);
                 f(feat);
             }
 
             while opp_bb > 0 {
                 pop_lsb!(sq, opp_bb);
-                let mut feat = 384 + pc + usize::from(sq ^ hm);
-
-                let bit = 1 << sq;
-                if threats & bit > 0 {
-                    feat += 768;
-                }
-
-                if defences & bit > 0 {
-                    feat += 768 * 2;
-                }
-
+                let feat = 384 + pc + usize::from(sq ^ hm);
                 f(feat);
             }
         }
@@ -307,83 +279,6 @@ impl Board {
         };
 
         threats
-    }
-
-    fn gain(&self, mov: &Move) -> i32 {
-        if mov.is_en_passant() {
-            return SEE_VALS[Piece::PAWN];
-        }
-        let mut score = SEE_VALS[self.get_pc(1 << mov.to())];
-        if mov.is_promo() {
-            score += SEE_VALS[mov.promo_pc()] - SEE_VALS[Piece::PAWN];
-        }
-        score
-    }
-
-    pub fn see(&self, mov: &Move, threshold: i32) -> bool {
-        let sq = usize::from(mov.to());
-        assert!(sq < 64, "wha");
-        let mut next = if mov.is_promo() {
-            mov.promo_pc()
-        } else {
-            self.get_pc(1 << mov.src())
-        };
-        let mut score = self.gain(mov) - threshold - SEE_VALS[next];
-
-        if score >= 0 {
-            return true;
-        }
-
-        let mut occ = (self.bb[Side::WHITE] | self.bb[Side::BLACK]) ^ (1 << mov.src()) ^ (1 << sq);
-        if mov.is_en_passant() {
-            occ ^= 1 << (sq ^ 8);
-        }
-
-        let bishops = self.bb[Piece::BISHOP] | self.bb[Piece::QUEEN];
-        let rooks = self.bb[Piece::ROOK] | self.bb[Piece::QUEEN];
-        let mut us = usize::from(!self.stm);
-        let mut attackers = (Attacks::knight(sq) & self.bb[Piece::KNIGHT])
-            | (Attacks::king(sq) & self.bb[Piece::KING])
-            | (Attacks::pawn(sq, Side::WHITE) & self.bb[Piece::PAWN] & self.bb[Side::BLACK])
-            | (Attacks::pawn(sq, Side::BLACK) & self.bb[Piece::PAWN] & self.bb[Side::WHITE])
-            | (Attacks::rook(sq, occ) & rooks)
-            | (Attacks::bishop(sq, occ) & bishops);
-
-        loop {
-            let our_attackers = attackers & self.bb[us];
-            if our_attackers == 0 {
-                break;
-            }
-
-            for pc in Piece::PAWN..=Piece::KING {
-                let board = our_attackers & self.bb[pc];
-                if board > 0 {
-                    occ ^= board & board.wrapping_neg();
-                    next = pc;
-                    break;
-                }
-            }
-
-            if [Piece::PAWN, Piece::BISHOP, Piece::QUEEN].contains(&next) {
-                attackers |= Attacks::bishop(sq, occ) & bishops;
-            }
-            if [Piece::ROOK, Piece::QUEEN].contains(&next) {
-                attackers |= Attacks::rook(sq, occ) & rooks;
-            }
-
-            attackers &= occ;
-            score = -score - 1 - SEE_VALS[next];
-            us ^= 1;
-
-            if score >= 0 {
-                if next == Piece::KING && attackers & self.bb[us] > 0 {
-                    us ^= 1;
-                }
-                break;
-            }
-        }
-
-        self.stm != (us == 1)
     }
 
     // MODIFY POSITION

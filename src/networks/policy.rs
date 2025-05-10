@@ -1,7 +1,4 @@
-use crate::{
-    boxed_and_zeroed,
-    chess::{Attacks, Board, Move},
-};
+use crate::chess::{Attacks, Board, Move};
 
 use super::{
     accumulator::Accumulator,
@@ -23,8 +20,8 @@ pub const L1: usize = 12288;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PolicyNetwork {
-    l1: Layer<i8, { 768 * 4 }, L1>,
-    l2: TransposedLayer<i8, { L1 / 2 }, { 1880 * 2 }>,
+    l1: Layer<i8, 768, L1>,
+    l2: TransposedLayer<i8, { L1 / 2 }, 1880>,
 }
 
 impl PolicyNetwork {
@@ -70,13 +67,10 @@ impl PolicyNetwork {
     }
 }
 
-const PROMOS: usize = 4 * 22;
-
 fn map_move_to_index(pos: &Board, mov: Move) -> usize {
     let hm = if pos.king_index() % 8 > 3 { 7 } else { 0 };
-    let good_see = (OFFSETS[64] + PROMOS) * usize::from(pos.see(&mov, -108));
 
-    let idx = if mov.is_promo() {
+    if mov.is_promo() {
         let ffile = (mov.src() ^ hm) % 8;
         let tfile = (mov.to() ^ hm) % 8;
         let promo_id = 2 * ffile + tfile;
@@ -90,9 +84,7 @@ fn map_move_to_index(pos: &Board, mov: Move) -> usize {
         let below = Attacks::ALL_DESTINATIONS[from] & ((1 << dest) - 1);
 
         OFFSETS[from] + below.count_ones() as usize
-    };
-
-    good_see + idx
+    }
 }
 
 const OFFSETS: [usize; 65] = {
@@ -111,21 +103,3 @@ const OFFSETS: [usize; 65] = {
 
     offsets
 };
-
-#[repr(C)]
-pub struct UnquantisedPolicyNetwork {
-    l1: Layer<f32, { 768 * 4 }, L1>,
-    l2: Layer<f32, { L1 / 2 }, { 1880 * 2 }>,
-}
-
-impl UnquantisedPolicyNetwork {
-    pub fn quantise(&self) -> Box<PolicyNetwork> {
-        let mut quantised: Box<PolicyNetwork> = unsafe { boxed_and_zeroed() };
-
-        self.l1.quantise_into_i8(&mut quantised.l1, QA, 0.99);
-        self.l2
-            .quantise_transpose_into_i8(&mut quantised.l2, QB, 0.99);
-
-        quantised
-    }
-}
