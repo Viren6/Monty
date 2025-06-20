@@ -132,6 +132,21 @@ impl Tree {
             return Some(());
         }
 
+        let child_half_usize = usize::from(first_child_ptr.half());
+
+        if self.tree[child_half_usize].node_epoch(first_child_ptr)
+            != self.tree[child_half_usize].current_epoch()
+        {
+            let most_recent_ptr = self[parent_ptr].actions_mut();
+
+            if most_recent_ptr.val() == first_child_ptr {
+                most_recent_ptr.store(NodePtr::NULL);
+                self[parent_ptr].set_num_actions(0);
+            }
+
+            return Some(());
+        }
+
         if first_child_ptr.half() != current_half {
             let most_recent_ptr = self[parent_ptr].actions_mut();
 
