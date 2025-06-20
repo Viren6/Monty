@@ -133,7 +133,9 @@ impl Tree {
                 return Some(());
             }
 
-            assert_eq!(first_child_ptr, most_recent_ptr.val());
+            if most_recent_ptr.val() != first_child_ptr {
+                return Some(());
+            }
 
             let num_children = self[parent_ptr].num_actions();
             let new_ptr = self.tree[self.half()].reserve_nodes_thread(num_children, thread_id)?;
