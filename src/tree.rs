@@ -125,17 +125,11 @@ impl Tree {
     #[must_use]
     pub fn fetch_children(&self, parent_ptr: NodePtr, thread_id: usize) -> Option<()> {
         let first_child_ptr = { self[parent_ptr].actions() };
-        let current_half = self.half.load(Ordering::Relaxed);
-        let current_half_usize = usize::from(current_half);
 
-        if first_child_ptr.is_null() {
-            return Some(());
-        }
-
-        if first_child_ptr.half() != current_half {
+        if first_child_ptr.half() != self.half.load(Ordering::Relaxed) {
             let most_recent_ptr = self[parent_ptr].actions_mut();
 
-            if most_recent_ptr.val().half() == current_half {
+            if most_recent_ptr.val().half() == self.half.load(Ordering::Relaxed) {
                 return Some(());
             }
 
@@ -144,21 +138,11 @@ impl Tree {
             }
 
             let num_children = self[parent_ptr].num_actions();
-            let new_ptr =
-                self.tree[current_half_usize].reserve_nodes_thread(num_children, thread_id)?;
+            let new_ptr = self.tree[self.half()].reserve_nodes_thread(num_children, thread_id)?;
 
             self.copy_across(first_child_ptr, num_children, new_ptr)?;
 
             most_recent_ptr.store(new_ptr);
-        } else if self.tree[current_half_usize].node_epoch(first_child_ptr)
-            != self.tree[current_half_usize].current_epoch()
-        {
-            let most_recent_ptr = self[parent_ptr].actions_mut();
-
-            if most_recent_ptr.val() == first_child_ptr {
-                most_recent_ptr.store(NodePtr::NULL);
-                self[parent_ptr].set_num_actions(0);
-            }
         }
 
         Some(())
