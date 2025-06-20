@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{Node, NodePtr};
 use crate::chess::GameState;
@@ -7,8 +7,6 @@ const CACHE_SIZE: usize = 1024;
 
 pub struct TreeHalf {
     pub(super) nodes: Vec<Node>,
-    epochs: Vec<AtomicU32>,
-    epoch: AtomicU32,
     used: AtomicUsize,
     next: Vec<AtomicUsize>,
     end: Vec<AtomicUsize>,
@@ -27,8 +25,6 @@ impl TreeHalf {
     pub fn new(size: usize, half: bool, threads: usize) -> Self {
         let mut res = Self {
             nodes: Vec::new(),
-            epochs: Vec::new(),
-            epoch: AtomicU32::new(0),
             used: AtomicUsize::new(0),
             next: (0..threads).map(|_| AtomicUsize::new(0)).collect(),
             end: (0..threads).map(|_| AtomicUsize::new(0)).collect(),
@@ -36,7 +32,6 @@ impl TreeHalf {
         };
 
         res.nodes.reserve_exact(size);
-        res.epochs.resize_with(size, || AtomicU32::new(0));
 
         unsafe {
             use std::mem::MaybeUninit;
@@ -74,24 +69,15 @@ impl TreeHalf {
             end = start + block;
             self.next[thread].store(next + num, Ordering::Relaxed);
             self.end[thread].store(end, Ordering::Relaxed);
-            let epoch = self.epoch.load(Ordering::Relaxed);
-            for i in 0..num {
-                self.epochs[start + i].store(epoch, Ordering::Relaxed);
-            }
             Some(NodePtr::new(self.half, start as u32))
         } else {
             self.next[thread].store(next + num, Ordering::Relaxed);
-            let epoch = self.epoch.load(Ordering::Relaxed);
-            for i in 0..num {
-                self.epochs[next + i].store(epoch, Ordering::Relaxed);
-            }
             Some(NodePtr::new(self.half, next as u32))
         }
     }
 
     pub fn clear(&self) {
         self.used.store(0, Ordering::Relaxed);
-        self.epoch.fetch_add(1, Ordering::Relaxed);
         for (n, e) in self.next.iter().zip(&self.end) {
             n.store(0, Ordering::Relaxed);
             e.store(0, Ordering::Relaxed);
@@ -108,13 +94,5 @@ impl TreeHalf {
 
     pub fn is_full(&self) -> bool {
         self.used() >= self.nodes.len()
-    }
-
-    pub fn current_epoch(&self) -> u32 {
-        self.epoch.load(Ordering::Relaxed)
-    }
-
-    pub fn node_epoch(&self, ptr: NodePtr) -> u32 {
-        self.epochs[ptr.idx()].load(Ordering::Relaxed)
     }
 }

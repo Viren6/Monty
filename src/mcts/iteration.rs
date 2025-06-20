@@ -50,19 +50,6 @@ pub fn perform_one(
         // children across if they are in the other tree half
         tree.fetch_children(ptr, thread_id)?;
 
-        // fetching children may have invalidated the current list if the
-        // previous half was cleared. Re-expand the node in that case.
-        if node.is_not_expanded() {
-            tree.expand_node(
-                ptr,
-                pos,
-                searcher.params,
-                searcher.policy,
-                *depth,
-                thread_id,
-            )?;
-        }
-
         // select action to take via PUCT
         let action = pick_action(searcher, ptr, node);
 
