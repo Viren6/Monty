@@ -122,6 +122,11 @@ impl ChessState {
         self.board.stm()
     }
 
+    /// Return the current position as a FEN string.
+    pub fn as_fen(&self) -> String {
+        self.board.as_fen()
+    }
+
     pub fn map_moves_with_policies<F: FnMut(Move, f32)>(&self, policy: &PolicyNetwork, mut f: F) {
         let hl = policy.hl(&self.board);
 

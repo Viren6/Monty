@@ -280,6 +280,8 @@ impl<'a> Searcher<'a> {
             }
         }
 
+        crate::external::apply_root_policy(self.tree, pos);
+
         let search_stats = std::sync::Arc::new(SearchStats::new(threads));
 
         let mut best_move = Move::NULL;
