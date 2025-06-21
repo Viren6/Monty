@@ -7,7 +7,7 @@ mod policy_hash;
 use half::TreeHalf;
 use hash::{HashEntry, HashTable};
 pub use node::{Node, NodePtr};
-use policy_hash::{temp_to_u16, PolicyTable};
+use policy_hash::PolicyTable;
 
 use std::{
     mem::MaybeUninit,
@@ -17,7 +17,6 @@ use std::{
 
 use crate::{
     chess::{ChessState, GameState},
-    mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
 };
 
@@ -144,21 +143,16 @@ impl Tree {
         self.hash.get(hash)
     }
 
-    pub fn probe_policy(&self, hash: u64, temp: u16) -> Option<NodePtr> {
-        if let Some(entry) = self.policy_hash.get(hash) {
-            if entry.temp() == temp {
-                return Some(entry.ptr());
-            }
-        }
-        None
+    pub fn probe_policy(&self, hash: u64) -> Option<NodePtr> {
+        self.policy_hash.get(hash).map(|e| e.ptr())
     }
 
     pub fn push_hash(&self, hash: u64, wins: f32) {
         self.hash.push(hash, wins);
     }
 
-    pub fn push_policy(&self, hash: u64, ptr: NodePtr, temp: u16) {
-        self.policy_hash.push(hash, ptr, temp);
+    pub fn push_policy(&self, hash: u64, ptr: NodePtr) {
+        self.policy_hash.push(hash, ptr);
     }
 
     fn clear_halves(&self) {
@@ -181,7 +175,6 @@ impl Tree {
         &self,
         node_ptr: NodePtr,
         pos: &ChessState,
-        params: &MctsParams,
         policy: &PolicyNetwork,
         depth: usize,
         thread_id: usize,
@@ -197,25 +190,25 @@ impl Tree {
             return Some(());
         }
 
-        let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
-        let temp_u16 = temp_to_u16(pst);
-        if let Some(src_ptr) = self.probe_policy(pos.hash(), temp_u16) {
-            if self[src_ptr].has_children() {
-                let num = self[src_ptr].num_actions();
-                let new_ptr = self.tree[self.half()].reserve_nodes_thread(num, thread_id)?;
-                let first = self[src_ptr].actions();
-                for i in 0..num {
-                    let mov = self[first + i].parent_move();
-                    let pol = self[first + i].policy();
-                    let dest = new_ptr + i;
-                    self[dest].set_new(mov, pol);
+        let pst = if depth == 1 { 3.0 } else { 1.0 };
+        if depth != 1 {
+            if let Some(src_ptr) = self.probe_policy(pos.hash()) {
+                if self[src_ptr].has_children() {
+                    let num = self[src_ptr].num_actions();
+                    let new_ptr = self.tree[self.half()].reserve_nodes_thread(num, thread_id)?;
+                    let first = self[src_ptr].actions();
+                    for i in 0..num {
+                        let mov = self[first + i].parent_move();
+                        let pol = self[first + i].policy();
+                        let dest = new_ptr + i;
+                        self[dest].set_new(mov, pol);
+                    }
+                    node.set_gini_impurity(self[src_ptr].gini_impurity());
+                    actions_ptr.store(new_ptr);
+                    node.set_num_actions(num);
+                    self.push_policy(pos.hash(), node_ptr);
+                    return Some(());
                 }
-                node.set_gini_impurity(self[src_ptr].gini_impurity());
-                actions_ptr.store(new_ptr);
-                node.set_num_actions(num);
-                node.set_temperature(pst);
-                self.push_policy(pos.hash(), node_ptr, temp_u16);
-                return Some(());
             }
         }
         let mut max = f32::NEG_INFINITY;
@@ -255,55 +248,11 @@ impl Tree {
 
         actions_ptr.store(new_ptr);
         node.set_num_actions(count);
-        node.set_temperature(pst);
-        self.push_policy(pos.hash(), node_ptr, temp_u16);
+        if depth != 1 {
+            self.push_policy(pos.hash(), node_ptr);
+        }
 
         Some(())
-    }
-
-    pub fn relabel_policy(
-        &self,
-        node_ptr: NodePtr,
-        pos: &ChessState,
-        params: &MctsParams,
-        policy: &PolicyNetwork,
-        depth: u8,
-    ) {
-        let actions = self[node_ptr].actions_mut();
-        let num_actions = self[node_ptr].num_actions();
-        let actions_ptr = actions.val();
-
-        let hl = pos.get_policy_hl(policy);
-        let mut max = f32::NEG_INFINITY;
-        let mut policies = Vec::new();
-
-        for action in 0..num_actions {
-            let mov = self[actions_ptr + action].parent_move();
-            let policy = pos.get_policy(mov, &hl, policy);
-
-            policies.push(policy);
-            max = max.max(policy);
-        }
-
-        let pst = SearchHelpers::get_pst(depth.into(), self[node_ptr].q(), params);
-
-        let mut total = 0.0;
-
-        for policy in &mut policies {
-            *policy = ((*policy - max) / pst).exp();
-            total += *policy;
-        }
-
-        let mut sum_of_squares = 0.0;
-
-        for (action, &policy) in policies.iter().enumerate() {
-            let policy = policy / total;
-            self[actions_ptr + action].set_policy(policy);
-            sum_of_squares += policy * policy;
-        }
-
-        let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
-        self[node_ptr].set_gini_impurity(gini_impurity);
     }
 
     pub fn propogate_proven_mates(&self, ptr: NodePtr, child_state: GameState) {
