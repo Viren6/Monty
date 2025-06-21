@@ -309,6 +309,7 @@ impl Tree {
             if root != self.root_node() {
                 self[self.root_node()].clear();
                 self.copy_node_across(root, self.root_node());
+                self.rescale_root_policy();
             }
 
             println!("info string found subtree");
@@ -375,5 +376,35 @@ impl Tree {
         }
 
         best_child
+    }
+
+    fn rescale_root_policy(&self) {
+        let root = self.root_node();
+        if !self[root].has_children() {
+            return;
+        }
+
+        let num_actions = self[root].num_actions();
+        let first_child_ptr = self[root].actions();
+
+        let mut scaled = Vec::with_capacity(num_actions);
+        let mut total = 0.0f32;
+
+        for action in 0..num_actions {
+            let p = self[first_child_ptr + action].policy();
+            let s = p.powf(1.0 / 3.0);
+            scaled.push(s);
+            total += s;
+        }
+
+        let mut sum_sq = 0.0f32;
+        for (action, s) in scaled.into_iter().enumerate() {
+            let p = s / total;
+            self[first_child_ptr + action].set_policy(p);
+            sum_sq += p * p;
+        }
+
+        let gini = (1.0 - sum_sq).clamp(0.0, 1.0);
+        self[root].set_gini_impurity(gini);
     }
 }
