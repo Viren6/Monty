@@ -199,18 +199,47 @@ impl Tree {
 
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
         let temp_u16 = temp_to_u16(pst);
-        if let Some(src_ptr) = self.probe_policy(pos.hash(), temp_u16) {
+        if let Some(entry) = self.policy_hash.get(pos.hash()) {
+            let src_ptr = entry.ptr();
             if self[src_ptr].has_children() {
+                let stored_temp = self[src_ptr].temperature();
                 let num = self[src_ptr].num_actions();
                 let new_ptr = self.tree[self.half()].reserve_nodes_thread(num, thread_id)?;
                 let first = self[src_ptr].actions();
-                for i in 0..num {
-                    let mov = self[first + i].parent_move();
-                    let pol = self[first + i].policy();
-                    let dest = new_ptr + i;
-                    self[dest].set_new(mov, pol);
+
+                // fast path when the stored temperature matches the current one
+                if entry.temp() == temp_u16 {
+                    for i in 0..num {
+                        let mov = self[first + i].parent_move();
+                        let pol = self[first + i].policy();
+                        let dest = new_ptr + i;
+                        self[dest].set_new(mov, pol);
+                    }
+                    node.set_gini_impurity(self[src_ptr].gini_impurity());
+                } else {
+                    // rescale the probabilities to the requested temperature
+                    let pow = stored_temp / pst;
+                    let mut total = 0.0;
+                    let mut scaled = Vec::with_capacity(num);
+
+                    for i in 0..num {
+                        let pol = self[first + i].policy().powf(pow);
+                        total += pol;
+                        scaled.push(pol);
+                    }
+
+                    let mut sum_of_squares = 0.0;
+                    for i in 0..num {
+                        let mov = self[first + i].parent_move();
+                        let pol = scaled[i] / total;
+                        let dest = new_ptr + i;
+                        self[dest].set_new(mov, pol);
+                        sum_of_squares += pol * pol;
+                    }
+                    let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
+                    node.set_gini_impurity(gini_impurity);
                 }
-                node.set_gini_impurity(self[src_ptr].gini_impurity());
+
                 actions_ptr.store(new_ptr);
                 node.set_num_actions(num);
                 node.set_temperature(pst);
