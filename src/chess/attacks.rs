@@ -17,38 +17,23 @@ impl Attacks {
 
     #[inline]
     pub fn pawn(sq: usize, side: usize) -> u64 {
-        if sq < 64 {
-            LOOKUP.pawn[side][sq]
-        } else {
-            0
-        }
+        LOOKUP.pawn[side][sq]
     }
 
     #[inline]
     pub fn knight(sq: usize) -> u64 {
-        if sq < 64 {
-            LOOKUP.knight[sq]
-        } else {
-            0
-        }
+        LOOKUP.knight[sq]
     }
 
     #[inline]
     pub fn king(sq: usize) -> u64 {
-        if sq < 64 {
-            LOOKUP.king[sq]
-        } else {
-            0
-        }
+        LOOKUP.king[sq]
     }
 
     // hyperbola quintessence
     // this gets automatically vectorised when targeting avx or better
     #[inline]
     pub fn bishop(sq: usize, occ: u64) -> u64 {
-        if sq >= 64 {
-            return 0;
-        }
         let mask = LOOKUP.bishop[sq];
 
         let mut diag = occ & mask.diag;
@@ -72,9 +57,6 @@ impl Attacks {
     // files and ranks are mapped to 1st rank and looked up by occupancy
     #[inline]
     pub fn rook(sq: usize, occ: u64) -> u64 {
-        if sq >= 64 {
-            return 0;
-        }
         let flip = ((occ >> (sq & 7)) & File::A).wrapping_mul(DIAG);
         let file_sq = (flip >> 57) & 0x3F;
         let files = LOOKUP.file[sq][file_sq as usize];
