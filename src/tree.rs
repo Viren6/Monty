@@ -2,10 +2,12 @@ mod half;
 mod hash;
 mod lock;
 mod node;
+mod policy_hash;
 
 use half::TreeHalf;
 use hash::{HashEntry, HashTable};
 pub use node::{Node, NodePtr};
+use policy_hash::{temp_to_u16, PolicyTable};
 
 use std::{
     mem::MaybeUninit,
@@ -24,6 +26,7 @@ pub struct Tree {
     tree: [TreeHalf; 2],
     half: AtomicBool,
     hash: HashTable,
+    policy_hash: PolicyTable,
 }
 
 impl Index<NodePtr> for Tree {
@@ -55,6 +58,7 @@ impl Tree {
             ],
             half: AtomicBool::new(false),
             hash: HashTable::new(hash_cap / 4, threads),
+            policy_hash: PolicyTable::new(hash_cap / 8, threads),
         }
     }
 
@@ -140,8 +144,21 @@ impl Tree {
         self.hash.get(hash)
     }
 
+    pub fn probe_policy(&self, hash: u64, temp: u16) -> Option<NodePtr> {
+        if let Some(entry) = self.policy_hash.get(hash) {
+            if entry.temp() == temp {
+                return Some(entry.ptr());
+            }
+        }
+        None
+    }
+
     pub fn push_hash(&self, hash: u64, wins: f32) {
         self.hash.push(hash, wins);
+    }
+
+    pub fn push_policy(&self, hash: u64, ptr: NodePtr, temp: u16) {
+        self.policy_hash.push(hash, ptr, temp);
     }
 
     fn clear_halves(&self) {
@@ -153,6 +170,7 @@ impl Tree {
         self.root = ChessState::default();
         self.clear_halves();
         self.hash.clear(threads);
+        self.policy_hash.clear(threads);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -179,6 +197,27 @@ impl Tree {
             return Some(());
         }
 
+        let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
+        let temp_u16 = temp_to_u16(pst);
+        if let Some(src_ptr) = self.probe_policy(pos.hash(), temp_u16) {
+            if self[src_ptr].has_children() {
+                let num = self[src_ptr].num_actions();
+                let new_ptr = self.tree[self.half()].reserve_nodes_thread(num, thread_id)?;
+                let first = self[src_ptr].actions();
+                for i in 0..num {
+                    let mov = self[first + i].parent_move();
+                    let pol = self[first + i].policy();
+                    let dest = new_ptr + i;
+                    self[dest].set_new(mov, pol);
+                }
+                node.set_gini_impurity(self[src_ptr].gini_impurity());
+                actions_ptr.store(new_ptr);
+                node.set_num_actions(num);
+                node.set_temperature(pst);
+                self.push_policy(pos.hash(), node_ptr, temp_u16);
+                return Some(());
+            }
+        }
         let mut max = f32::NEG_INFINITY;
         let mut moves = [const { MaybeUninit::uninit() }; 256];
         let mut count = 0;
@@ -190,8 +229,6 @@ impl Tree {
         });
 
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
-
-        let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
 
         let mut total = 0.0;
 
@@ -218,6 +255,8 @@ impl Tree {
 
         actions_ptr.store(new_ptr);
         node.set_num_actions(count);
+        node.set_temperature(pst);
+        self.push_policy(pos.hash(), node_ptr, temp_u16);
 
         Some(())
     }
