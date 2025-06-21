@@ -60,6 +60,7 @@ pub struct Node {
     sum_q: AtomicU64,
     sum_sq_q: AtomicU64,
     gini_impurity: AtomicU8,
+    temperature: AtomicU16,
 }
 
 impl Node {
@@ -75,6 +76,7 @@ impl Node {
             sum_q: AtomicU64::new(0),
             sum_sq_q: AtomicU64::new(0),
             gini_impurity: AtomicU8::new(0),
+            temperature: AtomicU16::new(0),
         }
     }
 
@@ -163,6 +165,15 @@ impl Node {
             .store((policy * f32::from(u16::MAX)) as u16, Ordering::Relaxed);
     }
 
+    pub fn temperature(&self) -> f32 {
+        super::policy_hash::u16_to_temp(self.temperature.load(Ordering::Relaxed))
+    }
+
+    pub fn set_temperature(&self, t: f32) {
+        self.temperature
+            .store(super::policy_hash::temp_to_u16(t), Ordering::Relaxed);
+    }
+
     pub fn has_children(&self) -> bool {
         self.num_actions() != 0
     }
@@ -203,6 +214,8 @@ impl Node {
         self.visits.store(other.visits.load(Relaxed), Relaxed);
         self.sum_q.store(other.sum_q.load(Relaxed), Relaxed);
         self.sum_sq_q.store(other.sum_sq_q.load(Relaxed), Relaxed);
+        self.temperature
+            .store(other.temperature.load(Relaxed), Relaxed);
     }
 
     pub fn clear(&self) {
@@ -213,6 +226,7 @@ impl Node {
         self.sum_q.store(0, Ordering::Relaxed);
         self.sum_sq_q.store(0, Ordering::Relaxed);
         self.threads.store(0, Ordering::Relaxed);
+        self.temperature.store(0, Ordering::Relaxed);
     }
 
     pub fn update(&self, q: f32) -> f32 {
