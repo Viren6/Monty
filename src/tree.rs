@@ -1,20 +1,21 @@
+mod dag;
 mod half;
 mod hash;
 mod lock;
 mod node;
 
+use dag::{Dag, DagEntry};
 use half::TreeHalf;
 use hash::{HashEntry, HashTable};
 pub use node::{Node, NodePtr};
 
 use std::{
-    mem::MaybeUninit,
     ops::Index,
     sync::atomic::{AtomicBool, Ordering},
 };
 
 use crate::{
-    chess::{ChessState, GameState},
+    chess::{ChessState, GameState, Move},
     mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
 };
@@ -24,6 +25,7 @@ pub struct Tree {
     tree: [TreeHalf; 2],
     half: AtomicBool,
     hash: HashTable,
+    dag: Dag,
 }
 
 impl Index<NodePtr> for Tree {
@@ -55,6 +57,7 @@ impl Tree {
             ],
             half: AtomicBool::new(false),
             hash: HashTable::new(hash_cap / 4, threads),
+            dag: Dag::new(),
         }
     }
 
@@ -99,6 +102,7 @@ impl Tree {
         let old = usize::from(self.half.fetch_xor(true, Ordering::Relaxed));
         self.tree[old].clear_ptrs(threads);
         self.tree[old ^ 1].clear();
+        self.dag.clear();
 
         if copy_across {
             let new_root_ptr = self.tree[self.half()].reserve_nodes_thread(1, 0).unwrap();
@@ -153,6 +157,7 @@ impl Tree {
         self.root = ChessState::default();
         self.clear_halves();
         self.hash.clear(threads);
+        self.dag.clear();
     }
 
     pub fn is_empty(&self) -> bool {
@@ -178,46 +183,79 @@ impl Tree {
         if !node.is_not_expanded() {
             return Some(());
         }
+        let hash = pos.hash();
 
-        let mut max = f32::NEG_INFINITY;
-        let mut moves = [const { MaybeUninit::uninit() }; 256];
-        let mut count = 0;
+        if let Some(entry) = self.dag.get(hash) {
+            let count = entry.moves.len();
+            let mut max = f32::NEG_INFINITY;
 
-        pos.map_moves_with_policies(policy, |mov, policy| {
-            moves[count].write((mov, policy));
-            count += 1;
-            max = max.max(policy);
+            for &(_, pol) in &entry.moves {
+                max = max.max(pol);
+            }
+
+            let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
+
+            let mut total = 0.0;
+            let mut processed = Vec::with_capacity(count);
+
+            for &(mov, pol) in &entry.moves {
+                let p = ((pol - max) / pst).exp();
+                processed.push((mov, p));
+                total += p;
+            }
+
+            let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
+
+            let mut sum_sq = 0.0;
+            for (action, (mov, mut p)) in processed.into_iter().enumerate() {
+                p /= total;
+                let ptr = new_ptr + action;
+                self[ptr].set_new(mov, p);
+                sum_sq += p * p;
+            }
+
+            node.set_gini_impurity((1.0 - sum_sq).clamp(0.0, 1.0));
+            actions_ptr.store(new_ptr);
+            node.set_num_actions(count);
+            return Some(());
+        }
+
+        let mut raw_moves: Vec<(Move, f32)> = Vec::new();
+        pos.map_moves_with_policies(policy, |mov, pol| {
+            raw_moves.push((mov, pol));
         });
 
+        let count = raw_moves.len();
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
+
+        let mut max = f32::NEG_INFINITY;
+        for &(_, pol) in &raw_moves {
+            max = max.max(pol);
+        }
 
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
 
+        let mut processed = Vec::with_capacity(count);
         let mut total = 0.0;
-
-        for item in moves.iter_mut().take(count) {
-            let (mov, mut policy) = unsafe { item.assume_init() };
-            policy = ((policy - max) / pst).exp();
-            total += policy;
-            item.write((mov, policy));
+        for &(mov, pol) in &raw_moves {
+            let p = ((pol - max) / pst).exp();
+            processed.push((mov, p));
+            total += p;
         }
 
-        let mut sum_of_squares = 0.0;
-
-        for (action, item) in moves.iter().take(count).enumerate() {
-            let (mov, policy) = unsafe { item.assume_init() };
+        let mut sum_sq = 0.0;
+        for (action, (mov, mut p)) in processed.iter().cloned().enumerate() {
+            p /= total;
             let ptr = new_ptr + action;
-            let policy = policy / total;
-
-            self[ptr].set_new(mov, policy);
-            sum_of_squares += policy * policy;
+            self[ptr].set_new(mov, p);
+            sum_sq += p * p;
         }
 
-        let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
-        node.set_gini_impurity(gini_impurity);
-
+        node.set_gini_impurity((1.0 - sum_sq).clamp(0.0, 1.0));
         actions_ptr.store(new_ptr);
         node.set_num_actions(count);
+
+        self.dag.insert(hash, DagEntry { moves: raw_moves });
 
         Some(())
     }
