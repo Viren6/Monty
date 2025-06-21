@@ -97,12 +97,13 @@ impl Tree {
         }
     }
 
-    pub fn flip(&self, copy_across: bool, threads: usize) {
+    pub fn flip(&mut self, copy_across: bool, threads: usize) {
         let old_root_ptr = self.root_node();
 
         let old = usize::from(self.half.fetch_xor(true, Ordering::Relaxed));
         self.tree[old].clear_ptrs(threads);
         self.tree[old ^ 1].clear();
+        self.policy_hash.clear(threads);
 
         if copy_across {
             let new_root_ptr = self.tree[self.half()].reserve_nodes_thread(1, 0).unwrap();
