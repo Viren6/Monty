@@ -39,7 +39,6 @@ pub fn perform_one(
             tree.expand_node(
                 ptr,
                 pos,
-                searcher.params,
                 searcher.policy,
                 *depth,
                 thread_id,

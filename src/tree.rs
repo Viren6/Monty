@@ -4,7 +4,7 @@ mod lock;
 mod node;
 
 use half::TreeHalf;
-use hash::{HashEntry, HashTable};
+use hash::{HashEntry, HashTable, PolicyTable};
 pub use node::{Node, NodePtr};
 
 use std::{
@@ -15,7 +15,6 @@ use std::{
 
 use crate::{
     chess::{ChessState, GameState},
-    mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
 };
 
@@ -23,6 +22,7 @@ pub struct Tree {
     root: ChessState,
     tree: [TreeHalf; 2],
     half: AtomicBool,
+    policy: PolicyTable,
     hash: HashTable,
 }
 
@@ -55,6 +55,7 @@ impl Tree {
             ],
             half: AtomicBool::new(false),
             hash: HashTable::new(hash_cap / 4, threads),
+            policy: PolicyTable::new(hash_cap / 4, threads),
         }
     }
 
@@ -140,6 +141,14 @@ impl Tree {
         self.hash.get(hash)
     }
 
+    pub fn probe_policy(&self, hash: u64) -> Option<NodePtr> {
+        self.policy.get(hash)
+    }
+
+    pub fn push_policy(&self, hash: u64, ptr: NodePtr) {
+        self.policy.push(hash, ptr);
+    }
+
     pub fn push_hash(&self, hash: u64, wins: f32) {
         self.hash.push(hash, wins);
     }
@@ -153,6 +162,7 @@ impl Tree {
         self.root = ChessState::default();
         self.clear_halves();
         self.hash.clear(threads);
+        self.policy.clear(threads);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -163,7 +173,6 @@ impl Tree {
         &self,
         node_ptr: NodePtr,
         pos: &ChessState,
-        params: &MctsParams,
         policy: &PolicyNetwork,
         depth: usize,
         thread_id: usize,
@@ -171,6 +180,18 @@ impl Tree {
         let node = &self[node_ptr];
 
         let actions_ptr = node.actions_mut();
+        let hash = pos.hash();
+
+        if depth > 1 {
+            if let Some(ptr) = self.probe_policy(hash) {
+                if !self[ptr].actions().is_null() {
+                    actions_ptr.store(self[ptr].actions());
+                    node.set_num_actions(self[ptr].num_actions());
+                    node.set_gini_impurity(self[ptr].gini_impurity());
+                    return Some(());
+                }
+            }
+        }
 
         // when running with >1 threads, this function may
         // be called twice, and this acts as a safeguard in
@@ -191,7 +212,7 @@ impl Tree {
 
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
 
-        let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
+        let pst = if depth == 1 { 3.0 } else { 1.0 };
 
         let mut total = 0.0;
 
@@ -219,52 +240,11 @@ impl Tree {
         actions_ptr.store(new_ptr);
         node.set_num_actions(count);
 
+        if depth > 1 {
+            self.push_policy(hash, node_ptr);
+        }
+
         Some(())
-    }
-
-    pub fn relabel_policy(
-        &self,
-        node_ptr: NodePtr,
-        pos: &ChessState,
-        params: &MctsParams,
-        policy: &PolicyNetwork,
-        depth: u8,
-    ) {
-        let actions = self[node_ptr].actions_mut();
-        let num_actions = self[node_ptr].num_actions();
-        let actions_ptr = actions.val();
-
-        let hl = pos.get_policy_hl(policy);
-        let mut max = f32::NEG_INFINITY;
-        let mut policies = Vec::new();
-
-        for action in 0..num_actions {
-            let mov = self[actions_ptr + action].parent_move();
-            let policy = pos.get_policy(mov, &hl, policy);
-
-            policies.push(policy);
-            max = max.max(policy);
-        }
-
-        let pst = SearchHelpers::get_pst(depth.into(), self[node_ptr].q(), params);
-
-        let mut total = 0.0;
-
-        for policy in &mut policies {
-            *policy = ((*policy - max) / pst).exp();
-            total += *policy;
-        }
-
-        let mut sum_of_squares = 0.0;
-
-        for (action, &policy) in policies.iter().enumerate() {
-            let policy = policy / total;
-            self[actions_ptr + action].set_policy(policy);
-            sum_of_squares += policy * policy;
-        }
-
-        let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
-        self[node_ptr].set_gini_impurity(gini_impurity);
     }
 
     pub fn propogate_proven_mates(&self, ptr: NodePtr, child_state: GameState) {
