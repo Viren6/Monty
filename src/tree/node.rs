@@ -9,6 +9,11 @@ use super::lock::{CustomLock, WriteGuard};
 
 const QUANT: i32 = 16384 * 4;
 
+#[cfg(debug_assertions)]
+const CANARY: u64 = 0xDEAD_CAFE_F00D_FACE;
+#[cfg(debug_assertions)]
+const CANARY_SCRUBBED: u64 = 0xBAD0_BEEF_DEAD_FACE;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NodePtr(u32);
 
@@ -20,7 +25,23 @@ impl NodePtr {
     }
 
     pub fn new(half: bool, idx: u32) -> Self {
-        Self((u32::from(half) << 31) | idx)
+        #[cfg(debug_assertions)]
+        {
+            // Restrict indices to force quick reuse of nodes during debug
+            // runs. Keeping just a handful of index bits makes each half
+            // tiny so reallocation happens constantly. Adjust the mask if
+            // larger searches are desired.
+            const DEFAULT_BITS: u32 = 12;
+            let bits: u32 = option_env!("MONTY_IDX_BITS")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(DEFAULT_BITS);
+            let mask: u32 = (1 << bits) - 1;
+            Self((u32::from(half) << 31) | (idx & mask))
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            Self((u32::from(half) << 31) | idx)
+        }
     }
 
     pub fn half(self) -> bool {
@@ -50,6 +71,16 @@ impl Add<usize> for NodePtr {
 
 #[derive(Debug)]
 pub struct Node {
+    #[cfg(debug_assertions)]
+    canary: AtomicU64,
+    #[cfg(debug_assertions)]
+    debug_ptr: AtomicU32,
+    #[cfg(debug_assertions)]
+    debug_gen: AtomicU32,
+    #[cfg(debug_assertions)]
+    debug_parent: AtomicU32,
+    #[cfg(debug_assertions)]
+    debug_depth: AtomicU16,
     actions: CustomLock,
     num_actions: AtomicU8,
     state: AtomicU16,
@@ -65,6 +96,16 @@ pub struct Node {
 impl Node {
     pub fn new(state: GameState) -> Self {
         Node {
+            #[cfg(debug_assertions)]
+            canary: AtomicU64::new(CANARY),
+            #[cfg(debug_assertions)]
+            debug_ptr: AtomicU32::new(NodePtr::NULL.inner()),
+            #[cfg(debug_assertions)]
+            debug_gen: AtomicU32::new(0),
+            #[cfg(debug_assertions)]
+            debug_parent: AtomicU32::new(NodePtr::NULL.inner()),
+            #[cfg(debug_assertions)]
+            debug_depth: AtomicU16::new(0),
             actions: CustomLock::new(NodePtr::NULL),
             num_actions: AtomicU8::new(0),
             state: AtomicU16::new(u16::from(state)),
@@ -139,14 +180,17 @@ impl Node {
     }
 
     pub fn actions(&self) -> NodePtr {
+        self.check_canary();
         self.actions.read()
     }
 
     pub fn actions_mut(&self) -> WriteGuard {
+        self.check_canary();
         self.actions.write()
     }
 
     pub fn state(&self) -> GameState {
+        self.check_canary();
         GameState::from(self.state.load(Ordering::Relaxed))
     }
 
@@ -155,6 +199,7 @@ impl Node {
     }
 
     pub fn policy(&self) -> f32 {
+        self.check_canary();
         f32::from(self.policy.load(Ordering::Relaxed)) / f32::from(u16::MAX)
     }
 
@@ -188,6 +233,7 @@ impl Node {
     }
 
     pub fn parent_move(&self) -> Move {
+        self.check_canary();
         Move::from(self.mov.load(Ordering::Relaxed))
     }
 
@@ -205,7 +251,144 @@ impl Node {
         self.sum_sq_q.store(other.sum_sq_q.load(Relaxed), Relaxed);
     }
 
+    pub fn check_canary(&self) {
+        #[cfg(debug_assertions)]
+        {
+            let canary = self.canary.load(Ordering::Relaxed);
+            if canary != CANARY {
+                let ptr = NodePtr::from_raw(self.debug_ptr.load(Ordering::Relaxed));
+                let gen = self.debug_gen.load(Ordering::Relaxed);
+                let parent = NodePtr::from_raw(self.debug_parent.load(Ordering::Relaxed));
+                panic!(
+                    "Node at {:?} (ptr {:?}, gen {}, parent {:?}) overwritten! got {:#x}; info: {}",
+                    self as *const _,
+                    ptr,
+                    gen,
+                    parent,
+                    canary,
+                    self.debug_info(),
+                );
+            }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn mark_ptr(&self, ptr: NodePtr) {
+        self.debug_ptr.store(ptr.inner(), Ordering::Relaxed);
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn mark_generation(&self, gen: u32) {
+        self.debug_gen.store(gen, Ordering::Relaxed);
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn mark_parent(&self, parent: NodePtr) {
+        self.debug_parent.store(parent.inner(), Ordering::Relaxed);
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn mark_depth(&self, depth: u16) {
+        self.debug_depth.store(depth, Ordering::Relaxed);
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn debug_depth(&self) -> u16 {
+        self.debug_depth.load(Ordering::Relaxed)
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn check_parent(&self, parent: NodePtr) {
+        let stored = self.debug_parent.load(Ordering::Relaxed);
+        if stored != NodePtr::NULL.inner() && stored != parent.inner() {
+            panic!(
+                "Parent mismatch: expected {:?} got {:?}; info: {}",
+                NodePtr::from_raw(stored),
+                parent,
+                self.debug_info()
+            );
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn check_generation(&self, gen: u32) {
+        let stored = self.debug_gen.load(Ordering::Relaxed);
+        if stored != gen {
+            let ptr = NodePtr::from_raw(self.debug_ptr.load(Ordering::Relaxed));
+            let parent = NodePtr::from_raw(self.debug_parent.load(Ordering::Relaxed));
+            panic!(
+                "Node generation mismatch: expected {} got {} at {:?}, parent {:?}; info: {}",
+                gen,
+                stored,
+                ptr,
+                parent,
+                self.debug_info()
+            );
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn check_ptr(&self, ptr: NodePtr) {
+        let stored = self.debug_ptr.load(Ordering::Relaxed);
+        if stored != NodePtr::NULL.inner() && stored != ptr.inner() {
+            panic!(
+                "Node pointer mismatch: expected {:?} got {:?}; info: {}",
+                NodePtr::from_raw(stored),
+                ptr,
+                self.debug_info()
+            );
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn debug_info(&self) -> String {
+        use std::fmt::Write;
+        let mut s = String::new();
+        let _ = write!(
+            &mut s,
+            "ptr={:?}, gen={}, parent={:?}, depth={}, actions={:?}, num={}",
+            NodePtr::from_raw(self.debug_ptr.load(Ordering::Relaxed)),
+            self.debug_gen.load(Ordering::Relaxed),
+            NodePtr::from_raw(self.debug_parent.load(Ordering::Relaxed)),
+            self.debug_depth.load(Ordering::Relaxed),
+            self.actions.read(),
+            self.num_actions()
+        );
+        s
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn scrub(&self) {
+        use std::sync::atomic::Ordering::Relaxed;
+
+        self.canary.store(CANARY_SCRUBBED, Relaxed);
+        self.clear_actions();
+        self.num_actions.store(0, Relaxed);
+        self.state.store(u16::MAX, Relaxed);
+        self.threads.store(0, Relaxed);
+        self.mov.store(0xFFFF, Relaxed);
+        self.policy.store(0, Relaxed);
+        self.visits.store(0, Relaxed);
+        self.sum_q.store(0, Relaxed);
+        self.sum_sq_q.store(0, Relaxed);
+        self.gini_impurity.store(0, Relaxed);
+        self.debug_ptr.store(NodePtr::NULL.inner(), Relaxed);
+        self.debug_gen.store(0, Relaxed);
+        self.debug_parent.store(NodePtr::NULL.inner(), Relaxed);
+        self.debug_depth.store(0, Relaxed);
+    }
+
     pub fn clear(&self) {
+        #[cfg(debug_assertions)]
+        {
+            self.canary.store(CANARY, Ordering::Relaxed);
+            self.debug_ptr
+                .store(NodePtr::NULL.inner(), Ordering::Relaxed);
+            self.debug_gen.store(0, Ordering::Relaxed);
+            self.debug_parent
+                .store(NodePtr::NULL.inner(), Ordering::Relaxed);
+            self.debug_depth.store(0, Ordering::Relaxed);
+        }
         self.clear_actions();
         self.set_state(GameState::Ongoing);
         self.set_gini_impurity(0.0);
@@ -216,6 +399,7 @@ impl Node {
     }
 
     pub fn update(&self, q: f32) -> f32 {
+        self.check_canary();
         let q = (f64::from(q) * f64::from(QUANT)) as u64;
         let old_v = self.visits.fetch_add(1, Ordering::Relaxed);
         let old_q = self.sum_q.fetch_add(q, Ordering::Relaxed);

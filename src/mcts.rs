@@ -253,6 +253,13 @@ impl<'a> Searcher<'a> {
             assert_eq!(node, ptr);
 
             self.tree[ptr].clear();
+            #[cfg(debug_assertions)]
+            {
+                self.tree[ptr].mark_ptr(ptr);
+                self.tree[ptr].mark_generation(self.tree.half_generation());
+                self.tree[ptr].mark_parent(NodePtr::NULL);
+                self.tree[ptr].mark_depth(0);
+            }
             self.tree
                 .expand_node(ptr, pos, self.params, self.policy, 1, 0);
 
