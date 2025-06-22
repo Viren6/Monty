@@ -119,7 +119,8 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
         let threads = f64::from(child.threads());
         if threads > 0.0 {
             let visits = f64::from(child.visits());
-            let q2 = f64::from(q) * visits / (visits + threads);
+            let cpuct_f64 = cpuct as f64;
+            let q2 = f64::from(q) * visits / (visits + threads * (cpuct_f64 + 1.0) - cpuct_f64);
             q = q2 as f32;
         }
 
