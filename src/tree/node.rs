@@ -9,9 +9,6 @@ use super::lock::{CustomLock, WriteGuard};
 
 const QUANT: i32 = 16384 * 4;
 
-#[cfg(debug_assertions)]
-const CANARY: u64 = 0xDEAD_CAFE_F00D_FACE;
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NodePtr(u32);
 
@@ -23,15 +20,7 @@ impl NodePtr {
     }
 
     pub fn new(half: bool, idx: u32) -> Self {
-        #[cfg(debug_assertions)]
-        {
-            const IDX_MASK: u32 = (1 << 8) - 1;
-            Self((u32::from(half) << 31) | (idx & IDX_MASK))
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            Self((u32::from(half) << 31) | idx)
-        }
+        Self((u32::from(half) << 31) | idx)
     }
 
     pub fn half(self) -> bool {
@@ -61,12 +50,6 @@ impl Add<usize> for NodePtr {
 
 #[derive(Debug)]
 pub struct Node {
-    #[cfg(debug_assertions)]
-    canary: AtomicU64,
-    #[cfg(debug_assertions)]
-    debug_ptr: AtomicU32,
-    #[cfg(debug_assertions)]
-    debug_gen: AtomicU32,
     actions: CustomLock,
     num_actions: AtomicU8,
     state: AtomicU16,
@@ -82,12 +65,6 @@ pub struct Node {
 impl Node {
     pub fn new(state: GameState) -> Self {
         Node {
-            #[cfg(debug_assertions)]
-            canary: AtomicU64::new(CANARY),
-            #[cfg(debug_assertions)]
-            debug_ptr: AtomicU32::new(NodePtr::NULL.inner()),
-            #[cfg(debug_assertions)]
-            debug_gen: AtomicU32::new(0),
             actions: CustomLock::new(NodePtr::NULL),
             num_actions: AtomicU8::new(0),
             state: AtomicU16::new(u16::from(state)),
@@ -162,17 +139,14 @@ impl Node {
     }
 
     pub fn actions(&self) -> NodePtr {
-        self.check_canary();
         self.actions.read()
     }
 
     pub fn actions_mut(&self) -> WriteGuard {
-        self.check_canary();
         self.actions.write()
     }
 
     pub fn state(&self) -> GameState {
-        self.check_canary();
         GameState::from(self.state.load(Ordering::Relaxed))
     }
 
@@ -181,7 +155,6 @@ impl Node {
     }
 
     pub fn policy(&self) -> f32 {
-        self.check_canary();
         f32::from(self.policy.load(Ordering::Relaxed)) / f32::from(u16::MAX)
     }
 
@@ -215,7 +188,6 @@ impl Node {
     }
 
     pub fn parent_move(&self) -> Move {
-        self.check_canary();
         Move::from(self.mov.load(Ordering::Relaxed))
     }
 
@@ -233,53 +205,7 @@ impl Node {
         self.sum_sq_q.store(other.sum_sq_q.load(Relaxed), Relaxed);
     }
 
-    pub fn check_canary(&self) {
-        #[cfg(debug_assertions)]
-        {
-            if self.canary.load(Ordering::Relaxed) != CANARY {
-                panic!("Node at {:?} overwritten!", self as *const _);
-            }
-        }
-    }
-
-    #[cfg(debug_assertions)]
-    pub fn mark_ptr(&self, ptr: NodePtr) {
-        self.debug_ptr.store(ptr.inner(), Ordering::Relaxed);
-    }
-
-    #[cfg(debug_assertions)]
-    pub fn mark_generation(&self, gen: u32) {
-        self.debug_gen.store(gen, Ordering::Relaxed);
-    }
-
-    #[cfg(debug_assertions)]
-    pub fn check_generation(&self, gen: u32) {
-        let stored = self.debug_gen.load(Ordering::Relaxed);
-        if stored != gen {
-            panic!("Node generation mismatch: expected {} got {}", gen, stored);
-        }
-    }
-
-    #[cfg(debug_assertions)]
-    pub fn check_ptr(&self, ptr: NodePtr) {
-        let stored = self.debug_ptr.load(Ordering::Relaxed);
-        if stored != NodePtr::NULL.inner() && stored != ptr.inner() {
-            panic!(
-                "Node pointer mismatch: expected {} got {}",
-                stored,
-                ptr.inner()
-            );
-        }
-    }
-
     pub fn clear(&self) {
-        #[cfg(debug_assertions)]
-        {
-            self.canary.store(CANARY, Ordering::Relaxed);
-            self.debug_ptr
-                .store(NodePtr::NULL.inner(), Ordering::Relaxed);
-            self.debug_gen.store(0, Ordering::Relaxed);
-        }
         self.clear_actions();
         self.set_state(GameState::Ongoing);
         self.set_gini_impurity(0.0);
@@ -290,7 +216,6 @@ impl Node {
     }
 
     pub fn update(&self, q: f32) -> f32 {
-        self.check_canary();
         let q = (f64::from(q) * f64::from(QUANT)) as u64;
         let old_v = self.visits.fetch_add(1, Ordering::Relaxed);
         let old_q = self.sum_q.fetch_add(q, Ordering::Relaxed);
