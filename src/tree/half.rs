@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use super::{Node, NodePtr};
 use crate::chess::GameState;
@@ -11,6 +11,8 @@ pub struct TreeHalf {
     next: Vec<AtomicUsize>,
     end: Vec<AtomicUsize>,
     half: bool,
+    #[cfg(debug_assertions)]
+    generation: AtomicU32,
 }
 
 impl std::ops::Index<NodePtr> for TreeHalf {
@@ -29,6 +31,8 @@ impl TreeHalf {
             next: (0..threads).map(|_| AtomicUsize::new(0)).collect(),
             end: (0..threads).map(|_| AtomicUsize::new(0)).collect(),
             half,
+            #[cfg(debug_assertions)]
+            generation: AtomicU32::new(0),
         };
 
         res.nodes.reserve_exact(size);
@@ -52,6 +56,12 @@ impl TreeHalf {
             res.nodes.set_len(size);
         }
 
+        #[cfg(debug_assertions)]
+        for (idx, node) in res.nodes.iter().enumerate() {
+            node.mark_ptr(NodePtr::new(half, idx as u32));
+            node.mark_generation(0);
+        }
+
         res
     }
 
@@ -69,10 +79,26 @@ impl TreeHalf {
             end = start + block;
             self.next[thread].store(next + num, Ordering::Relaxed);
             self.end[thread].store(end, Ordering::Relaxed);
-            Some(NodePtr::new(self.half, start as u32))
+            let ptr = NodePtr::new(self.half, start as u32);
+            #[cfg(debug_assertions)]
+            {
+                let gen = self.generation.load(Ordering::Relaxed);
+                for i in 0..num {
+                    self.nodes[(ptr.idx() + i) as usize].mark_generation(gen);
+                }
+            }
+            Some(ptr)
         } else {
             self.next[thread].store(next + num, Ordering::Relaxed);
-            Some(NodePtr::new(self.half, next as u32))
+            let ptr = NodePtr::new(self.half, next as u32);
+            #[cfg(debug_assertions)]
+            {
+                let gen = self.generation.load(Ordering::Relaxed);
+                for i in 0..num {
+                    self.nodes[(ptr.idx() + i) as usize].mark_generation(gen);
+                }
+            }
+            Some(ptr)
         }
     }
 
@@ -82,6 +108,14 @@ impl TreeHalf {
             n.store(0, Ordering::Relaxed);
             e.store(0, Ordering::Relaxed);
         }
+        #[cfg(debug_assertions)]
+        {
+            self.generation.fetch_add(1, Ordering::Relaxed);
+            for node in &self.nodes {
+                node.mark_ptr(NodePtr::NULL);
+                node.mark_generation(self.generation.load(Ordering::Relaxed));
+            }
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -90,6 +124,11 @@ impl TreeHalf {
 
     pub fn used(&self) -> usize {
         self.used.load(Ordering::Relaxed)
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn generation(&self) -> u32 {
+        self.generation.load(Ordering::Relaxed)
     }
 
     pub fn is_full(&self) -> bool {

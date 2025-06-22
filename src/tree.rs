@@ -10,7 +10,7 @@ pub use node::{Node, NodePtr};
 use std::{
     mem::MaybeUninit,
     ops::Index,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use crate::{
@@ -24,13 +24,23 @@ pub struct Tree {
     tree: [TreeHalf; 2],
     half: AtomicBool,
     hash: HashTable,
+    #[cfg(debug_assertions)]
+    debug_nodes: AtomicUsize,
+    #[cfg(debug_assertions)]
+    debug_flip: AtomicBool,
 }
 
 impl Index<NodePtr> for Tree {
     type Output = Node;
 
     fn index(&self, index: NodePtr) -> &Self::Output {
-        &self.tree[usize::from(index.half())][index]
+        let node = &self.tree[usize::from(index.half())][index];
+        #[cfg(debug_assertions)]
+        {
+            node.check_ptr(index);
+            node.check_generation(self.tree[usize::from(index.half())].generation());
+        }
+        node
     }
 }
 
@@ -38,9 +48,15 @@ impl Tree {
     pub fn new_mb(mb: usize, threads: usize) -> Self {
         let bytes = mb * 1024 * 1024;
 
+        #[cfg(debug_assertions)]
+        const _: () = assert!(
+            std::mem::size_of::<Node>() == 56,
+            "You must reconsider this allocation!",
+        );
+        #[cfg(not(debug_assertions))]
         const _: () = assert!(
             std::mem::size_of::<Node>() == 40,
-            "You must reconsider this allocation!"
+            "You must reconsider this allocation!",
         );
 
         Self::new(bytes / 42, bytes / 42 / 16, threads)
@@ -55,6 +71,10 @@ impl Tree {
             ],
             half: AtomicBool::new(false),
             hash: HashTable::new(hash_cap / 4, threads),
+            #[cfg(debug_assertions)]
+            debug_nodes: AtomicUsize::new(0),
+            #[cfg(debug_assertions)]
+            debug_flip: AtomicBool::new(false),
         }
     }
 
@@ -71,7 +91,14 @@ impl Tree {
     }
 
     pub fn push_new_node(&self, thread_id: usize) -> Option<NodePtr> {
-        self.tree[self.half()].reserve_nodes_thread(1, thread_id)
+        let ptr = self.tree[self.half()].reserve_nodes_thread(1, thread_id)?;
+        #[cfg(debug_assertions)]
+        {
+            self.debug_maybe_flip(1);
+            self[ptr].mark_ptr(ptr);
+            self[ptr].mark_generation(self.tree[self.half()].generation());
+        }
+        Some(ptr)
     }
 
     fn copy_node_across(&self, from: NodePtr, to: NodePtr, clear_ptr: bool) -> Option<()> {
@@ -97,6 +124,12 @@ impl Tree {
             t.store(f.val());
         }
 
+        #[cfg(debug_assertions)]
+        {
+            self[to].mark_ptr(to);
+            self[to].mark_generation(self.tree[usize::from(to.half())].generation());
+        }
+
         Some(())
     }
 
@@ -108,6 +141,68 @@ impl Tree {
         Some(())
     }
 
+    fn walk_reachable<F: FnMut(NodePtr, &Node)>(&self, mut f: F) {
+        let mut stack = Vec::new();
+        stack.push(self.root_node());
+
+        while let Some(ptr) = stack.pop() {
+            if ptr.is_null() {
+                continue;
+            }
+
+            let node = &self[ptr];
+            f(ptr, node);
+
+            if node.has_children() {
+                let first = node.actions();
+                for i in 0..node.num_actions() {
+                    stack.push(first + i);
+                }
+            }
+        }
+    }
+
+    fn assert_debug_invariants(&self) -> bool {
+        let active = self.half.load(Ordering::Relaxed);
+        self.walk_reachable(|node_ptr, node| {
+            #[cfg(debug_assertions)]
+            node.check_ptr(node_ptr);
+            node.check_canary();
+
+            if node.num_actions() == 0 {
+                if !node.actions().is_null() {
+                    panic!("Node {:?} has no actions but pointer not null", node_ptr);
+                }
+            } else {
+                let first = node.actions();
+                if first.is_null() {
+                    panic!("Node {:?} has actions pointer null", node_ptr);
+                }
+                for i in 0..node.num_actions() {
+                    let child = first + i;
+                    if child.half() == active {
+                        panic!(
+                            "Cross-half edge: {:?} (in half {}) points into active half {}",
+                            node_ptr, !active, active
+                        );
+                    }
+                }
+            }
+        });
+        true
+    }
+
+    #[cfg(debug_assertions)]
+    fn debug_maybe_flip(&self, added: usize) {
+        const FLIP_EVERY: usize = 10;
+        let count = self.debug_nodes.fetch_add(added, Ordering::Relaxed) + added;
+        if count >= FLIP_EVERY {
+            self.debug_nodes.store(0, Ordering::Relaxed);
+            let copy = !self.debug_flip.fetch_xor(true, Ordering::Relaxed);
+            self.flip(copy);
+        }
+    }
+
     pub fn flip(&self, copy_across: bool) {
         let old_root_ptr = self.root_node();
 
@@ -117,9 +212,16 @@ impl Tree {
         if copy_across {
             let new_root_ptr = self.tree[self.half()].reserve_nodes_thread(1, 0).unwrap();
             self[new_root_ptr].clear();
+            #[cfg(debug_assertions)]
+            {
+                self[new_root_ptr].mark_ptr(new_root_ptr);
+                self[new_root_ptr].mark_generation(self.tree[self.half()].generation());
+            }
 
             self.copy_node_across(old_root_ptr, new_root_ptr, true);
         }
+
+        debug_assert!(self.assert_debug_invariants());
     }
 
     #[must_use]
@@ -137,11 +239,15 @@ impl Tree {
 
             let num_children = self[parent_ptr].num_actions();
             let new_ptr = self.tree[self.half()].reserve_nodes_thread(num_children, thread_id)?;
+            #[cfg(debug_assertions)]
+            self.debug_maybe_flip(num_children);
 
             self.copy_across(first_child_ptr, num_children, new_ptr)?;
 
             most_recent_ptr.store(new_ptr);
         }
+
+        debug_assert!(self.assert_debug_invariants());
 
         Some(())
     }
@@ -204,6 +310,8 @@ impl Tree {
         });
 
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
+        #[cfg(debug_assertions)]
+        self.debug_maybe_flip(count);
 
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
 
@@ -224,6 +332,11 @@ impl Tree {
             let policy = policy / total;
 
             self[ptr].set_new(mov, policy);
+            #[cfg(debug_assertions)]
+            {
+                self[ptr].mark_ptr(ptr);
+                self[ptr].mark_generation(self.tree[self.half()].generation());
+            }
             sum_of_squares += policy * policy;
         }
 
@@ -232,6 +345,8 @@ impl Tree {
 
         actions_ptr.store(new_ptr);
         node.set_num_actions(count);
+
+        debug_assert!(self.assert_debug_invariants());
 
         Some(())
     }
@@ -334,6 +449,11 @@ impl Tree {
 
             if root != self.root_node() {
                 self[self.root_node()].clear();
+                #[cfg(debug_assertions)]
+                {
+                    self[self.root_node()].mark_ptr(self.root_node());
+                    self[self.root_node()].mark_generation(self.tree[self.half()].generation());
+                }
                 let _ = self.copy_node_across(root, self.root_node(), false);
             }
 
