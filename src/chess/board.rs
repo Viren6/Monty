@@ -408,7 +408,7 @@ impl Board {
                     let bit  = 1u64 << from;
 
                     // Occupancy after this side captures
-                    let mut occ_after = (occ ^ bit) | (1 << sq);
+                    let occ_after = (occ ^ bit) | (1 << sq);
 
                     // King square for this side if its king moves
                     let ksq = if pc == Piece::KING { sq } else { king_sq[us] };
@@ -436,8 +436,12 @@ impl Board {
             }
 
             // Add newly-revealed x-ray attacks
-            attackers |= Attacks::bishop(sq, occ) & bishops;
-            attackers |= Attacks::rook(sq,   occ) & rooks;
+            if [Piece::PAWN, Piece::BISHOP, Piece::QUEEN].contains(&next) {
+                attackers |= Attacks::bishop(sq, occ) & bishops;
+            }
+            if [Piece::ROOK, Piece::QUEEN].contains(&next) {
+                attackers |= Attacks::rook(sq, occ) & rooks;
+            }
             attackers &= occ;             // only pieces still on the board
 
             score = -score - 1 - SEE_VALS[next];
