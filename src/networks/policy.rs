@@ -8,6 +8,50 @@ use super::{
     layer::{Layer, TransposedLayer},
 };
 
+#[inline]
+fn dot_i8_i16_fallback(lhs: &[i8], rhs: &[i16]) -> i32 {
+    lhs.iter()
+        .zip(rhs.iter())
+        .map(|(&w, &h)| i32::from(w) * i32::from(h))
+        .sum()
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[target_feature(enable = "avx2")]
+unsafe fn dot_i8_i16_avx2(lhs: &[i8], rhs: &[i16]) -> i32 {
+    use std::arch::x86_64::*;
+
+    let mut sum = _mm256_setzero_si256();
+    let chunks = lhs.len() / 16;
+    for i in 0..chunks {
+        let off = i * 16;
+        let a = _mm_loadu_si128(lhs.as_ptr().add(off) as *const __m128i);
+        let b = _mm256_loadu_si256(rhs.as_ptr().add(off) as *const __m256i);
+        let a16 = _mm256_cvtepi8_epi16(a);
+        let prod = _mm256_madd_epi16(a16, b);
+        sum = _mm256_add_epi32(sum, prod);
+    }
+    let mut out = [0i32; 8];
+    _mm256_storeu_si256(out.as_mut_ptr() as *mut __m256i, sum);
+    let mut total: i32 = out.iter().sum();
+    for i in (chunks * 16)..lhs.len() {
+        total += (*lhs.get_unchecked(i) as i32) * (*rhs.get_unchecked(i) as i32);
+    }
+    total
+}
+
+#[inline]
+fn dot_i8_i16(lhs: &[i8], rhs: &[i16]) -> i32 {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    unsafe {
+        return dot_i8_i16_avx2(lhs, rhs);
+    }
+    #[allow(unreachable_code)]
+    {
+        dot_i8_i16_fallback(lhs, rhs)
+    }
+}
+
 // DO NOT MOVE
 #[allow(non_upper_case_globals, dead_code)]
 pub const PolicyFileDefaultName: &str = "nn-658ca1d47406.network";
@@ -63,12 +107,7 @@ impl PolicyNetwork {
         let idx = map_move_to_index(pos, *mov);
         let weights = &self.l2.weights[idx];
 
-        let mut res = 0;
-
-        for (&w, &v) in weights.0.iter().zip(hl.0.iter()) {
-            res += i32::from(w) * i32::from(v);
-        }
-
+        let res = dot_i8_i16(&weights.0, &hl.0);
         (res as f32 / f32::from(QA * FACTOR) + f32::from(self.l2.biases.0[idx])) / f32::from(QB)
     }
 }
