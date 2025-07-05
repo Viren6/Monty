@@ -273,18 +273,22 @@ impl Board {
 
         let opps = self.bb[side];
 
-        let queens = self.bb[Piece::QUEEN];
-
-        let mut rooks = opps & (self.bb[Piece::ROOK] | queens);
+        let mut rooks = opps & self.bb[Piece::ROOK];
         while rooks > 0 {
             pop_lsb!(sq, rooks);
             threats |= Attacks::rook(sq as usize, occ);
         }
 
-        let mut bishops = opps & (self.bb[Piece::BISHOP] | queens);
+        let mut bishops = opps & self.bb[Piece::BISHOP];
         while bishops > 0 {
             pop_lsb!(sq, bishops);
             threats |= Attacks::bishop(sq as usize, occ);
+        }
+
+        let mut queens = opps & self.bb[Piece::QUEEN];
+        while queens > 0 {
+            pop_lsb!(sq, queens);
+            threats |= Attacks::queen(sq as usize, occ);
         }
 
         let mut knights = opps & self.bb[Piece::KNIGHT];
