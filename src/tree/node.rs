@@ -15,26 +15,32 @@ pub struct NodePtr(u32);
 impl NodePtr {
     pub const NULL: Self = Self(u32::MAX);
 
+    #[inline(always)]
     pub fn is_null(self) -> bool {
         self == Self::NULL
     }
 
+    #[inline(always)]
     pub fn new(half: bool, idx: u32) -> Self {
         Self((u32::from(half) << 31) | idx)
     }
 
+    #[inline(always)]
     pub fn half(self) -> bool {
         self.0 & (1 << 31) > 0
     }
 
+    #[inline(always)]
     pub fn idx(self) -> usize {
         (self.0 & 0x7FFFFFFF) as usize
     }
 
+    #[inline(always)]
     pub fn inner(self) -> u32 {
         self.0
     }
 
+    #[inline(always)]
     pub fn from_raw(inner: u32) -> Self {
         Self(inner)
     }
@@ -43,6 +49,7 @@ impl NodePtr {
 impl Add<usize> for NodePtr {
     type Output = NodePtr;
 
+    #[inline(always)]
     fn add(self, rhs: usize) -> Self::Output {
         Self(self.0 + rhs as u32)
     }
@@ -63,6 +70,7 @@ pub struct Node {
 }
 
 impl Node {
+    #[inline(always)]
     pub fn new(state: GameState) -> Self {
         Node {
             actions: CustomLock::new(NodePtr::NULL),
@@ -78,32 +86,39 @@ impl Node {
         }
     }
 
+    #[inline(always)]
     pub fn set_new(&self, mov: Move, policy: f32) {
         self.clear();
         self.mov.store(u16::from(mov), Ordering::Relaxed);
         self.set_policy(policy);
     }
 
+    #[inline(always)]
     pub fn is_terminal(&self) -> bool {
         self.state() != GameState::Ongoing
     }
 
+    #[inline(always)]
     pub fn num_actions(&self) -> usize {
         usize::from(self.num_actions.load(Ordering::Relaxed))
     }
 
+    #[inline(always)]
     pub fn set_num_actions(&self, num: usize) {
         self.num_actions.store(num as u8, Ordering::Relaxed);
     }
 
+    #[inline(always)]
     pub fn threads(&self) -> u16 {
         self.threads.load(Ordering::Relaxed)
     }
 
+    #[inline(always)]
     pub fn visits(&self) -> u32 {
         self.visits.load(Ordering::Relaxed)
     }
 
+    #[inline(always)]
     fn q64(&self) -> f64 {
         let visits = self.visits.load(Ordering::Relaxed);
 
@@ -116,65 +131,80 @@ impl Node {
         (sum_q / u64::from(visits)) as f64 / f64::from(QUANT)
     }
 
+    #[inline(always)]
     pub fn q(&self) -> f32 {
         self.q64() as f32
     }
 
+    #[inline(always)]
     pub fn sq_q(&self) -> f64 {
         let sum_sq_q = self.sum_sq_q.load(Ordering::Relaxed);
         let visits = self.visits.load(Ordering::Relaxed);
         (sum_sq_q / u64::from(visits)) as f64 / f64::from(QUANT).powi(2)
     }
 
+    #[inline(always)]
     pub fn var(&self) -> f32 {
         (self.sq_q() - self.q64().powi(2)).max(0.0) as f32
     }
 
+    #[inline(always)]
     pub fn inc_threads(&self) {
         self.threads.fetch_add(1, Ordering::Relaxed);
     }
 
+    #[inline(always)]
     pub fn dec_threads(&self) {
         self.threads.fetch_sub(1, Ordering::Relaxed);
     }
 
+    #[inline(always)]
     pub fn actions(&self) -> NodePtr {
         self.actions.read()
     }
 
+    #[inline(always)]
     pub fn actions_mut(&self) -> WriteGuard {
         self.actions.write()
     }
 
+    #[inline(always)]
     pub fn state(&self) -> GameState {
         GameState::from(self.state.load(Ordering::Relaxed))
     }
 
+    #[inline(always)]
     pub fn set_state(&self, state: GameState) {
         self.state.store(u16::from(state), Ordering::Relaxed);
     }
 
+    #[inline(always)]
     pub fn policy(&self) -> f32 {
         f32::from(self.policy.load(Ordering::Relaxed)) / f32::from(u16::MAX)
     }
 
+    #[inline(always)]
     pub fn set_policy(&self, policy: f32) {
         self.policy
             .store((policy * f32::from(u16::MAX)) as u16, Ordering::Relaxed);
     }
 
+    #[inline(always)]
     pub fn has_children(&self) -> bool {
         self.num_actions() != 0
     }
 
+    #[inline(always)]
     pub fn is_not_expanded(&self) -> bool {
         self.state() == GameState::Ongoing && self.num_actions() == 0
     }
 
+    #[inline(always)]
     pub fn gini_impurity(&self) -> f32 {
         f32::from(self.gini_impurity.load(Ordering::Relaxed)) / 255.0
     }
 
+    #[inline(always)]
     pub fn set_gini_impurity(&self, gini_impurity: f32) {
         self.gini_impurity.store(
             (gini_impurity.clamp(0.0, 1.0) * 255.0) as u8,
@@ -182,15 +212,18 @@ impl Node {
         );
     }
 
+    #[inline(always)]
     pub fn clear_actions(&self) {
         self.actions.write().store(NodePtr::NULL);
         self.num_actions.store(0, Ordering::Relaxed);
     }
 
+    #[inline(always)]
     pub fn parent_move(&self) -> Move {
         Move::from(self.mov.load(Ordering::Relaxed))
     }
 
+    #[inline(always)]
     pub fn copy_from(&self, other: &Self) {
         use std::sync::atomic::Ordering::Relaxed;
 
@@ -205,6 +238,7 @@ impl Node {
         self.sum_sq_q.store(other.sum_sq_q.load(Relaxed), Relaxed);
     }
 
+    #[inline(always)]
     pub fn clear(&self) {
         self.clear_actions();
         self.set_state(GameState::Ongoing);
@@ -215,6 +249,7 @@ impl Node {
         self.threads.store(0, Ordering::Relaxed);
     }
 
+    #[inline(always)]
     pub fn update(&self, q: f32) -> f32 {
         let q = (f64::from(q) * f64::from(QUANT)) as u64;
         let old_v = self.visits.fetch_add(1, Ordering::Relaxed);
