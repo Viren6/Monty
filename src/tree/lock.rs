@@ -1,11 +1,13 @@
+use parking_lot::RawMutex;
+use parking_lot::lock_api::RawMutex as RawMutexApi;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use super::NodePtr;
 
-#[derive(Debug)]
 pub struct CustomLock {
     value: AtomicU32,
     write_locked: AtomicBool,
+    lock: RawMutex,
 }
 
 pub struct WriteGuard<'a> {
@@ -14,21 +16,19 @@ pub struct WriteGuard<'a> {
 
 impl Drop for WriteGuard<'_> {
     fn drop(&mut self) {
-        // release the write lock with a Release store so subsequent reads
-        // see any writes performed while the lock was held
+        // Release the write lock so readers see any writes performed
         self.lock.write_locked.store(false, Ordering::Release);
+        unsafe { <RawMutex as RawMutexApi>::unlock(&self.lock.lock) };
     }
 }
 
 impl WriteGuard<'_> {
     pub fn val(&self) -> NodePtr {
-        // load the value using Acquire to synchronise with the writer
         NodePtr::from_raw(self.lock.value.load(Ordering::Acquire))
     }
 
     pub fn store(&self, val: NodePtr) {
-        // writes are relaxed as mutual exclusion is provided by the lock
-        self.lock.value.store(val.inner(), Ordering::Relaxed)
+        self.lock.value.store(val.inner(), Ordering::Relaxed);
     }
 }
 
@@ -37,27 +37,20 @@ impl CustomLock {
         Self {
             value: AtomicU32::new(val.inner()),
             write_locked: AtomicBool::new(false),
+            lock: <RawMutex as RawMutexApi>::INIT,
         }
     }
 
     pub fn read(&self) -> NodePtr {
-        // spin until no writer holds the lock
         while self.write_locked.load(Ordering::Acquire) {
             std::hint::spin_loop();
         }
-
         NodePtr::from_raw(self.value.load(Ordering::Acquire))
     }
 
     pub fn write(&self) -> WriteGuard<'_> {
-        while self
-            .write_locked
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            std::hint::spin_loop();
-        }
-
+        RawMutexApi::lock(&self.lock);
+        self.write_locked.store(true, Ordering::Relaxed);
         WriteGuard { lock: self }
     }
 }

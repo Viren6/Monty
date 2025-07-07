@@ -48,7 +48,6 @@ impl Add<usize> for NodePtr {
     }
 }
 
-#[derive(Debug)]
 pub struct Node {
     actions: CustomLock,
     num_actions: AtomicU8,
