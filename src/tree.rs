@@ -80,7 +80,7 @@ impl Tree {
         }
 
         let f = self[from].actions_mut();
-        let t = self[to].actions_mut();
+        let mut t = self[to].actions_mut();
 
         self[to].copy_from(&self[from]);
         self[to].set_num_actions(self[from].num_actions());
@@ -113,7 +113,7 @@ impl Tree {
         let first_child_ptr = { self[parent_ptr].actions() };
 
         if first_child_ptr.half() != self.half.load(Ordering::Relaxed) {
-            let most_recent_ptr = self[parent_ptr].actions_mut();
+            let mut most_recent_ptr = self[parent_ptr].actions_mut();
 
             if most_recent_ptr.val().half() == self.half.load(Ordering::Relaxed) {
                 return Some(());
@@ -170,7 +170,7 @@ impl Tree {
     ) -> Option<()> {
         let node = &self[node_ptr];
 
-        let actions_ptr = node.actions_mut();
+        let mut actions_ptr = node.actions_mut();
 
         // when running with >1 threads, this function may
         // be called twice, and this acts as a safeguard in
