@@ -89,12 +89,12 @@ impl Tree {
         // another thread is already doing the same work)
         self[to].copy_from(&self[from]);
 
-        if keep_ptr {
-            self[to].set_num_actions(self[from].num_actions());
-            t.store(f.val());
-        } else {
+        if !keep_ptr && f.val().half() == self.half.load(Ordering::Relaxed) {
             self[to].set_num_actions(0);
             t.store(NodePtr::NULL);
+        } else {
+            self[to].set_num_actions(self[from].num_actions());
+            t.store(f.val());
         }
 
         Some(())
