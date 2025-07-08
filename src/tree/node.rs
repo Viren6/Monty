@@ -48,6 +48,7 @@ impl Add<usize> for NodePtr {
     }
 }
 
+#[repr(align(64))]
 #[derive(Debug)]
 pub struct Node {
     actions: CustomLock,
