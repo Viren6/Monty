@@ -248,7 +248,7 @@ impl<'a> Searcher<'a> {
         // the root node is added to an empty tree, **and not counted** towards the
         // total node count, in order for `go nodes 1` to give the expected result
         if self.tree.is_empty() {
-            let ptr = self.tree.push_new_node(0).unwrap();
+            let ptr = self.tree.push_new_node().unwrap();
 
             assert_eq!(node, ptr);
 
