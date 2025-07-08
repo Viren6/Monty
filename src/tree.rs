@@ -70,8 +70,8 @@ impl Tree {
         self.tree[self.half()].is_full()
     }
 
-    pub fn push_new_node(&self, thread_id: usize) -> Option<NodePtr> {
-        self.tree[self.half()].reserve_nodes_thread(1, thread_id)
+    pub fn push_new_node(&self) -> Option<NodePtr> {
+        self.tree[self.half()].reserve_nodes_thread(1, 0)
     }
 
     fn copy_node_across(&self, from: NodePtr, to: NodePtr, clear_ptr: bool) -> Option<()> {
