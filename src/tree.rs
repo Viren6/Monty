@@ -74,7 +74,7 @@ impl Tree {
         self.tree[self.half()].reserve_nodes_thread(1, 0)
     }
 
-    fn copy_node_across(&self, from: NodePtr, to: NodePtr, clear_ptr: bool) -> Option<()> {
+    fn copy_node_across(&self, from: NodePtr, to: NodePtr, keep_ptr: bool) -> Option<()> {
         if from == to {
             return Some(());
         }
@@ -89,12 +89,12 @@ impl Tree {
         // another thread is already doing the same work)
         self[to].copy_from(&self[from]);
 
-        if clear_ptr && f.val().half() == self.half.load(Ordering::Relaxed) {
-            self[to].set_num_actions(0);
-            t.store(NodePtr::NULL);
-        } else {
+        if keep_ptr {
             self[to].set_num_actions(self[from].num_actions());
             t.store(f.val());
+        } else {
+            self[to].set_num_actions(0);
+            t.store(NodePtr::NULL);
         }
 
         Some(())
@@ -118,7 +118,8 @@ impl Tree {
             let new_root_ptr = self.tree[self.half()].reserve_nodes_thread(1, 0).unwrap();
             self[new_root_ptr].clear();
 
-            self.copy_node_across(old_root_ptr, new_root_ptr, true);
+            // copy the root information but drop any child pointers
+            self.copy_node_across(old_root_ptr, new_root_ptr, false);
         }
     }
 
@@ -334,7 +335,7 @@ impl Tree {
 
             if root != self.root_node() {
                 self[self.root_node()].clear();
-                let _ = self.copy_node_across(root, self.root_node(), false);
+                let _ = self.copy_node_across(root, self.root_node(), true);
             }
 
             println!("info string found subtree");
