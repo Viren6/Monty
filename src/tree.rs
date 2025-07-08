@@ -203,6 +203,12 @@ impl Tree {
             max = max.max(policy);
         });
 
+        if count == 0 {
+            actions_ptr.store(NodePtr::NULL);
+            node.set_num_actions(0);
+            return Some(());
+        }
+
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
 
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
