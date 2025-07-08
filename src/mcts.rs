@@ -291,12 +291,13 @@ impl<'a> Searcher<'a> {
             let stats_ref = search_stats.clone();
             thread::scope(|s| {
                 let stats_ref_main = stats_ref.clone();
+                let timer_last_output_ref = &mut timer_last_output;
                 s.spawn(move || {
                     self.playout_until_full_main(
                         &limits,
                         &timer,
                         #[cfg(not(feature = "uci-minimal"))]
-                        &mut timer_last_output,
+                        timer_last_output_ref,
                         &stats_ref_main,
                         &mut best_move,
                         &mut best_move_changes,
