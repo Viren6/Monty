@@ -75,7 +75,7 @@ impl Tree {
     }
 
     fn copy_node_across(&self, from: NodePtr, to: NodePtr, clear_ptr: bool) -> Option<()> {
-        if from == to {
+        if from.is_null() || to.is_null() || from == to {
             return Some(());
         }
 
@@ -101,6 +101,10 @@ impl Tree {
     }
 
     fn copy_across(&self, from: NodePtr, num: usize, to: NodePtr) -> Option<()> {
+        if num == 0 {
+            return Some(());
+        }
+
         for i in 0..num {
             self.copy_node_across(from + i, to + i, true)?;
         }

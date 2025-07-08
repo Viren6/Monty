@@ -56,6 +56,9 @@ impl TreeHalf {
     }
 
     pub fn reserve_nodes_thread(&self, num: usize, thread: usize) -> Option<NodePtr> {
+        if num == 0 {
+            return Some(NodePtr::NULL);
+        }
         let mut next = self.next[thread].load(Ordering::Relaxed);
         let mut end = self.end[thread].load(Ordering::Relaxed);
 
