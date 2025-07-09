@@ -62,6 +62,36 @@ pub struct Node {
     gini_impurity: AtomicU8,
 }
 
+#[derive(Default)]
+pub struct NodeStatsBuffer {
+    visits: u32,
+    sum_q: u64,
+    sum_sq_q: u64,
+}
+
+impl NodeStatsBuffer {
+    pub fn add(&mut self, q: f32) {
+        let q_quant = (f64::from(q) * f64::from(QUANT)) as u64;
+        self.sum_q += q_quant;
+        self.sum_sq_q += q_quant * q_quant;
+        self.visits += 1;
+    }
+
+    pub fn take(&mut self) -> (u32, u64, u64) {
+        let res = (self.visits, self.sum_q, self.sum_sq_q);
+        *self = Self::default();
+        res
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.visits == 0
+    }
+
+    pub fn visits(&self) -> u32 {
+        self.visits
+    }
+}
+
 impl Node {
     pub fn new(state: GameState) -> Self {
         Node {
@@ -222,5 +252,24 @@ impl Node {
         self.sum_sq_q.fetch_add(q * q, Ordering::Relaxed);
 
         (((q + old_q) / u64::from(1 + old_v)) as f64 / f64::from(QUANT)) as f32
+    }
+
+    pub fn flush_buffer(&self, buffer: &mut NodeStatsBuffer) -> f32 {
+        use std::sync::atomic::Ordering::Relaxed;
+
+        if buffer.is_empty() {
+            return self.q();
+        }
+
+        let (visits, sum_q, sum_sq_q) = buffer.take();
+
+        let old_v = self.visits.fetch_add(visits, Relaxed);
+        let old_q = self.sum_q.fetch_add(sum_q, Relaxed);
+        self.sum_sq_q.fetch_add(sum_sq_q, Relaxed);
+
+        let total_q = sum_q + old_q;
+        let total_v = u64::from(visits) + u64::from(old_v);
+
+        (total_q as f64 / total_v as f64 / f64::from(QUANT)) as f32
     }
 }

@@ -1,20 +1,18 @@
 use crate::{
     chess::{ChessState, GameState},
-    tree::{Node, NodePtr},
+    tree::{Node, NodePtr, NodeStatsBuffer},
 };
 
 use super::{SearchHelpers, Searcher};
 
-const PARTIAL_BACKPROP_DEPTH: usize = 2;
-const PARTIAL_BACKPROP_SKIP: u32 = 4;
 
 pub fn perform_one(
     searcher: &Searcher,
     pos: &mut ChessState,
     ptr: NodePtr,
     depth: &mut usize,
-    ply: usize,
     thread_id: usize,
+    root_buf: &mut NodeStatsBuffer,
 ) -> Option<f32> {
     *depth += 1;
 
@@ -74,7 +72,7 @@ pub fn perform_one(
         };
 
         // descend further
-        let maybe_u = perform_one(searcher, pos, child_ptr, depth, ply + 1, thread_id);
+        let maybe_u = perform_one(searcher, pos, child_ptr, depth, thread_id, root_buf);
 
         drop(lock);
 
@@ -92,7 +90,9 @@ pub fn perform_one(
     // accessed from the parent's POV
     u = 1.0 - u;
 
-    if ply > PARTIAL_BACKPROP_DEPTH || node.visits() % PARTIAL_BACKPROP_SKIP == 0 {
+    if ptr == searcher.tree.root_node() {
+        root_buf.add(u);
+    } else {
         let new_q = node.update(u);
         tree.push_hash(hash, 1.0 - new_q);
     }

@@ -2,6 +2,7 @@ mod half;
 mod hash;
 mod lock;
 mod node;
+pub use node::NodeStatsBuffer;
 
 use half::TreeHalf;
 use hash::{HashEntry, HashTable};

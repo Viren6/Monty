@@ -10,7 +10,7 @@ pub use search_stats::SearchStats;
 use crate::{
     chess::{GameState, Move},
     networks::{PolicyNetwork, ValueNetwork},
-    tree::{NodePtr, Tree},
+    tree::{NodePtr, Tree, NodeStatsBuffer},
 };
 
 use std::{
@@ -20,6 +20,7 @@ use std::{
 };
 
 pub static REPORT_ITERS: AtomicBool = AtomicBool::new(false);
+const ROOT_FLUSH_INTERVAL: u32 = 16;
 
 #[derive(Clone, Copy)]
 pub struct Limits {
@@ -99,6 +100,10 @@ impl<'a> Searcher<'a> {
     where
         F: FnMut() -> bool,
     {
+        let mut root_buf = NodeStatsBuffer::default();
+        let root_hash = self.tree.root_position().hash();
+        let root_ptr = self.tree.root_node();
+
         loop {
             let mut pos = self.tree.root_position().clone();
             let mut this_depth = 0;
@@ -106,29 +111,50 @@ impl<'a> Searcher<'a> {
             if iteration::perform_one(
                 self,
                 &mut pos,
-                self.tree.root_node(),
+                root_ptr,
                 &mut this_depth,
-                1,
                 thread_id,
+                &mut root_buf,
             )
             .is_none()
             {
+                if !root_buf.is_empty() {
+                    let new_q = self.tree[root_ptr].flush_buffer(&mut root_buf);
+                    self.tree.push_hash(root_hash, 1.0 - new_q);
+                }
                 return false;
             }
 
             search_stats.add_iter(thread_id, this_depth, main_thread);
 
+            if root_buf.visits() >= ROOT_FLUSH_INTERVAL {
+                let new_q = self.tree[root_ptr].flush_buffer(&mut root_buf);
+                self.tree.push_hash(root_hash, 1.0 - new_q);
+            }
+
             // proven checkmate
             if self.tree[self.tree.root_node()].is_terminal() {
+                if !root_buf.is_empty() {
+                    let new_q = self.tree[root_ptr].flush_buffer(&mut root_buf);
+                    self.tree.push_hash(root_hash, 1.0 - new_q);
+                }
                 return true;
             }
 
             // stop signal sent
             if self.abort.load(Ordering::Relaxed) {
+                if !root_buf.is_empty() {
+                    let new_q = self.tree[root_ptr].flush_buffer(&mut root_buf);
+                    self.tree.push_hash(root_hash, 1.0 - new_q);
+                }
                 return true;
             }
 
             if stop() {
+                if !root_buf.is_empty() {
+                    let new_q = self.tree[root_ptr].flush_buffer(&mut root_buf);
+                    self.tree.push_hash(root_hash, 1.0 - new_q);
+                }
                 return true;
             }
         }
