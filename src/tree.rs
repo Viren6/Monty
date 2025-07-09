@@ -5,7 +5,7 @@ mod node;
 
 use half::TreeHalf;
 use hash::{HashEntry, HashTable};
-pub use node::{Node, NodePtr};
+pub use node::{Node, NodePtr, QUANT};
 
 use std::{
     mem::MaybeUninit,

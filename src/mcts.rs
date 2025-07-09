@@ -1,10 +1,12 @@
 mod helpers;
 mod iteration;
 mod params;
+mod root_buffer;
 mod search_stats;
 
 pub use helpers::SearchHelpers;
 pub use params::MctsParams;
+pub use root_buffer::{RootBuffer, RootBuffers};
 pub use search_stats::SearchStats;
 
 use crate::{
@@ -61,13 +63,14 @@ impl<'a> Searcher<'a> {
         timer: &Instant,
         #[cfg(not(feature = "uci-minimal"))] timer_last_output: &mut Instant,
         search_stats: &SearchStats,
+        root_buf: &mut RootBuffer,
         best_move: &mut Move,
         best_move_changes: &mut i32,
         previous_score: &mut f32,
         #[cfg(not(feature = "uci-minimal"))] uci_output: bool,
         thread_id: usize,
     ) {
-        if self.playout_until_full_internal(search_stats, true, thread_id, || {
+        if self.playout_until_full_internal(search_stats, true, thread_id, root_buf, || {
             self.check_limits(
                 limits,
                 timer,
@@ -85,8 +88,14 @@ impl<'a> Searcher<'a> {
         }
     }
 
-    fn playout_until_full_worker(&self, search_stats: &SearchStats, thread_id: usize) {
-        let _ = self.playout_until_full_internal(search_stats, false, thread_id, || false);
+    fn playout_until_full_worker(
+        &self,
+        search_stats: &SearchStats,
+        thread_id: usize,
+        root_buf: &mut RootBuffer,
+    ) {
+        let _ =
+            self.playout_until_full_internal(search_stats, false, thread_id, root_buf, || false);
     }
 
     fn playout_until_full_internal<F>(
@@ -94,11 +103,15 @@ impl<'a> Searcher<'a> {
         search_stats: &SearchStats,
         main_thread: bool,
         thread_id: usize,
+        root_buf: &mut RootBuffer,
         mut stop: F,
     ) -> bool
     where
         F: FnMut() -> bool,
     {
+        let root_ptr = self.tree.root_node();
+        let root_hash = self.tree.root_position().hash();
+
         loop {
             let mut pos = self.tree.root_position().clone();
             let mut this_depth = 0;
@@ -106,29 +119,34 @@ impl<'a> Searcher<'a> {
             if iteration::perform_one(
                 self,
                 &mut pos,
-                self.tree.root_node(),
+                root_ptr,
                 &mut this_depth,
                 1,
                 thread_id,
+                root_buf,
             )
             .is_none()
             {
+                root_buf.flush(&self.tree[root_ptr], root_hash, self.tree);
                 return false;
             }
 
             search_stats.add_iter(thread_id, this_depth, main_thread);
 
             // proven checkmate
-            if self.tree[self.tree.root_node()].is_terminal() {
+            if self.tree[root_ptr].is_terminal() {
+                root_buf.flush(&self.tree[root_ptr], root_hash, self.tree);
                 return true;
             }
 
             // stop signal sent
             if self.abort.load(Ordering::Relaxed) {
+                root_buf.flush(&self.tree[root_ptr], root_hash, self.tree);
                 return true;
             }
 
             if stop() {
+                root_buf.flush(&self.tree[root_ptr], root_hash, self.tree);
                 return true;
             }
         }
@@ -283,6 +301,7 @@ impl<'a> Searcher<'a> {
 
         let search_stats = SearchStats::new(threads);
         let stats_ref = &search_stats;
+        let mut root_buffers = RootBuffers::new(threads);
 
         let mut best_move = Move::NULL;
         let mut best_move_changes = 0;
@@ -291,6 +310,7 @@ impl<'a> Searcher<'a> {
         // search loop
         while !self.abort.load(Ordering::Relaxed) {
             thread::scope(|s| {
+                let (first, rest) = root_buffers.as_mut_slice().split_first_mut().unwrap();
                 s.spawn(|| {
                     self.playout_until_full_main(
                         &limits,
@@ -298,6 +318,7 @@ impl<'a> Searcher<'a> {
                         #[cfg(not(feature = "uci-minimal"))]
                         &mut timer_last_output,
                         stats_ref,
+                        first,
                         &mut best_move,
                         &mut best_move_changes,
                         &mut previous_score,
@@ -307,12 +328,16 @@ impl<'a> Searcher<'a> {
                     );
                 });
 
-                for i in 1..threads {
-                    s.spawn(move || self.playout_until_full_worker(stats_ref, i));
+                for (i, buf) in rest.iter_mut().enumerate() {
+                    let tid = i + 1;
+                    s.spawn(move || self.playout_until_full_worker(stats_ref, tid, buf));
                 }
             });
 
             if !self.abort.load(Ordering::Relaxed) {
+                let root_ptr = self.tree.root_node();
+                let root_hash = self.tree.root_position().hash();
+                root_buffers.flush_all(&self.tree[root_ptr], root_hash, self.tree);
                 self.tree.flip(true, threads);
             }
         }

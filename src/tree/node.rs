@@ -7,7 +7,7 @@ use crate::chess::{GameState, Move};
 
 use super::lock::{CustomLock, WriteGuard};
 
-const QUANT: i32 = 16384 * 4;
+pub const QUANT: i32 = 16384 * 4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NodePtr(u32);
@@ -222,5 +222,13 @@ impl Node {
         self.sum_sq_q.fetch_add(q * q, Ordering::Relaxed);
 
         (((q + old_q) / u64::from(1 + old_v)) as f64 / f64::from(QUANT)) as f32
+    }
+
+    pub fn bulk_update(&self, visits: u32, sum_q: u64, sum_sq_q: u64) -> f32 {
+        let old_v = self.visits.fetch_add(visits, Ordering::Relaxed);
+        let old_q = self.sum_q.fetch_add(sum_q, Ordering::Relaxed);
+        self.sum_sq_q.fetch_add(sum_sq_q, Ordering::Relaxed);
+
+        (((old_q + sum_q) / u64::from(old_v + visits)) as f64 / f64::from(QUANT)) as f32
     }
 }
