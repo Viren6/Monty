@@ -1,6 +1,6 @@
 use crate::tree::{Node, Tree, QUANT};
 
-const FLUSH_THRESHOLD: u32 = 16;
+const FLUSH_THRESHOLD: u32 = 128;
 
 pub struct RootBuffer {
     visits: u32,
