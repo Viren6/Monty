@@ -223,4 +223,11 @@ impl Node {
 
         (((q + old_q) / u64::from(1 + old_v)) as f64 / f64::from(QUANT)) as f32
     }
+
+    pub fn add_stats(&self, visits: u32, sum_q: u64, sum_sq_q: u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.visits.fetch_add(visits, Relaxed);
+        self.sum_q.fetch_add(sum_q, Relaxed);
+        self.sum_sq_q.fetch_add(sum_sq_q, Relaxed);
+    }
 }

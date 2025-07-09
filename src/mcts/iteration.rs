@@ -3,10 +3,10 @@ use crate::{
     tree::{Node, NodePtr},
 };
 
-use super::{SearchHelpers, Searcher};
+use super::{buffer::{RootBuffer, RootContext}, SearchHelpers, Searcher};
 
-const PARTIAL_BACKPROP_DEPTH: usize = 2;
-const PARTIAL_BACKPROP_SKIP: u32 = 4;
+pub const PARTIAL_BACKPROP_DEPTH: usize = 2;
+pub const PARTIAL_BACKPROP_SKIP: u32 = 4;
 
 pub fn perform_one(
     searcher: &Searcher,
@@ -15,6 +15,8 @@ pub fn perform_one(
     depth: &mut usize,
     ply: usize,
     thread_id: usize,
+    buffer: &mut RootBuffer,
+    ctx: &RootContext,
 ) -> Option<f32> {
     *depth += 1;
 
@@ -74,7 +76,7 @@ pub fn perform_one(
         };
 
         // descend further
-        let maybe_u = perform_one(searcher, pos, child_ptr, depth, ply + 1, thread_id);
+        let maybe_u = perform_one(searcher, pos, child_ptr, depth, ply + 1, thread_id, buffer, ctx);
 
         drop(lock);
 
@@ -92,7 +94,14 @@ pub fn perform_one(
     // accessed from the parent's POV
     u = 1.0 - u;
 
-    if ply > PARTIAL_BACKPROP_DEPTH || node.visits() % PARTIAL_BACKPROP_SKIP == 0 {
+    if ply == 1 {
+        buffer.root.add(u);
+    } else if ply == 2 {
+        let idx = ptr.idx() - ctx.first_child_ptr.idx();
+        if idx < buffer.children.len() {
+            buffer.children[idx].add(u);
+        }
+    } else if ply > PARTIAL_BACKPROP_DEPTH || node.visits() % PARTIAL_BACKPROP_SKIP == 0 {
         let new_q = node.update(u);
         tree.push_hash(hash, 1.0 - new_q);
     }

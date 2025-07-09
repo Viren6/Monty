@@ -2,10 +2,12 @@ mod helpers;
 mod iteration;
 mod params;
 mod search_stats;
+mod buffer;
 
 pub use helpers::SearchHelpers;
 pub use params::MctsParams;
 pub use search_stats::SearchStats;
+pub use buffer::{RootBuffer, RootContext};
 
 use crate::{
     chess::{GameState, Move},
@@ -18,6 +20,8 @@ use std::{
     thread,
     time::Instant,
 };
+
+use iteration::PARTIAL_BACKPROP_SKIP;
 
 pub static REPORT_ITERS: AtomicBool = AtomicBool::new(false);
 
@@ -65,9 +69,11 @@ impl<'a> Searcher<'a> {
         best_move_changes: &mut i32,
         previous_score: &mut f32,
         #[cfg(not(feature = "uci-minimal"))] uci_output: bool,
+        buffer: &mut RootBuffer,
+        ctx: &RootContext,
         thread_id: usize,
     ) {
-        if self.playout_until_full_internal(search_stats, true, thread_id, || {
+        if self.playout_until_full_internal(search_stats, buffer, ctx, true, thread_id, || {
             self.check_limits(
                 limits,
                 timer,
@@ -85,13 +91,21 @@ impl<'a> Searcher<'a> {
         }
     }
 
-    fn playout_until_full_worker(&self, search_stats: &SearchStats, thread_id: usize) {
-        let _ = self.playout_until_full_internal(search_stats, false, thread_id, || false);
+    fn playout_until_full_worker(
+        &self,
+        search_stats: &SearchStats,
+        buffer: &mut RootBuffer,
+        ctx: &RootContext,
+        thread_id: usize,
+    ) {
+        let _ = self.playout_until_full_internal(search_stats, buffer, ctx, false, thread_id, || false);
     }
 
     fn playout_until_full_internal<F>(
         &self,
         search_stats: &SearchStats,
+        buffer: &mut RootBuffer,
+        ctx: &RootContext,
         main_thread: bool,
         thread_id: usize,
         mut stop: F,
@@ -110,25 +124,33 @@ impl<'a> Searcher<'a> {
                 &mut this_depth,
                 1,
                 thread_id,
+                buffer,
+                ctx,
             )
             .is_none()
             {
+                buffer.flush_all(self.tree, ctx);
                 return false;
             }
 
             search_stats.add_iter(thread_id, this_depth, main_thread);
 
+            buffer.maybe_flush(self.tree, ctx, PARTIAL_BACKPROP_SKIP);
+
             // proven checkmate
             if self.tree[self.tree.root_node()].is_terminal() {
+                buffer.flush_all(self.tree, ctx);
                 return true;
             }
 
             // stop signal sent
             if self.abort.load(Ordering::Relaxed) {
+                buffer.flush_all(self.tree, ctx);
                 return true;
             }
 
             if stop() {
+                buffer.flush_all(self.tree, ctx);
                 return true;
             }
         }
@@ -281,6 +303,26 @@ impl<'a> Searcher<'a> {
             }
         }
 
+        let root_hash = pos.hash();
+        let first_child_ptr = self.tree[node].actions();
+        let num_children = self.tree[node].num_actions();
+        let mut child_hashes = Vec::with_capacity(num_children);
+        for action in 0..num_children {
+            let ptr = first_child_ptr + action;
+            let mut child_pos = pos.clone();
+            child_pos.make_move(self.tree[ptr].parent_move());
+            child_hashes.push(child_pos.hash());
+        }
+
+        let ctx = RootContext {
+            root_ptr: node,
+            first_child_ptr,
+            root_hash,
+            child_hashes,
+        };
+
+        let mut buffers: Vec<RootBuffer> = (0..threads).map(|_| RootBuffer::new(num_children)).collect();
+
         let search_stats = SearchStats::new(threads);
         let stats_ref = &search_stats;
 
@@ -291,7 +333,9 @@ impl<'a> Searcher<'a> {
         // search loop
         while !self.abort.load(Ordering::Relaxed) {
             thread::scope(|s| {
-                s.spawn(|| {
+                let ctx_ref = &ctx;
+                let (main_buf, rest) = buffers.split_first_mut().unwrap();
+                s.spawn(move || {
                     self.playout_until_full_main(
                         &limits,
                         &timer,
@@ -303,12 +347,16 @@ impl<'a> Searcher<'a> {
                         &mut previous_score,
                         #[cfg(not(feature = "uci-minimal"))]
                         uci_output,
+                        main_buf,
+                        ctx_ref,
                         0,
                     );
                 });
 
-                for i in 1..threads {
-                    s.spawn(move || self.playout_until_full_worker(stats_ref, i));
+                for (i, buf) in rest.iter_mut().enumerate() {
+                    let tid = i + 1;
+                    let ctx_ref = &ctx;
+                    s.spawn(move || self.playout_until_full_worker(stats_ref, buf, ctx_ref, tid));
                 }
             });
 
