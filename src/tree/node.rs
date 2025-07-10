@@ -60,6 +60,7 @@ pub struct Node {
     sum_q: AtomicU64,
     sum_sq_q: AtomicU64,
     gini_impurity: AtomicU8,
+    pst: AtomicU16,
 }
 
 impl Node {
@@ -75,6 +76,7 @@ impl Node {
             sum_q: AtomicU64::new(0),
             sum_sq_q: AtomicU64::new(0),
             gini_impurity: AtomicU8::new(0),
+            pst: AtomicU16::new(0),
         }
     }
 
@@ -182,6 +184,15 @@ impl Node {
         );
     }
 
+    pub fn pst(&self) -> f32 {
+        f32::from(self.pst.load(Ordering::Relaxed)) / 256.0
+    }
+
+    pub fn set_pst(&self, pst: f32) {
+        self.pst
+            .store((pst * 256.0).round() as u16, Ordering::Relaxed);
+    }
+
     pub fn clear_actions(&self) {
         self.actions.write().store(NodePtr::NULL);
         self.num_actions.store(0, Ordering::Relaxed);
@@ -203,6 +214,7 @@ impl Node {
         self.visits.store(other.visits.load(Relaxed), Relaxed);
         self.sum_q.store(other.sum_q.load(Relaxed), Relaxed);
         self.sum_sq_q.store(other.sum_sq_q.load(Relaxed), Relaxed);
+        self.pst.store(other.pst.load(Relaxed), Relaxed);
     }
 
     pub fn clear(&self) {
@@ -213,6 +225,7 @@ impl Node {
         self.sum_q.store(0, Ordering::Relaxed);
         self.sum_sq_q.store(0, Ordering::Relaxed);
         self.threads.store(0, Ordering::Relaxed);
+        self.pst.store(0, Ordering::Relaxed);
     }
 
     pub fn update(&self, q: f32) -> f32 {

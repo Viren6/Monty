@@ -43,7 +43,7 @@ impl Tree {
             "You must reconsider this allocation!"
         );
 
-        Self::new(bytes / 42, bytes / 42 / 16, threads)
+        Self::new(bytes / 44, bytes / 44 / 16, threads)
     }
 
     fn new(tree_cap: usize, hash_cap: usize, threads: usize) -> Self {
@@ -54,7 +54,7 @@ impl Tree {
                 TreeHalf::new(tree_cap / 2, true, threads),
             ],
             half: AtomicBool::new(false),
-            hash: HashTable::new(hash_cap / 4, threads),
+            hash: HashTable::new(hash_cap / 8, threads),
         }
     }
 
@@ -140,8 +140,8 @@ impl Tree {
         self.hash.get(hash)
     }
 
-    pub fn push_hash(&self, hash: u64, wins: f32) {
-        self.hash.push(hash, wins);
+    pub fn push_hash(&self, hash: u64, ptr: NodePtr) {
+        self.hash.push(hash, ptr);
     }
 
     fn clear_halves(&self) {
@@ -189,9 +189,66 @@ impl Tree {
             max = max.max(policy);
         });
 
-        let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
-
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
+        self[node_ptr].set_pst(pst);
+
+        // try reuse cached policy
+        let hash = pos.hash();
+        if let Some(entry) = self.hash.get(hash) {
+            let cptr = entry.ptr();
+            if !cptr.is_null() {
+                let cnode = &self[cptr];
+                if cnode.has_children() && cnode.num_actions() == count {
+                    let first_child_ptr = cnode.actions();
+                    let mut ok = true;
+                    for i in 0..count {
+                        if self[first_child_ptr + i].parent_move()
+                            != unsafe { moves[i].assume_init() }.0
+                        {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if ok {
+                        let new_ptr =
+                            self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
+                        self.copy_across(first_child_ptr, count, new_ptr);
+
+                        let old_pst = cnode.pst();
+                        let mut tmp = [0f32; 256];
+                        let log_ref = self[new_ptr].policy().max(f32::MIN_POSITIVE).ln();
+                        let mut total = 0.0;
+
+                        for i in 0..count {
+                            let p_old = self[new_ptr + i].policy();
+                            let log_val = if p_old <= 0.0 {
+                                f32::NEG_INFINITY
+                            } else {
+                                (p_old.ln() - log_ref) * (old_pst / pst)
+                            };
+                            let val = log_val.exp();
+                            tmp[i] = val;
+                            total += val;
+                        }
+
+                        let mut sum_of_squares = 0.0;
+                        for i in 0..count {
+                            let val = tmp[i] / total;
+                            self[new_ptr + i].set_policy(val);
+                            sum_of_squares += val * val;
+                        }
+
+                        let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
+                        node.set_gini_impurity(gini_impurity);
+                        actions_ptr.store(new_ptr);
+                        node.set_num_actions(count);
+                        return Some(());
+                    }
+                }
+            }
+        }
+
+        let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
 
         let mut total = 0.0;
 
@@ -247,6 +304,7 @@ impl Tree {
         }
 
         let pst = SearchHelpers::get_pst(depth.into(), self[node_ptr].q(), params);
+        self[node_ptr].set_pst(pst);
 
         let mut total = 0.0;
 
