@@ -1,23 +1,23 @@
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HashEntry {
-    hash: u16,
-    q: u16,
+    hash: u32,
+    ptr: u32,
 }
 
 impl HashEntry {
-    pub fn q(&self) -> f32 {
-        f32::from(self.q) / f32::from(u16::MAX)
+    pub fn ptr(&self) -> u32 {
+        self.ptr
     }
 }
 
 #[derive(Default)]
-struct HashEntryInternal(AtomicU32);
+struct HashEntryInternal(AtomicU64);
 
 impl Clone for HashEntryInternal {
     fn clone(&self) -> Self {
-        Self(AtomicU32::new(self.0.load(Ordering::Relaxed)))
+        Self(AtomicU64::new(self.0.load(Ordering::Relaxed)))
     }
 }
 
@@ -27,7 +27,7 @@ impl From<&HashEntryInternal> for HashEntry {
     }
 }
 
-impl From<HashEntry> for u32 {
+impl From<HashEntry> for u64 {
     fn from(value: HashEntry) -> Self {
         unsafe { std::mem::transmute(value) }
     }
@@ -83,8 +83,8 @@ impl HashTable {
         HashEntry::from(&self.table[idx as usize])
     }
 
-    fn key(hash: u64) -> u16 {
-        (hash >> 48) as u16
+    fn key(hash: u64) -> u32 {
+        (hash >> 32) as u32
     }
 
     pub fn get(&self, hash: u64) -> Option<HashEntry> {
@@ -97,16 +97,16 @@ impl HashTable {
         }
     }
 
-    pub fn push(&self, hash: u64, q: f32) {
+    pub fn push(&self, hash: u64, ptr: u32) {
         let idx = hash % (self.table.len() as u64);
 
         let entry = HashEntry {
             hash: Self::key(hash),
-            q: (q * f32::from(u16::MAX)) as u16,
+            ptr,
         };
 
         self.table[idx as usize]
             .0
-            .store(u32::from(entry), Ordering::Relaxed)
+            .store(u64::from(entry), Ordering::Relaxed)
     }
 }

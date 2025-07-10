@@ -14,7 +14,7 @@ use std::{
 };
 
 use crate::{
-    chess::{ChessState, GameState},
+    chess::{ChessState, GameState, Move},
     mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
 };
@@ -43,7 +43,7 @@ impl Tree {
             "You must reconsider this allocation!"
         );
 
-        Self::new(bytes / 42, bytes / 42 / 16, threads)
+        Self::new(bytes / 44, bytes / 44 / 16, threads)
     }
 
     fn new(tree_cap: usize, hash_cap: usize, threads: usize) -> Self {
@@ -140,8 +140,8 @@ impl Tree {
         self.hash.get(hash)
     }
 
-    pub fn push_hash(&self, hash: u64, wins: f32) {
-        self.hash.push(hash, wins);
+    pub fn push_hash(&self, hash: u64, ptr: u32) {
+        self.hash.push(hash, ptr);
     }
 
     fn clear_halves(&self) {
@@ -179,14 +179,63 @@ impl Tree {
             return Some(());
         }
 
+        let mut move_buf = [MaybeUninit::<Move>::uninit(); 256];
+        let mut count = 0;
+        pos.map_legal_moves(|m| {
+            move_buf[count].write(m);
+            count += 1;
+        });
+
+        if let Some(entry) = self.probe_hash(pos.hash()) {
+            let cached = NodePtr::from_raw(entry.ptr());
+            if self[cached].num_actions() == count {
+                let pst_old = self[cached].pst();
+                let pst_new = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
+                let ratio = pst_old / pst_new;
+
+                let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
+                let first_cached_ptr = self[cached].actions();
+                let mut scores = Vec::with_capacity(count);
+                for i in 0..count {
+                    let mov = unsafe { move_buf[i].assume_init() };
+                    let mut pol = 0.0;
+                    for j in 0..count {
+                        let cp = first_cached_ptr + j;
+                        if self[cp].parent_move() == mov {
+                            pol = self[cp].policy();
+                            break;
+                        }
+                    }
+                    scores.push((mov, pol.powf(ratio)));
+                }
+
+                let total: f32 = scores.iter().map(|&(_, p)| p).sum();
+                let mut sum_sq = 0.0;
+                for (idx, (mov, val)) in scores.into_iter().enumerate() {
+                    let policy = val / total;
+                    let ptr = new_ptr + idx;
+                    self[ptr].set_new(mov, policy);
+                    sum_sq += policy * policy;
+                }
+
+                let gini = (1.0 - sum_sq).clamp(0.0, 1.0);
+                node.set_gini_impurity(gini);
+                actions_ptr.store(new_ptr);
+                node.set_num_actions(count);
+                node.set_pst(pst_new);
+
+                return Some(());
+            }
+        }
+
         let mut max = f32::NEG_INFINITY;
         let mut moves = [const { MaybeUninit::uninit() }; 256];
-        let mut count = 0;
+        count = 0;
 
-        pos.map_moves_with_policies(policy, |mov, policy| {
-            moves[count].write((mov, policy));
+        pos.map_moves_with_policies(policy, |mov, pol| {
+            moves[count].write((mov, pol));
             count += 1;
-            max = max.max(policy);
+            max = max.max(pol);
         });
 
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
@@ -194,30 +243,26 @@ impl Tree {
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
 
         let mut total = 0.0;
-
         for item in moves.iter_mut().take(count) {
-            let (mov, mut policy) = unsafe { item.assume_init() };
-            policy = ((policy - max) / pst).exp();
-            total += policy;
-            item.write((mov, policy));
+            let (mov, mut pol) = unsafe { item.assume_init() };
+            pol = ((pol - max) / pst).exp();
+            total += pol;
+            item.write((mov, pol));
         }
 
-        let mut sum_of_squares = 0.0;
-
-        for (action, item) in moves.iter().take(count).enumerate() {
-            let (mov, policy) = unsafe { item.assume_init() };
-            let ptr = new_ptr + action;
-            let policy = policy / total;
-
-            self[ptr].set_new(mov, policy);
-            sum_of_squares += policy * policy;
+        let mut sum_sq = 0.0;
+        for (idx, item) in moves.iter().take(count).enumerate() {
+            let (mov, pol) = unsafe { item.assume_init() };
+            let p = pol / total;
+            self[new_ptr + idx].set_new(mov, p);
+            sum_sq += p * p;
         }
 
-        let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
-        node.set_gini_impurity(gini_impurity);
-
+        let gini = (1.0 - sum_sq).clamp(0.0, 1.0);
+        node.set_gini_impurity(gini);
         actions_ptr.store(new_ptr);
         node.set_num_actions(count);
+        node.set_pst(pst);
 
         Some(())
     }
