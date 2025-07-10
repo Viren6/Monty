@@ -140,8 +140,13 @@ impl Tree {
         self.hash.get(hash)
     }
 
-    pub fn push_hash(&self, hash: u64, wins: f32) {
-        self.hash.push(hash, wins);
+    pub fn push_hash(&self, hash: u64, ptr: NodePtr) {
+        self.hash.push(hash, ptr);
+    }
+
+    #[allow(dead_code)]
+    pub fn hash_len(&self) -> usize {
+        self.hash.len()
     }
 
     fn clear_halves(&self) {
@@ -179,6 +184,23 @@ impl Tree {
             return Some(());
         }
 
+        let hash = pos.hash();
+        if let Some(entry) = self.probe_hash(hash) {
+            let src = entry.ptr();
+            if !src.is_null()
+                && src.half() == self.half.load(Ordering::Relaxed)
+                && self[src].has_children()
+            {
+                if self
+                    .expand_from_cache(node_ptr, src, depth, params, thread_id)
+                    .is_some()
+                {
+                    self.push_hash(hash, node_ptr);
+                    return Some(());
+                }
+            }
+        }
+
         let mut max = f32::NEG_INFINITY;
         let mut moves = [const { MaybeUninit::uninit() }; 256];
         let mut count = 0;
@@ -192,6 +214,7 @@ impl Tree {
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
 
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
+        self[node_ptr].set_pst(pst);
 
         let mut total = 0.0;
 
@@ -218,6 +241,62 @@ impl Tree {
 
         actions_ptr.store(new_ptr);
         node.set_num_actions(count);
+
+        self.push_hash(hash, node_ptr);
+
+        Some(())
+    }
+
+    fn expand_from_cache(
+        &self,
+        node_ptr: NodePtr,
+        src_ptr: NodePtr,
+        depth: usize,
+        params: &MctsParams,
+        thread_id: usize,
+    ) -> Option<()> {
+        let num_actions = self[src_ptr].num_actions();
+        let old_ptr = self[src_ptr].actions();
+
+        if num_actions == 0 {
+            return None;
+        }
+
+        let new_ptr = self.tree[self.half()].reserve_nodes_thread(num_actions, thread_id)?;
+
+        let pst_old = self[src_ptr].pst();
+        let pst_new = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
+
+        let mut logits = Vec::with_capacity(num_actions);
+        let mut max = f32::NEG_INFINITY;
+
+        for action in 0..num_actions {
+            let child = &self[old_ptr + action];
+            let val = pst_old * child.policy().ln();
+            logits.push((child.parent_move(), val));
+            max = max.max(val);
+        }
+
+        let mut total = 0.0;
+        for item in &mut logits {
+            item.1 = ((item.1 - max) / pst_new).exp();
+            total += item.1;
+        }
+
+        let mut sum_of_squares = 0.0;
+        for (idx, (mov, val)) in logits.iter().enumerate() {
+            let policy = *val / total;
+            let ptr = new_ptr + idx;
+            self[ptr].set_new(*mov, policy);
+            sum_of_squares += policy * policy;
+        }
+
+        let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
+        let node = &self[node_ptr];
+        node.actions_mut().store(new_ptr);
+        node.set_num_actions(num_actions);
+        node.set_gini_impurity(gini_impurity);
+        node.set_pst(pst_new);
 
         Some(())
     }
@@ -247,6 +326,7 @@ impl Tree {
         }
 
         let pst = SearchHelpers::get_pst(depth.into(), self[node_ptr].q(), params);
+        self[node_ptr].set_pst(pst);
 
         let mut total = 0.0;
 
