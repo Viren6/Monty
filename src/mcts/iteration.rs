@@ -30,7 +30,7 @@ pub fn perform_one(
                 let mut count = 0;
                 pos.map_legal_moves(|_| count += 1);
                 if cached.num_actions() == count {
-                    cached.q()
+                    1.0 - cached.q()
                 } else {
                     get_utility(searcher, ptr, pos)
                 }
