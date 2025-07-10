@@ -4,7 +4,7 @@ mod lock;
 mod node;
 
 use half::TreeHalf;
-use hash::{HashEntry, HashTable};
+use hash::HashTable;
 pub use node::{Node, NodePtr};
 
 use std::{
@@ -43,7 +43,7 @@ impl Tree {
             "You must reconsider this allocation!"
         );
 
-        Self::new(bytes / 42, bytes / 42 / 16, threads)
+        Self::new(bytes / 44, bytes / 44 / 16, threads)
     }
 
     fn new(tree_cap: usize, hash_cap: usize, threads: usize) -> Self {
@@ -136,12 +136,12 @@ impl Tree {
         NodePtr::new(self.half.load(Ordering::Relaxed), 0)
     }
 
-    pub fn probe_hash(&self, hash: u64) -> Option<HashEntry> {
-        self.hash.get(hash)
+    pub fn probe_hash(&self, hash: u64) -> Option<NodePtr> {
+        self.hash.get(hash).map(|e| e.ptr())
     }
 
-    pub fn push_hash(&self, hash: u64, wins: f32) {
-        self.hash.push(hash, wins);
+    pub fn push_hash(&self, hash: u64, ptr: NodePtr) {
+        self.hash.push(hash, ptr);
     }
 
     fn clear_halves(&self) {
@@ -179,45 +179,90 @@ impl Tree {
             return Some(());
         }
 
-        let mut max = f32::NEG_INFINITY;
         let mut moves = [const { MaybeUninit::uninit() }; 256];
         let mut count = 0;
 
-        pos.map_moves_with_policies(policy, |mov, policy| {
-            moves[count].write((mov, policy));
+        pos.map_legal_moves(|mov| {
+            moves[count].write(mov);
             count += 1;
-            max = max.max(policy);
+        });
+
+        let hash = pos.hash();
+        if let Some(old_ptr) = self.probe_hash(hash) {
+            if !old_ptr.is_null()
+                && self[old_ptr].has_children()
+                && self[old_ptr].num_actions() == count
+            {
+                let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
+                let old_first = self[old_ptr].actions();
+                let old_pst = self[old_ptr].pst();
+                let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
+                node.set_pst(pst);
+                let factor = if pst == 0.0 { 1.0 } else { old_pst / pst };
+
+                let mut weights = [0.0f32; 256];
+                let mut total = 0.0;
+
+                for action in 0..count {
+                    let mov = unsafe { moves[action].assume_init() };
+                    let w = self[old_first + action].policy().powf(factor);
+                    weights[action] = w;
+                    total += w;
+                    self[new_ptr + action].set_new(mov, 0.0);
+                }
+
+                let mut sum_sq = 0.0;
+                for action in 0..count {
+                    let p = weights[action] / total;
+                    let ptr = new_ptr + action;
+                    self[ptr].set_policy(p);
+                    sum_sq += p * p;
+                }
+
+                node.set_gini_impurity((1.0 - sum_sq).clamp(0.0, 1.0));
+                actions_ptr.store(new_ptr);
+                node.set_num_actions(count);
+                self.push_hash(hash, node_ptr);
+                return Some(());
+            }
+        }
+
+        // fallback to network evaluation
+        let mut max = f32::NEG_INFINITY;
+        let mut policies = [0.0f32; 256];
+
+        count = 0;
+        pos.map_moves_with_policies(policy, |mov, pol| {
+            moves[count].write(mov);
+            policies[count] = pol;
+            max = max.max(pol);
+            count += 1;
         });
 
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
 
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
+        node.set_pst(pst);
 
         let mut total = 0.0;
-
-        for item in moves.iter_mut().take(count) {
-            let (mov, mut policy) = unsafe { item.assume_init() };
-            policy = ((policy - max) / pst).exp();
-            total += policy;
-            item.write((mov, policy));
+        for i in 0..count {
+            policies[i] = ((policies[i] - max) / pst).exp();
+            total += policies[i];
         }
 
-        let mut sum_of_squares = 0.0;
-
-        for (action, item) in moves.iter().take(count).enumerate() {
-            let (mov, policy) = unsafe { item.assume_init() };
+        let mut sum_sq = 0.0;
+        for action in 0..count {
+            let mov = unsafe { moves[action].assume_init() };
+            let policy = policies[action] / total;
             let ptr = new_ptr + action;
-            let policy = policy / total;
-
             self[ptr].set_new(mov, policy);
-            sum_of_squares += policy * policy;
+            sum_sq += policy * policy;
         }
 
-        let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
-        node.set_gini_impurity(gini_impurity);
-
+        node.set_gini_impurity((1.0 - sum_sq).clamp(0.0, 1.0));
         actions_ptr.store(new_ptr);
         node.set_num_actions(count);
+        self.push_hash(hash, node_ptr);
 
         Some(())
     }
@@ -247,6 +292,7 @@ impl Tree {
         }
 
         let pst = SearchHelpers::get_pst(depth.into(), self[node_ptr].q(), params);
+        self[node_ptr].set_pst(pst);
 
         let mut total = 0.0;
 

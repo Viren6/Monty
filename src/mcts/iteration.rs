@@ -25,8 +25,8 @@ pub fn perform_one(
 
         // probe hash table to use in place of network
         if node.state() == GameState::Ongoing {
-            if let Some(entry) = tree.probe_hash(hash) {
-                entry.q()
+            if let Some(ptr_cached) = tree.probe_hash(hash) {
+                tree[ptr_cached].q()
             } else {
                 get_utility(searcher, ptr, pos)
             }
@@ -88,8 +88,8 @@ pub fn perform_one(
     // accessed from the parent's POV
     u = 1.0 - u;
 
-    let new_q = node.update(u);
-    tree.push_hash(hash, 1.0 - new_q);
+    node.update(u);
+    tree.push_hash(hash, ptr);
 
     Some(u)
 }
