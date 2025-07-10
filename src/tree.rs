@@ -99,6 +99,7 @@ impl Tree {
         let old = usize::from(self.half.fetch_xor(true, Ordering::Relaxed));
         self.tree[old].clear_ptrs(threads);
         self.tree[old ^ 1].clear();
+        self.hash.clear(threads);
 
         if copy_across {
             let new_root_ptr = self.tree[self.half()].reserve_nodes_thread(1, 0).unwrap();
@@ -346,7 +347,7 @@ impl Tree {
         }
     }
 
-    pub fn set_root_position(&mut self, new_root: &ChessState) {
+    pub fn set_root_position(&mut self, new_root: &ChessState, threads: usize) {
         let old_root = self.root.clone();
         self.root = new_root.clone();
 
@@ -374,6 +375,7 @@ impl Tree {
         if !found {
             println!("info string no subtree found");
             self.clear_halves();
+            self.hash.clear(threads);
         }
     }
 

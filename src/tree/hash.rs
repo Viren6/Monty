@@ -64,14 +64,14 @@ impl HashTable {
         table
     }
 
-    pub fn clear(&mut self, threads: usize) {
+    pub fn clear(&self, threads: usize) {
         let chunk_size = self.table.len().div_ceil(threads);
 
         std::thread::scope(|s| {
-            for chunk in self.table.chunks_mut(chunk_size) {
-                s.spawn(|| {
-                    for entry in chunk.iter_mut() {
-                        *entry = HashEntryInternal::default();
+            for chunk in self.table.chunks(chunk_size) {
+                s.spawn(move || {
+                    for entry in chunk {
+                        entry.0.store(0, Ordering::Relaxed);
                     }
                 });
             }

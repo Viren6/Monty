@@ -200,7 +200,7 @@ pub fn bench(depth: usize, policy: &PolicyNetwork, value: &ValueNetwork, params:
     for fen in bench_fens {
         let abort = AtomicBool::new(false);
         let pos = ChessState::from_fen(fen);
-        tree.set_root_position(&pos);
+        tree.set_root_position(&pos, 1);
         let searcher = Searcher::new(&tree, params, policy, value, &abort);
         let timer = Instant::now();
         searcher.search(1, limits, false, &mut total_nodes);
@@ -258,7 +258,7 @@ fn setoption(
             *threads = y.parse().unwrap();
             let root = tree.root_position().clone();
             *tree = Tree::new_mb(*hash_mb, *threads);
-            tree.set_root_position(&root);
+            tree.set_root_position(&root, *threads);
             return;
         }
 
@@ -276,7 +276,7 @@ fn setoption(
         *hash_mb = val as usize;
         let root = tree.root_position().clone();
         *tree = Tree::new_mb(*hash_mb, *threads);
-        tree.set_root_position(&root);
+        tree.set_root_position(&root, *threads);
     } else {
         params.set(name, val);
     }
@@ -388,7 +388,7 @@ fn go(
 
     let abort = AtomicBool::new(false);
 
-    tree.set_root_position(pos);
+    tree.set_root_position(pos, threads);
 
     let limits = Limits {
         max_time,
