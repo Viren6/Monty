@@ -43,7 +43,7 @@ impl Tree {
             "You must reconsider this allocation!"
         );
 
-        Self::new(bytes / 42, bytes / 42 / 16, threads)
+        Self::new(bytes / 44, bytes / 44 / 16, threads)
     }
 
     fn new(tree_cap: usize, hash_cap: usize, threads: usize) -> Self {
@@ -140,8 +140,8 @@ impl Tree {
         self.hash.get(hash)
     }
 
-    pub fn push_hash(&self, hash: u64, wins: f32) {
-        self.hash.push(hash, wins);
+    pub fn push_hash(&self, hash: u64, ptr: NodePtr) {
+        self.hash.push(hash, ptr);
     }
 
     fn clear_halves(&self) {
@@ -189,9 +189,41 @@ impl Tree {
             max = max.max(policy);
         });
 
-        let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
-
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
+
+        if let Some(entry) = self.probe_hash(pos.hash()) {
+            let cached_ptr = entry.ptr();
+            if !cached_ptr.is_null() && self[cached_ptr].num_actions() == count {
+                let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
+
+                let ratio = self[cached_ptr].pst() / pst;
+                let cached_actions = self[cached_ptr].actions();
+
+                let mut total = 0.0;
+                for action in 0..count {
+                    let mov = self[cached_actions + action].parent_move();
+                    let pol = self[cached_actions + action].policy().powf(ratio);
+                    total += pol;
+                    self[new_ptr + action].set_new(mov, pol);
+                }
+
+                let mut sum_of_squares = 0.0;
+                for action in 0..count {
+                    let ptr = new_ptr + action;
+                    let pol = self[ptr].policy() / total;
+                    self[ptr].set_policy(pol);
+                    sum_of_squares += pol * pol;
+                }
+
+                node.set_gini_impurity((1.0 - sum_of_squares).clamp(0.0, 1.0));
+                node.set_pst(pst);
+                actions_ptr.store(new_ptr);
+                node.set_num_actions(count);
+                return Some(());
+            }
+        }
+
+        let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
 
         let mut total = 0.0;
 
@@ -213,8 +245,8 @@ impl Tree {
             sum_of_squares += policy * policy;
         }
 
-        let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
-        node.set_gini_impurity(gini_impurity);
+        node.set_gini_impurity((1.0 - sum_of_squares).clamp(0.0, 1.0));
+        node.set_pst(pst);
 
         actions_ptr.store(new_ptr);
         node.set_num_actions(count);
@@ -265,6 +297,7 @@ impl Tree {
 
         let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
         self[node_ptr].set_gini_impurity(gini_impurity);
+        self[node_ptr].set_pst(pst);
     }
 
     pub fn propogate_proven_mates(&self, ptr: NodePtr, child_state: GameState) {

@@ -56,6 +56,7 @@ pub struct Node {
     threads: AtomicU16,
     mov: AtomicU16,
     policy: AtomicU16,
+    pst: AtomicU16,
     visits: AtomicU32,
     sum_q: AtomicU64,
     sum_sq_q: AtomicU64,
@@ -71,6 +72,7 @@ impl Node {
             threads: AtomicU16::new(0),
             mov: AtomicU16::new(0),
             policy: AtomicU16::new(0),
+            pst: AtomicU16::new(0),
             visits: AtomicU32::new(0),
             sum_q: AtomicU64::new(0),
             sum_sq_q: AtomicU64::new(0),
@@ -163,6 +165,14 @@ impl Node {
             .store((policy * f32::from(u16::MAX)) as u16, Ordering::Relaxed);
     }
 
+    pub fn pst(&self) -> f32 {
+        f32::from(self.pst.load(Ordering::Relaxed)) / 4096.0
+    }
+
+    pub fn set_pst(&self, pst: f32) {
+        self.pst.store((pst * 4096.0) as u16, Ordering::Relaxed);
+    }
+
     pub fn has_children(&self) -> bool {
         self.num_actions() != 0
     }
@@ -197,6 +207,7 @@ impl Node {
         self.threads.store(other.threads.load(Relaxed), Relaxed);
         self.mov.store(other.mov.load(Relaxed), Relaxed);
         self.policy.store(other.policy.load(Relaxed), Relaxed);
+        self.pst.store(other.pst.load(Relaxed), Relaxed);
         self.state.store(other.state.load(Relaxed), Relaxed);
         self.gini_impurity
             .store(other.gini_impurity.load(Relaxed), Relaxed);
@@ -213,6 +224,7 @@ impl Node {
         self.sum_q.store(0, Ordering::Relaxed);
         self.sum_sq_q.store(0, Ordering::Relaxed);
         self.threads.store(0, Ordering::Relaxed);
+        self.pst.store(0, Ordering::Relaxed);
     }
 
     pub fn update(&self, q: f32) -> f32 {
