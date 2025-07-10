@@ -27,13 +27,7 @@ pub fn perform_one(
         if node.state() == GameState::Ongoing {
             if let Some(entry) = tree.probe_hash(hash) {
                 let cached = &tree[NodePtr::from_raw(entry.ptr())];
-                let mut count = 0;
-                pos.map_legal_moves(|_| count += 1);
-                if cached.num_actions() == count {
-                    1.0 - cached.q()
-                } else {
-                    get_utility(searcher, ptr, pos)
-                }
+                1.0 - cached.q()
             } else {
                 get_utility(searcher, ptr, pos)
             }
