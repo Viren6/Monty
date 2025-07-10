@@ -1,20 +1,21 @@
 mod half;
 mod hash;
+mod policy_hash;
 mod lock;
 mod node;
 
 use half::TreeHalf;
 use hash::{HashEntry, HashTable};
+use policy_hash::PolicyHashTable;
 pub use node::{Node, NodePtr};
 
 use std::{
-    mem::MaybeUninit,
     ops::Index,
     sync::atomic::{AtomicBool, Ordering},
 };
 
 use crate::{
-    chess::{ChessState, GameState},
+    chess::{ChessState, GameState, Move},
     mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
 };
@@ -24,6 +25,7 @@ pub struct Tree {
     tree: [TreeHalf; 2],
     half: AtomicBool,
     hash: HashTable,
+    policy_hash: PolicyHashTable,
 }
 
 impl Index<NodePtr> for Tree {
@@ -55,6 +57,7 @@ impl Tree {
             ],
             half: AtomicBool::new(false),
             hash: HashTable::new(hash_cap / 4, threads),
+            policy_hash: PolicyHashTable::new(hash_cap / 4, threads),
         }
     }
 
@@ -144,6 +147,14 @@ impl Tree {
         self.hash.push(hash, wins);
     }
 
+    pub fn probe_policy(&self, hash: u64) -> Option<Vec<(Move, f32)>> {
+        self.policy_hash.get(hash)
+    }
+
+    pub fn push_policy(&self, hash: u64, data: Vec<(Move, f32)>) {
+        self.policy_hash.push(hash, data);
+    }
+
     fn clear_halves(&self) {
         self.tree[0].clear();
         self.tree[1].clear();
@@ -153,6 +164,7 @@ impl Tree {
         self.root = ChessState::default();
         self.clear_halves();
         self.hash.clear(threads);
+        self.policy_hash.clear(threads);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -179,37 +191,44 @@ impl Tree {
             return Some(());
         }
 
-        let mut max = f32::NEG_INFINITY;
-        let mut moves = [const { MaybeUninit::uninit() }; 256];
-        let mut count = 0;
+        let hash = pos.hash();
+        let base = if let Some(b) = self.probe_policy(hash) {
+            b
+        } else {
+            let mut mv = Vec::new();
+            pos.map_moves_with_policies(policy, |mov, p| mv.push((mov, p)));
+            let max = mv
+                .iter()
+                .map(|&(_, p)| p)
+                .fold(f32::NEG_INFINITY, f32::max);
+            for (_, v) in &mut mv {
+                *v -= max;
+            }
+            self.push_policy(hash, mv.clone());
+            mv
+        };
 
-        pos.map_moves_with_policies(policy, |mov, policy| {
-            moves[count].write((mov, policy));
-            count += 1;
-            max = max.max(policy);
-        });
+        let count = base.len();
 
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
 
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
 
+        let mut exp = Vec::with_capacity(count);
         let mut total = 0.0;
-
-        for item in moves.iter_mut().take(count) {
-            let (mov, mut policy) = unsafe { item.assume_init() };
-            policy = ((policy - max) / pst).exp();
-            total += policy;
-            item.write((mov, policy));
+        for &(_, v) in &base {
+            let p = (v / pst).exp();
+            exp.push(p);
+            total += p;
         }
 
         let mut sum_of_squares = 0.0;
 
-        for (action, item) in moves.iter().take(count).enumerate() {
-            let (mov, policy) = unsafe { item.assume_init() };
+        for (action, ((mov, _), p)) in base.iter().zip(exp.iter()).enumerate() {
             let ptr = new_ptr + action;
-            let policy = policy / total;
+            let policy = p / total;
 
-            self[ptr].set_new(mov, policy);
+            self[ptr].set_new(*mov, policy);
             sum_of_squares += policy * policy;
         }
 
@@ -234,31 +253,57 @@ impl Tree {
         let num_actions = self[node_ptr].num_actions();
         let actions_ptr = actions.val();
 
-        let hl = pos.get_policy_hl(policy);
-        let mut max = f32::NEG_INFINITY;
-        let mut policies = Vec::new();
+        let hash = pos.hash();
+        let mut base = if let Some(b) = self.probe_policy(hash) {
+            b
+        } else {
+            let hl = pos.get_policy_hl(policy);
+            let mut tmp = Vec::new();
+            let mut max = f32::NEG_INFINITY;
+            for action in 0..num_actions {
+                let mov = self[actions_ptr + action].parent_move();
+                let p = pos.get_policy(mov, &hl, policy);
+                max = max.max(p);
+                tmp.push((mov, p));
+            }
+            for (_, v) in &mut tmp {
+                *v -= max;
+            }
+            self.push_policy(hash, tmp.clone());
+            tmp
+        };
 
-        for action in 0..num_actions {
-            let mov = self[actions_ptr + action].parent_move();
-            let policy = pos.get_policy(mov, &hl, policy);
-
-            policies.push(policy);
-            max = max.max(policy);
+        if base.len() != num_actions {
+            let hl = pos.get_policy_hl(policy);
+            base.clear();
+            let mut max = f32::NEG_INFINITY;
+            for action in 0..num_actions {
+                let mov = self[actions_ptr + action].parent_move();
+                let p = pos.get_policy(mov, &hl, policy);
+                max = max.max(p);
+                base.push((mov, p));
+            }
+            for (_, v) in &mut base {
+                *v -= max;
+            }
+            self.push_policy(hash, base.clone());
         }
 
         let pst = SearchHelpers::get_pst(depth.into(), self[node_ptr].q(), params);
 
+        let mut exp = Vec::with_capacity(base.len());
         let mut total = 0.0;
 
-        for policy in &mut policies {
-            *policy = ((*policy - max) / pst).exp();
-            total += *policy;
+        for &(_, v) in &base {
+            let p = (v / pst).exp();
+            exp.push(p);
+            total += p;
         }
 
         let mut sum_of_squares = 0.0;
 
-        for (action, &policy) in policies.iter().enumerate() {
-            let policy = policy / total;
+        for (action, p) in exp.iter().enumerate() {
+            let policy = p / total;
             self[actions_ptr + action].set_policy(policy);
             sum_of_squares += policy * policy;
         }
