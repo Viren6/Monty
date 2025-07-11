@@ -199,14 +199,7 @@ impl Tree {
                 let mut scores = Vec::with_capacity(count);
                 for i in 0..count {
                     let mov = unsafe { move_buf[i].assume_init() };
-                    let mut pol = 0.0;
-                    for j in 0..count {
-                        let cp = first_cached_ptr + j;
-                        if self[cp].parent_move() == mov {
-                            pol = self[cp].policy();
-                            break;
-                        }
-                    }
+                    let pol = self[first_cached_ptr + i].policy();
                     scores.push((mov, pol.powf(ratio)));
                 }
 
