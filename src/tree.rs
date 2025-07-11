@@ -196,20 +196,19 @@ impl Tree {
 
                 let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
                 let first_cached_ptr = self[cached].actions();
-                let mut scores = [const { MaybeUninit::uninit() }; 256];
+                let mut policies = [0.0f32; 256];
                 let mut total = 0.0;
                 for i in 0..count {
-                    let mov = unsafe { move_buf[i].assume_init() };
                     let pol = self[first_cached_ptr + i].policy().powf(ratio);
                     total += pol;
-                    scores[i].write((mov, pol));
+                    policies[i] = pol;
                 }
 
                 let mut sum_sq = 0.0;
-                for (idx, item) in scores.iter().take(count).enumerate() {
-                    let (mov, val) = unsafe { item.assume_init() };
-                    let policy = val / total;
-                    let ptr = new_ptr + idx;
+                for i in 0..count {
+                    let mov = unsafe { move_buf[i].assume_init() };
+                    let policy = policies[i] / total;
+                    let ptr = new_ptr + i;
                     self[ptr].set_new(mov, policy);
                     sum_sq += policy * policy;
                 }
