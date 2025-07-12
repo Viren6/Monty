@@ -53,7 +53,7 @@ pub fn perform_one(
         tree.fetch_children(ptr, thread_id)?;
 
         // select action to take via PUCT
-        let action = pick_action(searcher, ptr, node);
+        let action = pick_action(searcher, ptr, node, root_buf);
 
         let child_ptr = node.actions() + action;
 
@@ -120,25 +120,29 @@ fn get_utility(searcher: &Searcher, ptr: NodePtr, pos: &ChessState) -> f32 {
     }
 }
 
-fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
+fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node, root_buf: &RootBuffer) -> usize {
     let is_root = ptr == searcher.tree.root_node();
 
-    let cpuct = SearchHelpers::get_cpuct(searcher.params, node, is_root);
-    let fpu = SearchHelpers::get_fpu(node);
-    let expl_scale = SearchHelpers::get_explore_scaling(searcher.params, node);
+    let root_opt = if is_root { Some(root_buf) } else { None };
+
+    let cpuct = SearchHelpers::get_cpuct(searcher.params, node, is_root, root_opt);
+    let fpu = SearchHelpers::get_fpu(node, is_root, root_opt);
+    let expl_scale = SearchHelpers::get_explore_scaling(searcher.params, node, root_opt, is_root);
 
     let expl = cpuct * expl_scale;
 
     searcher.tree.get_best_child_by_key(ptr, |child| {
         let mut q = SearchHelpers::get_action_value(child, fpu);
 
-        // virtual loss
-        let threads = f64::from(child.threads());
-        if threads > 0.0 {
-            let visits = f64::from(child.visits());
-            let q2 = f64::from(q) * visits
-                / (visits + 1.0 + searcher.params.virtual_loss_weight() * (threads - 1.0));
-            q = q2 as f32;
+        if !is_root {
+            // virtual loss
+            let threads = f64::from(child.threads());
+            if threads > 0.0 {
+                let visits = f64::from(child.visits());
+                let q2 = f64::from(q) * visits
+                    / (visits + 1.0 + searcher.params.virtual_loss_weight() * (threads - 1.0));
+                q = q2 as f32;
+            }
         }
 
         let u = expl * child.policy() / (1 + child.visits()) as f32;

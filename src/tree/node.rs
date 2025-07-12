@@ -104,6 +104,14 @@ impl Node {
         self.visits.load(Ordering::Relaxed)
     }
 
+    pub fn sum_q(&self) -> u64 {
+        self.sum_q.load(Ordering::Relaxed)
+    }
+
+    pub fn sum_sq_q(&self) -> u64 {
+        self.sum_sq_q.load(Ordering::Relaxed)
+    }
+
     fn q64(&self) -> f64 {
         let visits = self.visits.load(Ordering::Relaxed);
 

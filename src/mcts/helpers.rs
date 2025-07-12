@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use crate::{
-    mcts::{MctsParams, Searcher},
+    mcts::{MctsParams, Searcher, RootBuffer},
     tree::Node,
 };
 
@@ -11,22 +11,30 @@ impl SearchHelpers {
     /// CPUCT
     ///
     /// Larger value implies more exploration.
-    pub fn get_cpuct(params: &MctsParams, node: &Node, is_root: bool) -> f32 {
+    pub fn get_cpuct(
+        params: &MctsParams,
+        node: &Node,
+        is_root: bool,
+        root: Option<&RootBuffer>,
+    ) -> f32 {
         // baseline CPUCT value
-        let mut cpuct = if is_root {
-            params.root_cpuct()
+        let mut cpuct = if is_root { params.root_cpuct() } else { params.cpuct() };
+
+        let visits = if is_root {
+            root.unwrap().visits_total()
         } else {
-            params.cpuct()
-        };
+            node.visits()
+        } as f32;
 
         // scale CPUCT as visits increase
         let scale = params.cpuct_visits_scale() * 128.0;
-        cpuct *= 1.0 + ((node.visits() as f32 + scale) / scale).ln();
+        cpuct *= 1.0 + ((visits + scale) / scale).ln();
 
         // scale CPUCT with variance of Q
-        if node.visits() > 1 {
-            let mut frac = node.var().sqrt() / params.cpuct_var_scale();
-            frac += (1.0 - frac) / (1.0 + params.cpuct_var_warmup() * node.visits() as f32);
+        if visits as u32 > 1 {
+            let var = if is_root { root.unwrap().var() } else { node.var() };
+            let mut frac = var.sqrt() / params.cpuct_var_scale();
+            frac += (1.0 - frac) / (1.0 + params.cpuct_var_warmup() * visits);
             cpuct *= 1.0 + params.cpuct_var_weight() * (frac - 1.0);
         }
 
@@ -36,17 +44,23 @@ impl SearchHelpers {
     /// Base Exploration Scaling
     ///
     /// Larger value implies more exploration.
-    fn base_explore_scaling(params: &MctsParams, node: &Node) -> f32 {
-        (params.expl_tau() * (node.visits().max(1) as f32).ln()).exp()
+    fn base_explore_scaling(params: &MctsParams, visits: u32) -> f32 {
+        (params.expl_tau() * (visits.max(1) as f32).ln()).exp()
     }
 
     /// Exploration Scaling
     ///
     /// Larger value implies more exploration.
-    pub fn get_explore_scaling(params: &MctsParams, node: &Node) -> f32 {
+    pub fn get_explore_scaling(
+        params: &MctsParams,
+        node: &Node,
+        root: Option<&RootBuffer>,
+        is_root: bool,
+    ) -> f32 {
         #[cfg(not(feature = "datagen"))]
         {
-            let mut scale = Self::base_explore_scaling(params, node);
+            let visits = if is_root { root.unwrap().visits_total() } else { node.visits() };
+            let mut scale = Self::base_explore_scaling(params, visits);
 
             let gini = node.gini_impurity();
             scale *= (params.gini_base() - params.gini_ln_multiplier() * (gini + 0.001).ln())
@@ -55,7 +69,10 @@ impl SearchHelpers {
         }
 
         #[cfg(feature = "datagen")]
-        Self::base_explore_scaling(params, node)
+        {
+            let visits = if is_root { root.unwrap().visits_total() } else { node.visits() };
+            Self::base_explore_scaling(params, visits)
+        }
     }
 
     /// Common depth PST
@@ -71,8 +88,12 @@ impl SearchHelpers {
     ///
     /// #### Note
     /// Must return a value in [0, 1].
-    pub fn get_fpu(node: &Node) -> f32 {
-        1.0 - node.q()
+    pub fn get_fpu(node: &Node, is_root: bool, root: Option<&RootBuffer>) -> f32 {
+        if is_root {
+            1.0 - root.unwrap().q()
+        } else {
+            1.0 - node.q()
+        }
     }
 
     /// Get a predicted win probability for an action

@@ -6,6 +6,9 @@ pub struct RootBuffer {
     visits: u32,
     sum_q: u64,
     sum_sq_q: u64,
+    local_visits: u32,
+    local_sum_q: u64,
+    local_sum_sq_q: u64,
 }
 
 impl RootBuffer {
@@ -14,6 +17,39 @@ impl RootBuffer {
             visits: 0,
             sum_q: 0,
             sum_sq_q: 0,
+            local_visits: 0,
+            local_sum_q: 0,
+            local_sum_sq_q: 0,
+        }
+    }
+
+    pub fn sync(&mut self, node: &Node) {
+        self.local_visits = node.visits();
+        self.local_sum_q = node.sum_q();
+        self.local_sum_sq_q = node.sum_sq_q();
+    }
+
+    pub fn visits_total(&self) -> u32 {
+        self.local_visits
+    }
+
+    pub fn q(&self) -> f32 {
+        if self.local_visits == 0 {
+            0.0
+        } else {
+            (self.local_sum_q as f64 / self.local_visits as f64 / f64::from(QUANT)) as f32
+        }
+    }
+
+    pub fn var(&self) -> f32 {
+        if self.local_visits == 0 {
+            0.0
+        } else {
+            let q = self.local_sum_q as f64 / self.local_visits as f64 / f64::from(QUANT);
+            let sq_q = self.local_sum_sq_q as f64
+                / self.local_visits as f64
+                / f64::from(QUANT).powi(2);
+            (sq_q - q.powi(2)).max(0.0) as f32
         }
     }
 
@@ -34,6 +70,9 @@ impl RootBuffer {
         }
         let new_q = node.bulk_update(self.visits, self.sum_q, self.sum_sq_q);
         tree.push_hash(hash, 1.0 - new_q);
+        self.local_visits += self.visits;
+        self.local_sum_q += self.sum_q;
+        self.local_sum_sq_q += self.sum_sq_q;
         self.visits = 0;
         self.sum_q = 0;
         self.sum_sq_q = 0;
@@ -45,9 +84,17 @@ pub struct RootBuffers {
 }
 
 impl RootBuffers {
-    pub fn new(threads: usize) -> Self {
-        Self {
-            buffers: (0..threads).map(|_| RootBuffer::new()).collect(),
+    pub fn new(threads: usize, root: &Node) -> Self {
+        let mut buffers: Vec<RootBuffer> = (0..threads).map(|_| RootBuffer::new()).collect();
+        for buf in &mut buffers {
+            buf.sync(root);
+        }
+        Self { buffers }
+    }
+
+    pub fn sync_all(&mut self, root: &Node) {
+        for buf in &mut self.buffers {
+            buf.sync(root);
         }
     }
 

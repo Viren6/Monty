@@ -301,7 +301,8 @@ impl<'a> Searcher<'a> {
 
         let search_stats = SearchStats::new(threads);
         let stats_ref = &search_stats;
-        let mut root_buffers = RootBuffers::new(threads);
+        let root_ptr = self.tree.root_node();
+        let mut root_buffers = RootBuffers::new(threads, &self.tree[root_ptr]);
 
         let mut best_move = Move::NULL;
         let mut best_move_changes = 0;
