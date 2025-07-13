@@ -59,7 +59,9 @@ pub fn perform_one(
 
         pos.make_move(mov);
 
-        tree[child_ptr].inc_threads();
+        if ptr != searcher.tree.root_node() {
+            tree[child_ptr].inc_threads();
+        }
 
         // acquire lock to avoid issues with desynced setting of
         // game state between threads when threads > 1
@@ -74,7 +76,9 @@ pub fn perform_one(
 
         drop(lock);
 
-        tree[child_ptr].dec_threads();
+        if ptr != searcher.tree.root_node() {
+            tree[child_ptr].dec_threads();
+        }
 
         let u = maybe_u?;
 
@@ -115,13 +119,15 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
     searcher.tree.get_best_child_by_key(ptr, |child| {
         let mut q = SearchHelpers::get_action_value(child, fpu);
 
-        // virtual loss
-        let threads = f64::from(child.threads());
-        if threads > 0.0 {
-            let visits = f64::from(child.visits());
-            let q2 = f64::from(q) * visits
-                / (visits + 1.0 + searcher.params.virtual_loss_weight() * (threads - 1.0));
-            q = q2 as f32;
+        if !is_root {
+            // virtual loss
+            let threads = f64::from(child.threads());
+            if threads > 0.0 {
+                let visits = f64::from(child.visits());
+                let q2 = f64::from(q) * visits
+                    / (visits + 1.0 + searcher.params.virtual_loss_weight() * (threads - 1.0));
+                q = q2 as f32;
+            }
         }
 
         let u = expl * child.policy() / (1 + child.visits()) as f32;
