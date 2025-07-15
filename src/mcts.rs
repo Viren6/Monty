@@ -102,17 +102,19 @@ impl<'a> Searcher<'a> {
         let mut start_path: Vec<Move> = Vec::new();
 
         loop {
+            let start_ptr = if let Some(ptr) = self.tree.follow_path(&start_path) {
+                ptr
+            } else {
+                start_path.clear();
+                self.tree.root_node()
+            };
+
             let mut pos = self.tree.root_position().clone();
             for &m in &start_path {
                 pos.make_move(m);
             }
 
             let mut this_depth = start_path.len();
-
-            let start_ptr = self
-                .tree
-                .follow_path(&start_path)
-                .unwrap_or_else(|| self.tree.root_node());
 
             let mut path = start_path.clone();
 
