@@ -79,11 +79,21 @@ pub fn perform_one_ppb(
         let new_q = node.update(u);
         tree.push_hash(hash, 1.0 - new_q);
 
-        return Some(PpbResult { value: u, new_path: None });
+        return Some(PpbResult {
+            value: u,
+            new_path: None,
+        });
     }
 
     if node.is_not_expanded() {
-        tree.expand_node(ptr, pos, searcher.params, searcher.policy, *depth, thread_id)?;
+        tree.expand_node(
+            ptr,
+            pos,
+            searcher.params,
+            searcher.policy,
+            *depth,
+            thread_id,
+        )?;
     }
 
     tree.fetch_children(ptr, thread_id)?;
@@ -118,18 +128,30 @@ pub fn perform_one_ppb(
     let new_q = node.update(u);
     tree.push_hash(hash, 1.0 - new_q);
 
-    if let Some(new_path) = child_res.new_path {
-        return Some(PpbResult { value: u, new_path: Some(new_path) });
-    }
-
+    let mut best_unchanged = false;
     if !node.is_not_expanded() {
         let best = pick_action(searcher, ptr, node);
-        if best == action {
-            let mut new_path = path.clone();
-            new_path.push(mov);
-            return Some(PpbResult { value: u, new_path: Some(new_path) });
-        }
+        best_unchanged = best == action;
     }
 
-    Some(PpbResult { value: u, new_path: None })
+    if best_unchanged {
+        if let Some(new_path) = child_res.new_path {
+            return Some(PpbResult {
+                value: u,
+                new_path: Some(new_path),
+            });
+        }
+
+        let mut new_path = path.clone();
+        new_path.push(mov);
+        return Some(PpbResult {
+            value: u,
+            new_path: Some(new_path),
+        });
+    }
+
+    Some(PpbResult {
+        value: u,
+        new_path: None,
+    })
 }
