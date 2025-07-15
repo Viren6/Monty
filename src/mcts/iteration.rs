@@ -53,6 +53,7 @@ pub fn perform_one_ppb(
     depth: &mut usize,
     thread_id: usize,
     path: &mut Vec<Move>,
+    hint: &[Move],
 ) -> Option<PpbResult> {
     *depth += 1;
 
@@ -79,16 +80,45 @@ pub fn perform_one_ppb(
         let new_q = node.update(u);
         tree.push_hash(hash, 1.0 - new_q);
 
-        return Some(PpbResult { value: u, new_path: None });
+        return Some(PpbResult {
+            value: u,
+            new_path: None,
+        });
     }
 
     if node.is_not_expanded() {
-        tree.expand_node(ptr, pos, searcher.params, searcher.policy, *depth, thread_id)?;
+        tree.expand_node(
+            ptr,
+            pos,
+            searcher.params,
+            searcher.policy,
+            *depth,
+            thread_id,
+        )?;
     }
 
     tree.fetch_children(ptr, thread_id)?;
 
-    let action = pick_action(searcher, ptr, node);
+    let (action, next_hint) = if let Some((&next_move, rest)) = hint.split_first() {
+        let first_child_ptr = node.actions();
+        let mut found = None;
+        for a in 0..node.num_actions() {
+            let cptr = first_child_ptr + a;
+            if tree[cptr].parent_move() == next_move {
+                found = Some((a, rest));
+                break;
+            }
+        }
+
+        if let Some(v) = found {
+            v
+        } else {
+            (pick_action(searcher, ptr, node), hint)
+        }
+    } else {
+        (pick_action(searcher, ptr, node), hint)
+    };
+
     let child_ptr = node.actions() + action;
     let mov = tree[child_ptr].parent_move();
 
@@ -102,7 +132,7 @@ pub fn perform_one_ppb(
         None
     };
 
-    let child_res = perform_one_ppb(searcher, pos, child_ptr, depth, thread_id, path);
+    let child_res = perform_one_ppb(searcher, pos, child_ptr, depth, thread_id, path, next_hint);
 
     drop(lock);
 
@@ -119,7 +149,10 @@ pub fn perform_one_ppb(
     tree.push_hash(hash, 1.0 - new_q);
 
     if let Some(new_path) = child_res.new_path {
-        return Some(PpbResult { value: u, new_path: Some(new_path) });
+        return Some(PpbResult {
+            value: u,
+            new_path: Some(new_path),
+        });
     }
 
     if !node.is_not_expanded() {
@@ -127,9 +160,15 @@ pub fn perform_one_ppb(
         if best == action {
             let mut new_path = path.clone();
             new_path.push(mov);
-            return Some(PpbResult { value: u, new_path: Some(new_path) });
+            return Some(PpbResult {
+                value: u,
+                new_path: Some(new_path),
+            });
         }
     }
 
-    Some(PpbResult { value: u, new_path: None })
+    Some(PpbResult {
+        value: u,
+        new_path: None,
+    })
 }
