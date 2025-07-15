@@ -99,19 +99,37 @@ impl<'a> Searcher<'a> {
     where
         F: FnMut() -> bool,
     {
+        let mut start_path: Vec<Move> = Vec::new();
+
         loop {
             let mut pos = self.tree.root_position().clone();
-            let mut this_depth = 0;
+            for &m in &start_path {
+                pos.make_move(m);
+            }
 
-            if iteration::perform_one(
+            let mut this_depth = start_path.len();
+
+            let start_ptr = self
+                .tree
+                .follow_path(&start_path)
+                .unwrap_or_else(|| self.tree.root_node());
+
+            let mut path = start_path.clone();
+
+            if let Some(res) = iteration::perform_one_ppb(
                 self,
                 &mut pos,
-                self.tree.root_node(),
+                start_ptr,
                 &mut this_depth,
                 thread_id,
-            )
-            .is_none()
-            {
+                &mut path,
+            ) {
+                if let Some(new_p) = res.new_path {
+                    start_path = new_p;
+                } else {
+                    start_path.clear();
+                }
+            } else {
                 return false;
             }
 

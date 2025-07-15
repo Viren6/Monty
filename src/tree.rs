@@ -14,7 +14,7 @@ use std::{
 };
 
 use crate::{
-    chess::{ChessState, GameState},
+    chess::{ChessState, GameState, Move},
     mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
 };
@@ -369,6 +369,36 @@ impl Tree {
         }
 
         NodePtr::NULL
+    }
+
+    pub fn follow_path(&self, path: &[Move]) -> Option<NodePtr> {
+        let mut ptr = self.root_node();
+
+        for &m in path {
+            let first_child_ptr = self[ptr].actions();
+
+            if first_child_ptr.is_null() {
+                return None;
+            }
+
+            let mut found = false;
+
+            for action in 0..self[ptr].num_actions() {
+                let child_ptr = first_child_ptr + action;
+
+                if self[child_ptr].parent_move() == m {
+                    ptr = child_ptr;
+                    found = true;
+                    break;
+                }
+            }
+
+            if !found {
+                return None;
+            }
+        }
+
+        Some(ptr)
     }
 
     pub fn get_best_child_by_key<F: FnMut(&Node) -> f32>(&self, ptr: NodePtr, mut key: F) -> usize {
