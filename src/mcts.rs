@@ -102,17 +102,32 @@ impl<'a> Searcher<'a> {
         let mut start_path: Vec<Move> = Vec::new();
 
         loop {
+            // rebuild the board along the current start path while also
+            // recording the corresponding node pointers and hashes so we can
+            // update ancestors after the playout.
             let mut pos = self.tree.root_position().clone();
+            let mut ptrs = Vec::with_capacity(start_path.len() + 1);
+            let mut hashes = Vec::with_capacity(start_path.len() + 1);
+
+            ptrs.push(self.tree.root_node());
+            hashes.push(pos.hash());
+
             for &m in &start_path {
                 pos.make_move(m);
+
+                let parent = *ptrs.last().unwrap();
+                if let Some(child_ptr) = self.tree.child_by_move(parent, m) {
+                    ptrs.push(child_ptr);
+                } else {
+                    break;
+                }
+
+                hashes.push(pos.hash());
             }
 
             let mut this_depth = start_path.len();
 
-            let start_ptr = self
-                .tree
-                .follow_path(&start_path)
-                .unwrap_or_else(|| self.tree.root_node());
+            let start_ptr = *ptrs.last().unwrap();
 
             let mut path = start_path.clone();
 
@@ -124,6 +139,20 @@ impl<'a> Searcher<'a> {
                 thread_id,
                 &mut path,
             ) {
+                // propagate the returned value up the recorded path so that
+                // ancestors, including the root, are updated correctly.
+                let mut val = res.value;
+
+                for i in (0..ptrs.len() - 1).rev() {
+                    let parent = ptrs[i];
+                    let child = ptrs[i + 1];
+                    self.tree.propogate_proven_mates(parent, self.tree[child].state());
+
+                    val = 1.0 - val;
+                    let new_q = self.tree[parent].update(val);
+                    self.tree.push_hash(hashes[i], 1.0 - new_q);
+                }
+
                 if let Some(new_p) = res.new_path {
                     start_path = new_p;
                 } else {

@@ -401,6 +401,24 @@ impl Tree {
         Some(ptr)
     }
 
+    pub fn child_by_move(&self, ptr: NodePtr, mov: Move) -> Option<NodePtr> {
+        let first_child_ptr = self[ptr].actions();
+
+        if first_child_ptr.is_null() {
+            return None;
+        }
+
+        for action in 0..self[ptr].num_actions() {
+            let child_ptr = first_child_ptr + action;
+
+            if self[child_ptr].parent_move() == mov {
+                return Some(child_ptr);
+            }
+        }
+
+        None
+    }
+
     pub fn get_best_child_by_key<F: FnMut(&Node) -> f32>(&self, ptr: NodePtr, mut key: F) -> usize {
         let mut best_child = usize::MAX;
         let mut best_score = f32::NEG_INFINITY;
