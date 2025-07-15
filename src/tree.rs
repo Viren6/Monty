@@ -401,6 +401,44 @@ impl Tree {
         Some(ptr)
     }
 
+    pub fn follow_path_collect(
+        &self,
+        pos: &mut ChessState,
+        path: &[Move],
+        nodes: &mut Vec<(NodePtr, u64)>,
+    ) -> Option<NodePtr> {
+        nodes.clear();
+        let mut ptr = self.root_node();
+
+        for &m in path {
+            nodes.push((ptr, pos.hash()));
+            let first_child_ptr = self[ptr].actions();
+
+            if first_child_ptr.is_null() {
+                return None;
+            }
+
+            let mut found = false;
+
+            for action in 0..self[ptr].num_actions() {
+                let child_ptr = first_child_ptr + action;
+
+                if self[child_ptr].parent_move() == m {
+                    ptr = child_ptr;
+                    pos.make_move(m);
+                    found = true;
+                    break;
+                }
+            }
+
+            if !found {
+                return None;
+            }
+        }
+
+        Some(ptr)
+    }
+
     pub fn get_best_child_by_key<F: FnMut(&Node) -> f32>(&self, ptr: NodePtr, mut key: F) -> usize {
         let mut best_child = usize::MAX;
         let mut best_score = f32::NEG_INFINITY;

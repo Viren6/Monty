@@ -100,19 +100,22 @@ impl<'a> Searcher<'a> {
         F: FnMut() -> bool,
     {
         let mut start_path: Vec<Move> = Vec::new();
+        let mut parent_nodes: Vec<(NodePtr, u64)> = Vec::new();
 
         loop {
             let mut pos = self.tree.root_position().clone();
-            for &m in &start_path {
-                pos.make_move(m);
-            }
+            let start_ptr = if let Some(ptr) =
+                self.tree
+                    .follow_path_collect(&mut pos, &start_path, &mut parent_nodes)
+            {
+                ptr
+            } else {
+                parent_nodes.clear();
+                start_path.clear();
+                self.tree.root_node()
+            };
 
             let mut this_depth = start_path.len();
-
-            let start_ptr = self
-                .tree
-                .follow_path(&start_path)
-                .unwrap_or_else(|| self.tree.root_node());
 
             let mut path = start_path.clone();
 
@@ -124,6 +127,13 @@ impl<'a> Searcher<'a> {
                 thread_id,
                 &mut path,
             ) {
+                let mut val = res.value;
+                for &(node_ptr, hash) in parent_nodes.iter().rev() {
+                    let new_q = self.tree[node_ptr].update(val);
+                    self.tree.push_hash(hash, 1.0 - new_q);
+                    val = 1.0 - val;
+                }
+
                 if let Some(new_p) = res.new_path {
                     start_path = new_p;
                 } else {
