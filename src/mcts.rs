@@ -67,7 +67,12 @@ impl<'a> Searcher<'a> {
         #[cfg(not(feature = "uci-minimal"))] uci_output: bool,
         thread_id: usize,
     ) {
-        if self.playout_until_full_internal(search_stats, true, thread_id, || {
+        if self.playout_until_full_internal(
+            search_stats,
+            true,
+            thread_id,
+            limits.max_depth,
+            || {
             self.check_limits(
                 limits,
                 timer,
@@ -80,13 +85,14 @@ impl<'a> Searcher<'a> {
                 #[cfg(not(feature = "uci-minimal"))]
                 uci_output,
             )
-        }) {
+        })
+        {
             self.abort.store(true, Ordering::Relaxed);
         }
     }
 
     fn playout_until_full_worker(&self, search_stats: &SearchStats, thread_id: usize) {
-        let _ = self.playout_until_full_internal(search_stats, false, thread_id, || false);
+        let _ = self.playout_until_full_internal(search_stats, false, thread_id, usize::MAX, || false);
     }
 
     fn playout_until_full_internal<F>(
@@ -94,6 +100,7 @@ impl<'a> Searcher<'a> {
         search_stats: &SearchStats,
         main_thread: bool,
         thread_id: usize,
+        max_depth: usize,
         mut stop: F,
     ) -> bool
     where
@@ -124,8 +131,13 @@ impl<'a> Searcher<'a> {
                 thread_id,
                 &mut path,
             ) {
-                if let Some(new_p) = res.new_path {
-                    start_path = new_p;
+                if let Some(mut new_p) = res.new_path {
+                    if new_p.len() <= max_depth {
+                        start_path = new_p;
+                    } else {
+                        // path too deep, reset to avoid early cutoff
+                        start_path.clear();
+                    }
                 } else {
                     start_path.clear();
                 }
