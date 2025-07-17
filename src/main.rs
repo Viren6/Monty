@@ -226,8 +226,14 @@ mod net {
         let value: &ValueNetwork = unsafe { read_into_struct_unchecked(&NETWORKS.1) };
 
         if let Some("bench") = arg1.as_deref() {
+            let depth = if let Some(d) = args.nth(0) {
+                d.parse().unwrap_or(ChessState::BENCH_DEPTH)
+            } else {
+                ChessState::BENCH_DEPTH
+            };
+
             uci::bench(
-                ChessState::BENCH_DEPTH,
+                depth,
                 policy,
                 value,
                 &MctsParams::default(),
