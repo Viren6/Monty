@@ -5,6 +5,15 @@ use crate::{
 
 use super::{SearchHelpers, Searcher};
 
+#[inline]
+fn prefetch_node(tree: &crate::tree::Tree, ptr: NodePtr) {
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse"))]
+    unsafe {
+        use core::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+        _mm_prefetch((&tree[ptr] as *const Node).cast::<i8>(), _MM_HINT_T0);
+    }
+}
+
 pub fn perform_one(
     searcher: &Searcher,
     pos: &mut ChessState,
@@ -112,7 +121,19 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
 
     let expl = cpuct * expl_scale;
 
-    searcher.tree.get_best_child_by_key(ptr, |child| {
+    let first_child_ptr = node.actions();
+    let num_actions = node.num_actions();
+
+    let mut best_child = usize::MAX;
+    let mut best_score = f32::NEG_INFINITY;
+
+    for action in 0..num_actions {
+        if action + 1 < num_actions {
+            prefetch_node(searcher.tree, first_child_ptr + action + 1);
+        }
+
+        let child = &searcher.tree[first_child_ptr + action];
+
         let mut q = SearchHelpers::get_action_value(child, fpu);
 
         // virtual loss
@@ -126,6 +147,13 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
 
         let u = expl * child.policy() / (1 + child.visits()) as f32;
 
-        q + u
-    })
+        let score = q + u;
+
+        if score > best_score {
+            best_score = score;
+            best_child = action;
+        }
+    }
+
+    best_child
 }
