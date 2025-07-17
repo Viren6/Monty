@@ -71,7 +71,18 @@ impl<const N: usize> Accumulator<i16, N> {
                 *reg = self.0[offset + j];
             }
 
-            for &add in adds {
+            let mut iter = adds.iter().peekable();
+            while let Some(&add) = iter.next() {
+                if let Some(&next) = iter.peek() {
+                    #[cfg(target_arch = "x86_64")]
+                    unsafe {
+                        core::arch::x86_64::_mm_prefetch(
+                            weights[*next].0.as_ptr().add(offset) as *const i8,
+                            core::arch::x86_64::_MM_HINT_T0,
+                        );
+                    }
+                }
+
                 let this_weight = &weights[add];
 
                 for (j, reg) in regs.iter_mut().enumerate() {
