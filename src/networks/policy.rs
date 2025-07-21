@@ -7,7 +7,7 @@ use super::{accumulator::Accumulator, layer::Layer};
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals, dead_code)]
-pub const PolicyFileDefaultName: &str = "var3-sb200.network";
+pub const PolicyFileDefaultName: &str = "nn-aec6d998e685.network";
 #[allow(non_upper_case_globals, dead_code)]
 pub const CompressedPolicyName: &str = "nn-4b70c6924179.network";
 
