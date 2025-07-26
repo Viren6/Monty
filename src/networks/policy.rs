@@ -7,6 +7,7 @@ use super::{
     accumulator::Accumulator,
     layer::{Layer, TransposedLayer},
 };
+use crate::bench_logger;
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals, dead_code)]
@@ -60,24 +61,37 @@ impl PolicyNetwork {
     }
 
     pub fn get(&self, pos: &Board, mov: &Move, hl: &Accumulator<i16, { L1 / 2 }>) -> f32 {
-        let idx = map_move_to_index(pos, *mov);
+        let good = pos.see(mov, -108);
+        let good_idx = map_move_to_index_for_bucket(pos, *mov, true);
+        let bad_idx = map_move_to_index_for_bucket(pos, *mov, false);
+
+        let good_val = self.eval_idx(good_idx, hl);
+        let bad_val = self.eval_idx(bad_idx, hl);
+
+        // Log results when benching
+        bench_logger::log(good_val, bad_val);
+
+        if good { good_val } else { bad_val }
+    }
+
+    fn eval_idx(&self, idx: usize, hl: &Accumulator<i16, { L1 / 2 }>) -> f32 {
         let weights = &self.l2.weights[idx];
 
         let mut res = 0;
-
         for (&w, &v) in weights.0.iter().zip(hl.0.iter()) {
             res += i32::from(w) * i32::from(v);
         }
 
-        (res as f32 / f32::from(QA * FACTOR) + f32::from(self.l2.biases.0[idx])) / f32::from(QB)
+        (res as f32 / f32::from(QA * FACTOR) + f32::from(self.l2.biases.0[idx]))
+            / f32::from(QB)
     }
 }
 
 const PROMOS: usize = 4 * 22;
 
-fn map_move_to_index(pos: &Board, mov: Move) -> usize {
+fn map_move_to_index_for_bucket(pos: &Board, mov: Move, good: bool) -> usize {
     let hm = if pos.king_index() % 8 > 3 { 7 } else { 0 };
-    let good_see = (OFFSETS[64] + PROMOS) * usize::from(pos.see(&mov, -108));
+    let good_see = (OFFSETS[64] + PROMOS) * usize::from(good);
 
     let idx = if mov.is_promo() {
         let ffile = (mov.src() ^ hm) % 8;

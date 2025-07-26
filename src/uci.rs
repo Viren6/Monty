@@ -128,6 +128,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
 }
 
 pub fn bench(depth: usize, policy: &PolicyNetwork, value: &ValueNetwork, params: &MctsParams) {
+    crate::bench_logger::init();
     let mut total_nodes = 0;
     let mut time = 0.0;
 
