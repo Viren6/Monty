@@ -11,13 +11,22 @@ impl SearchHelpers {
     /// CPUCT
     ///
     /// Larger value implies more exploration.
-    pub fn get_cpuct(params: &MctsParams, node: &Node, is_root: bool) -> f32 {
+    pub fn get_cpuct(
+        params: &MctsParams,
+        node: &Node,
+        is_root: bool,
+        parent_q: f32,
+    ) -> f32 {
         // baseline CPUCT value
         let mut cpuct = if is_root {
             params.root_cpuct()
         } else {
             params.cpuct()
         };
+
+        if !is_root && (1.0 - parent_q) - node.q() > 0.05 {
+            cpuct -= 0.1;
+        }
 
         // scale CPUCT as visits increase
         let scale = params.cpuct_visits_scale() * 128.0;
