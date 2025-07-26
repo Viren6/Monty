@@ -107,6 +107,7 @@ impl<'a> Searcher<'a> {
                 self,
                 &mut pos,
                 self.tree.root_node(),
+                NodePtr::NULL,
                 &mut this_depth,
                 thread_id,
             )

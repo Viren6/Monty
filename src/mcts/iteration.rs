@@ -9,6 +9,7 @@ pub fn perform_one(
     searcher: &Searcher,
     pos: &mut ChessState,
     ptr: NodePtr,
+    parent: NodePtr,
     depth: &mut usize,
     thread_id: usize,
 ) -> Option<f32> {
@@ -51,7 +52,7 @@ pub fn perform_one(
         tree.fetch_children(ptr, thread_id)?;
 
         // select action to take via PUCT
-        let action = pick_action(searcher, ptr, node);
+        let action = pick_action(searcher, ptr, node, parent);
 
         let child_ptr = node.actions() + action;
 
@@ -70,7 +71,7 @@ pub fn perform_one(
         };
 
         // descend further
-        let maybe_u = perform_one(searcher, pos, child_ptr, depth, thread_id);
+        let maybe_u = perform_one(searcher, pos, child_ptr, ptr, depth, thread_id);
 
         drop(lock);
 
@@ -103,10 +104,17 @@ fn get_utility(searcher: &Searcher, ptr: NodePtr, pos: &ChessState) -> f32 {
     }
 }
 
-fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
+fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node, parent: NodePtr) -> usize {
     let is_root = ptr == searcher.tree.root_node();
 
-    let cpuct = SearchHelpers::get_cpuct(searcher.params, node, is_root);
+    let mut cpuct = SearchHelpers::get_cpuct(searcher.params, node, is_root);
+
+    if !parent.is_null() {
+        let parent_q = searcher.tree[parent].q();
+        if (1.0 - parent_q) - node.q() > 0.05 {
+            cpuct -= 0.1;
+        }
+    }
     let fpu = SearchHelpers::get_fpu(node);
     let expl_scale = SearchHelpers::get_explore_scaling(searcher.params, node);
 
