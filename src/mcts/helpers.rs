@@ -24,8 +24,9 @@ impl SearchHelpers {
             params.cpuct()
         };
 
-        if !is_root && (1.0 - parent_q) - node.q() > 0.05 {
-            cpuct -= 0.1;
+        if !is_root {
+            let q_delta = node.q() - (1.0 - parent_q);
+            cpuct += (1.5 * q_delta).clamp(-0.5, 0.5);
         }
 
         // scale CPUCT as visits increase
