@@ -309,17 +309,6 @@ impl Board {
         threats
     }
 
-    fn gain(&self, mov: &Move) -> i32 {
-        if mov.is_en_passant() {
-            return SEE_VALS[Piece::PAWN];
-        }
-        let mut score = SEE_VALS[self.get_pc(1 << mov.to())];
-        if mov.is_promo() {
-            score += SEE_VALS[mov.promo_pc()] - SEE_VALS[Piece::PAWN];
-        }
-        score
-    }
-
     pub fn see_score(&self, mov: &Move) -> i32 {
         let mut low = -20000;
         let mut high = 20000;
