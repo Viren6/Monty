@@ -180,8 +180,10 @@ impl ChessState {
         params: &MctsParams,
         corr: &crate::correction_history::CorrectionHistory,
     ) -> i32 {
-        let base = self.get_value(value, params);
-        corr.apply(&self.board, base)
+        const K: f32 = 400.0;
+        let base_q = self.get_value_wdl(value, params);
+        let corr_q = corr.apply(&self.board, base_q).clamp(0.0, 1.0);
+        (-K * (1.0 / corr_q - 1.0).ln()) as i32
     }
 
     pub fn get_value_wdl(&self, value: &ValueNetwork, params: &MctsParams) -> f32 {
@@ -194,7 +196,8 @@ impl ChessState {
         params: &MctsParams,
         corr: &crate::correction_history::CorrectionHistory,
     ) -> f32 {
-        1.0 / (1.0 + (-(self.get_value_corr(value, params, corr) as f32) / 400.0).exp())
+        let base_q = self.get_value_wdl(value, params);
+        corr.apply(&self.board, base_q).clamp(0.0, 1.0)
     }
 
     pub fn perft(&self, depth: usize) -> u64 {

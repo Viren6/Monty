@@ -249,7 +249,6 @@ impl<'a> Searcher<'a> {
         let node = self.tree.root_node();
 
         let static_eval = pos.get_value_wdl_corr(self.value, self.params, self.corr);
-        let static_cp = Searcher::get_cp(static_eval);
 
         // the root node is added to an empty tree, **and not counted** towards the
         // total node count, in order for `go nodes 1` to give the expected result
@@ -336,9 +335,7 @@ impl<'a> Searcher<'a> {
 
         let (_, mov, q) = self.get_best_action(self.tree.root_node());
 
-        let final_cp = Searcher::get_cp(q);
-        self.corr
-            .update(&pos.board(), final_cp as i32 - static_cp as i32);
+        self.corr.update(&pos.board(), q - static_eval);
 
         (mov, q)
     }
