@@ -4,8 +4,8 @@ use crate::chess::Board;
 
 /// Parameters for correction history.
 const CORRHIST_SIZE: usize = 1 << 16; // 64k entries
-const CORRHIST_WEIGHT_SCALE: i32 = 64;
-const CORRHIST_Q_SCALE: i32 = 1 << 16; // quantisation for q values
+const CORRHIST_WEIGHT_SCALE: i32 = 16;
+const CORRHIST_Q_SCALE: i32 = 1 << 30; // quantisation for q values
 
 pub struct CorrectionHistory {
     table: Vec<AtomicI32>,
