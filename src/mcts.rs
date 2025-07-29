@@ -333,9 +333,10 @@ impl<'a> Searcher<'a> {
             );
         }
 
-        let (_, mov, q) = self.get_best_action(self.tree.root_node());
+        let (ptr, mov, q) = self.get_best_action(self.tree.root_node());
+        let visits = self.tree[ptr].visits() as i32;
 
-        self.corr.update(&pos.board(), q - static_eval);
+        self.corr.update(&pos.board(), q - static_eval, visits);
 
         (mov, q)
     }
