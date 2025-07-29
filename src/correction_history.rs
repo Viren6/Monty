@@ -4,8 +4,8 @@ use crate::chess::Board;
 
 /// Parameters for correction history.
 const CORRHIST_SIZE: usize = 1 << 16; // 65,536 entries
-const CORRHIST_WEIGHT_SCALE: i32 = 2048;
-const CORRHIST_Q_SCALE: i32 = 1 << 30; // quantisation for q values
+const CORRHIST_WEIGHT_SCALE: i64 = 8192;
+const CORRHIST_Q_SCALE: f32 = (1 << 30) as f32; // quantisation for q values
 
 pub struct CorrectionHistory {
     table: Vec<AtomicI32>,
@@ -41,24 +41,13 @@ impl CorrectionHistory {
     }
 
     /// Update correction history using visits and evaluation difference
-    pub fn update(&self, board: &Board, diff: f32, diff_visits: i32) {
+    pub fn update(&self, board: &Board, diff: f32, diff_visits: i64) {
         let idx = self.index(board);
-        let entry = self.table[idx].load(Ordering::Relaxed);
-        let scaled_diff = (diff * CORRHIST_Q_SCALE as f32) as i32;
-        let new_weight = diff_visits.min(CORRHIST_WEIGHT_SCALE);
-        let value: i32 = {
-            let i64_entry        = i64::from(entry);
-            let i64_weight_scale = i64::from(CORRHIST_WEIGHT_SCALE);
-            let i64_new_weight   = i64::from(new_weight);
-            let i64_scaled_diff  = i64::from(scaled_diff);
-
-            // all math happens in i64
-            let tmp = (i64_entry * (i64_weight_scale - i64_new_weight) +
-                    i64_scaled_diff * i64_new_weight) /
-                    i64_weight_scale;
-
-            tmp as i32       // cast only the final value back to i32
-        };
+        let entry = self.table[idx].load(Ordering::Relaxed) as i64;
+        let scaled_diff = (diff * CORRHIST_Q_SCALE) as i64;
+        let new_weight = diff_visits.min(CORRHIST_WEIGHT_SCALE) as i64;
+        let value = ((entry * (CORRHIST_WEIGHT_SCALE - new_weight) + scaled_diff * new_weight)
+            / CORRHIST_WEIGHT_SCALE) as i32;
         self.table[idx].store(value, Ordering::Relaxed);
     }
 }
