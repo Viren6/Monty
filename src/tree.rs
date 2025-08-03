@@ -74,37 +74,46 @@ impl Tree {
         self.tree[self.half()].reserve_nodes_thread(1, 0)
     }
 
-    fn copy_node_across(&self, from: NodePtr, to: NodePtr) {
+    fn copy_node_across(&self, from: NodePtr, to: NodePtr, clear_ptr: bool) -> Option<()> {
         if from == to {
-            return;
+            return Some(());
         }
 
         let f = self[from].actions_mut();
         let t = self[to].actions_mut();
 
         self[to].copy_from(&self[from]);
-        self[to].set_num_actions(self[from].num_actions());
-        t.store(f.val());
-    }
 
-    fn copy_across(&self, from: NodePtr, num: usize, to: NodePtr) {
-        for i in 0..num {
-            self.copy_node_across(from + i, to + i);
+        if clear_ptr && f.val().half() == self.half.load(Ordering::Relaxed) {
+            self[to].set_num_actions(0);
+            t.store(NodePtr::NULL);
+        } else {
+            self[to].set_num_actions(self[from].num_actions());
+            t.store(f.val());
         }
+
+        Some(())
     }
 
-    pub fn flip(&self, copy_across: bool, threads: usize) {
+    fn copy_across(&self, from: NodePtr, num: usize, to: NodePtr) -> Option<()> {
+        for i in 0..num {
+            self.copy_node_across(from + i, to + i, true)?;
+        }
+
+        Some(())
+    }
+
+    pub fn flip(&self, copy_across: bool) {
         let old_root_ptr = self.root_node();
 
         let old = usize::from(self.half.fetch_xor(true, Ordering::Relaxed));
-        self.tree[old].clear_ptrs(threads);
         self.tree[old ^ 1].clear();
 
         if copy_across {
             let new_root_ptr = self.tree[self.half()].reserve_nodes_thread(1, 0).unwrap();
             self[new_root_ptr].clear();
 
-            self.copy_node_across(old_root_ptr, new_root_ptr);
+            self.copy_node_across(old_root_ptr, new_root_ptr, true);
         }
     }
 
@@ -124,7 +133,7 @@ impl Tree {
             let num_children = self[parent_ptr].num_actions();
             let new_ptr = self.tree[self.half()].reserve_nodes_thread(num_children, thread_id)?;
 
-            self.copy_across(first_child_ptr, num_children, new_ptr);
+            self.copy_across(first_child_ptr, num_children, new_ptr)?;
 
             most_recent_ptr.store(new_ptr);
         }
@@ -320,10 +329,11 @@ impl Tree {
 
             if root != self.root_node() {
                 self[self.root_node()].clear();
-                self.copy_node_across(root, self.root_node());
+                self.copy_node_across(root, self.root_node(), false);
+                println!("info string found subtree");
+            } else {
+                println!("info string using current tree");
             }
-
-            println!("info string found subtree");
         }
 
         if !found {
