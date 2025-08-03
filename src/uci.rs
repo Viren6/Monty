@@ -1,14 +1,12 @@
 use crate::{
     chess::{ChessState, Move},
-    mcts::{Limits, MctsParams, SearchHelpers, Searcher, REPORT_ITERS},
+    mcts::{Limits, MctsParams, SearchHelpers, Searcher, DEBUG, REPORT_ITERS},
     networks::{PolicyNetwork, ValueNetwork},
     tree::Tree,
 };
 
 use std::{
-    io, process,
-    sync::atomic::{AtomicBool, Ordering},
-    time::Instant,
+    io, process, sync::atomic::{AtomicBool, Ordering}, time::Instant
 };
 
 pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
@@ -20,6 +18,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
     let mut report_moves = false;
     let mut threads = 1;
     let mut move_overhead = 400;
+    let mut move_stack: Vec<Move> = Vec::new();
 
     let mut stored_message: Option<String> = None;
 
@@ -53,7 +52,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
                 &mut move_overhead,
                 &mut hash_mb,
             ),
-            "position" => position(commands, &mut pos),
+            "position" => position(commands, &mut pos, &mut move_stack),
             "go" => {
                 // increment game ply every time `go` is called
                 root_game_ply += 2;
@@ -62,6 +61,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
                     &commands,
                     &mut tree,
                     &pos,
+                    &move_stack,
                     root_game_ply,
                     &params,
                     report_moves,
@@ -200,7 +200,7 @@ pub fn bench(depth: usize, policy: &PolicyNetwork, value: &ValueNetwork, params:
     for fen in bench_fens {
         let abort = AtomicBool::new(false);
         let pos = ChessState::from_fen(fen);
-        tree.set_root_position(&pos);
+        tree.set_root_position(&pos, &Vec::new());
         let searcher = Searcher::new(&tree, params, policy, value, &abort);
         let timer = Instant::now();
         searcher.search(1, limits, false, &mut total_nodes);
@@ -223,6 +223,7 @@ fn preamble() {
     println!("option name MoveOverhead type spin default 400 min 0 max 5000");
     println!("option name report_moves type button");
     println!("option name report_iters type button");
+    println!("option name debug type button");
 
     #[cfg(feature = "tunable")]
     MctsParams::info(MctsParams::default());
@@ -249,6 +250,11 @@ fn setoption(
         return;
     }
 
+    if let ["setoption", "name", "debug"] = commands {
+        DEBUG.fetch_xor(true, Ordering::Relaxed);
+        return;
+    }
+
     let (name, val) = if let ["setoption", "name", x, "value", y] = commands {
         if *x == "UCI_Chess960" {
             return;
@@ -258,7 +264,7 @@ fn setoption(
             *threads = y.parse().unwrap();
             let root = tree.root_position().clone();
             *tree = Tree::new_mb(*hash_mb, *threads);
-            tree.set_root_position(&root);
+            tree.set_root_position(&root, &Vec::new());
             return;
         }
 
@@ -276,16 +282,19 @@ fn setoption(
         *hash_mb = val as usize;
         let root = tree.root_position().clone();
         *tree = Tree::new_mb(*hash_mb, *threads);
-        tree.set_root_position(&root);
+        tree.set_root_position(&root, &Vec::new());
     } else {
         params.set(name, val);
     }
 }
 
-fn position(commands: Vec<&str>, pos: &mut ChessState) {
+fn position(commands: Vec<&str>, pos: &mut ChessState, move_stack: &mut Vec<Move>) {
     let mut fen = String::new();
     let mut move_list = Vec::new();
     let mut moves = false;
+
+    move_stack.clear();
+    let old_pos = pos.clone();
 
     for cmd in commands {
         match cmd {
@@ -314,6 +323,11 @@ fn position(commands: Vec<&str>, pos: &mut ChessState) {
         });
 
         pos.make_move(this_mov);
+        move_stack.push(this_mov);
+
+        if old_pos.board() == pos.board() {
+            move_stack.clear();
+        }
     }
 }
 
@@ -322,6 +336,7 @@ fn go(
     commands: &[&str],
     tree: &mut Tree,
     pos: &ChessState,
+    move_stack: &Vec<Move>,
     root_game_ply: u32,
     params: &MctsParams,
     report_moves: bool,
@@ -388,7 +403,7 @@ fn go(
 
     let abort = AtomicBool::new(false);
 
-    tree.set_root_position(pos);
+    tree.set_root_position(pos, move_stack);
 
     let limits = Limits {
         max_time,
@@ -402,6 +417,25 @@ fn go(
             let searcher = Searcher::new(tree, params, policy, value, &abort);
             let (mov, _) = searcher.search(threads, limits, true, &mut 0);
             println!("bestmove {}", pos.conv_mov_to_str(mov));
+
+            if DEBUG.load(Ordering::Relaxed) {
+                let best = tree.get_best_child_by_key(tree.root_node(), |node| node.q());
+                let idx = tree[tree.root_node()].actions() + best;
+
+                println!("({}, {}) -> {} {} visits", idx.half(), idx.idx(), tree[idx].parent_move(), tree[idx].visits());
+
+                let best = tree.get_best_child_by_key(idx, |node| node.q());
+                let idx = tree[idx].actions() + best;
+
+                println!("  ({}, {}) -> {} {} visits", idx.half(), idx.idx(), tree[idx].parent_move(), tree[idx].visits());
+
+                let a = tree[idx].actions();
+
+                for b in 0..tree[idx].num_actions() { 
+                    let idx = a + b;
+                    println!("      ({}, {}) -> {} {} visits", idx.half(), idx.idx(), tree[idx].parent_move(), tree[idx].visits());
+                }
+            }
 
             if report_moves {
                 searcher.display_moves();

@@ -14,8 +14,8 @@ use std::{
 };
 
 use crate::{
-    chess::{ChessState, GameState},
-    mcts::{MctsParams, SearchHelpers},
+    chess::{ChessState, GameState, Move},
+    mcts::{print_board, MctsParams, SearchHelpers, DEBUG},
     networks::PolicyNetwork,
 };
 
@@ -36,7 +36,7 @@ impl Index<NodePtr> for Tree {
 
 impl Tree {
     pub fn new_mb(mb: usize, threads: usize) -> Self {
-        let bytes = mb * 1024 * 1024;
+        let bytes = mb * 1024 * 1024; 
 
         const _: () = assert!(
             std::mem::size_of::<Node>() == 40,
@@ -70,41 +70,55 @@ impl Tree {
         self.tree[self.half()].is_full()
     }
 
-    pub fn push_new_node(&self) -> Option<NodePtr> {
-        self.tree[self.half()].reserve_nodes_thread(1, 0)
+    pub fn push_new_node(&self, thread_id: usize) -> Option<NodePtr> {
+        self.tree[self.half()].reserve_nodes_thread(1, thread_id)
     }
 
-    fn copy_node_across(&self, from: NodePtr, to: NodePtr) {
+    fn copy_node_across(&self, from: NodePtr, to: NodePtr, clear_ptr: bool) -> Option<()> {
         if from == to {
-            return;
+            return Some(());
         }
 
         let f = self[from].actions_mut();
         let t = self[to].actions_mut();
 
+        // no other thread is able to modify `from`
+        // whilst the above write locks are held,
+        // so this will never result in copying garbage
+        // (for a thread that calls this function whilst
+        // another thread is already doing the same work)
         self[to].copy_from(&self[from]);
-        self[to].set_num_actions(self[from].num_actions());
-        t.store(f.val());
-    }
-
-    fn copy_across(&self, from: NodePtr, num: usize, to: NodePtr) {
-        for i in 0..num {
-            self.copy_node_across(from + i, to + i);
+    
+        if clear_ptr && f.val().half() == self.half.load(Ordering::Relaxed) {
+            self[to].set_num_actions(0);
+            t.store(NodePtr::NULL);
+        } else {
+            self[to].set_num_actions(self[from].num_actions());
+            t.store(f.val());
         }
+
+        Some(())
     }
 
-    pub fn flip(&self, copy_across: bool, threads: usize) {
+    fn copy_across(&self, from: NodePtr, num: usize, to: NodePtr) -> Option<()> {
+        for i in 0..num {
+            self.copy_node_across(from + i, to + i, true)?;
+        }
+
+        Some(())
+    }
+
+    pub fn flip(&self, copy_across: bool) {
         let old_root_ptr = self.root_node();
 
         let old = usize::from(self.half.fetch_xor(true, Ordering::Relaxed));
-        self.tree[old].clear_ptrs(threads);
         self.tree[old ^ 1].clear();
 
         if copy_across {
             let new_root_ptr = self.tree[self.half()].reserve_nodes_thread(1, 0).unwrap();
             self[new_root_ptr].clear();
 
-            self.copy_node_across(old_root_ptr, new_root_ptr);
+            self.copy_node_across(old_root_ptr, new_root_ptr, true);
         }
     }
 
@@ -124,7 +138,7 @@ impl Tree {
             let num_children = self[parent_ptr].num_actions();
             let new_ptr = self.tree[self.half()].reserve_nodes_thread(num_children, thread_id)?;
 
-            self.copy_across(first_child_ptr, num_children, new_ptr);
+            self.copy_across(first_child_ptr, num_children, new_ptr)?;
 
             most_recent_ptr.store(new_ptr);
         }
@@ -301,7 +315,7 @@ impl Tree {
         }
     }
 
-    pub fn set_root_position(&mut self, new_root: &ChessState) {
+    pub fn set_root_position(&mut self, new_root: &ChessState, move_stack: &Vec<Move>) {
         let old_root = self.root.clone();
         self.root = new_root.clone();
 
@@ -309,21 +323,47 @@ impl Tree {
             return;
         }
 
+        if move_stack.len() == 0 {
+            println!("info string no subtree found");
+            self.clear_halves();
+        }
+
         let mut found = false;
 
         println!("info string searching for subtree");
 
-        let root = self.recurse_find(self.root_node(), &old_root, new_root, 2);
+        let root = if old_root.board() == new_root.board() {
+            self.root_node()
+        } else {
+            self.recurse_find(self.root_node(), &old_root, move_stack)
+        };
 
         if !root.is_null() && self[root].has_children() {
             found = true;
 
-            if root != self.root_node() {
-                self[self.root_node()].clear();
-                self.copy_node_across(root, self.root_node());
+            if DEBUG.load(Ordering::Relaxed) { 
+                println!("Previous root: ({}, {}) {} visits -> {}", root.half(), root.idx(), self[root].visits(), self[root].parent_move());
+                let first_child_ptr = self[root].actions();
+                for action in 0..self[root].num_actions() { 
+                    println!("  Node: ({}, {}) {} visits -> {}", (first_child_ptr + action).half(), (first_child_ptr + action).idx(), self[first_child_ptr + action].visits(), self[first_child_ptr + action].parent_move())
+                }
             }
 
+            if root != self.root_node() {
+                self[self.root_node()].clear();
+                let _ = self.copy_node_across(root, self.root_node(), false);
+            }
+            
             println!("info string found subtree");
+
+            if DEBUG.load(Ordering::Relaxed) { 
+                print_board(self.root_position());
+                println!("Root: ({}, {}) {} visits -> {}", self.root_node().half(), self.root_node().idx(), self[self.root_node()].visits(), self[self.root_node()].parent_move());
+                let first_child_ptr = self[self.root_node()].actions();
+                for action in 0..self[self.root_node()].num_actions() { 
+                    println!("  Node: ({}, {}) {} visits -> {}", (first_child_ptr + action).half(), (first_child_ptr + action).idx(), self[first_child_ptr + action].visits(), self[first_child_ptr + action].parent_move())
+                }
+            } 
         }
 
         if !found {
@@ -335,15 +375,14 @@ impl Tree {
     fn recurse_find(
         &self,
         start: NodePtr,
-        this_board: &ChessState,
         board: &ChessState,
-        depth: u8,
+        move_stack: &Vec<Move>,
     ) -> NodePtr {
-        if this_board.board() == board.board() {
+        if move_stack.len() == 0 {
             return start;
         }
 
-        if start.is_null() || depth == 0 {
+        if start.is_null() {
             return NodePtr::NULL;
         }
 
@@ -354,14 +393,25 @@ impl Tree {
         }
 
         for action in 0..self[start].num_actions() {
-            let mut child_board = this_board.clone();
+            let mut child_board = board.clone();
 
             let child_ptr = first_child_ptr + action;
             let child = &self[child_ptr];
 
+            if child.parent_move() != move_stack[0] {
+                continue;
+            }
+
             child_board.make_move(child.parent_move());
 
-            let found = self.recurse_find(child_ptr, &child_board, board, depth - 1);
+            let mut move_stack = move_stack.clone();
+            move_stack.remove(0);
+
+            if DEBUG.load(Ordering::Relaxed) {
+                println!("Checking ({}, {}) -> {} {} visits", child_ptr.half(), child_ptr.idx(), child.parent_move(), child.visits());
+            }
+
+            let found = self.recurse_find(child_ptr, &child_board, &move_stack);
 
             if !found.is_null() {
                 return found;
@@ -378,6 +428,10 @@ impl Tree {
         let first_child_ptr = self[ptr].actions();
 
         for action in 0..self[ptr].num_actions() {
+            if DEBUG.load(Ordering::Relaxed) /*|| (ptr.half() == true && ptr.idx() == 2398 && self[ptr].parent_move().to_string() == "e5d6")*/ { 
+                println!("current idx: ({}, {}), considered idx: ({}, {}) -> {}, current half: {}, half used: {}", ptr.half(), ptr.idx(), (first_child_ptr + action).half(), (first_child_ptr + action).idx(), self[first_child_ptr + action].parent_move(), self.half(), self.tree[self.half()].used());
+            }
+            
             let score = key(&self[first_child_ptr + action]);
 
             if score > best_score {

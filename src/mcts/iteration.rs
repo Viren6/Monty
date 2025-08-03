@@ -1,6 +1,7 @@
+use std::sync::atomic::Ordering;
+
 use crate::{
-    chess::{ChessState, GameState},
-    tree::{Node, NodePtr},
+    chess::{ChessState, GameState}, mcts::DEBUG, tree::{Node, NodePtr}
 };
 
 use super::{SearchHelpers, Searcher};
@@ -18,7 +19,16 @@ pub fn perform_one(
     let tree = searcher.tree;
     let node = &tree[ptr];
 
+    if DEBUG.load(Ordering::Relaxed) {
+        println!("New perform one with node: ({}, {}), visits: {}", ptr.half(), ptr.idx(), node.visits());
+        print_board(pos);
+    }
+
     let mut u = if node.is_terminal() || node.visits() == 0 {
+        if DEBUG.load(Ordering::Relaxed) {
+            println!("score 👀 -> {} visits, terminal {}", node.visits(), node.is_terminal());
+        }
+
         if node.visits() == 0 {
             node.set_state(pos.game_state());
         }
@@ -36,6 +46,10 @@ pub fn perform_one(
     } else {
         // expand node on the second visit
         if node.is_not_expanded() {
+            if DEBUG.load(Ordering::Relaxed) {
+                println!("expand!");
+            }
+
             tree.expand_node(
                 ptr,
                 pos,
@@ -50,6 +64,10 @@ pub fn perform_one(
         // children across if they are in the other tree half
         tree.fetch_children(ptr, thread_id)?;
 
+        if DEBUG.load(Ordering::Relaxed) { 
+            println!("Selecting new action for node ({}, {})", ptr.half(), ptr.idx());
+        }
+        
         // select action to take via PUCT
         let action = pick_action(searcher, ptr, node);
 
@@ -58,6 +76,10 @@ pub fn perform_one(
         let mov = tree[child_ptr].parent_move();
 
         pos.make_move(mov);
+
+        if DEBUG.load(Ordering::Relaxed) { 
+            println!("New action ({}, {}) -> {}", child_ptr.half(), child_ptr.idx(), mov);
+        }
 
         tree[child_ptr].inc_threads();
 
@@ -128,4 +150,76 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
 
         q + u
     })
+}
+
+pub fn print_board(pos: &ChessState) {
+    let piece_icons: [[&str; 6]; 2] = [
+        [" P", " N", " B", " R", " Q", " K"],
+        [" p", " n", " b", " r", " q", " k"],
+    ];
+
+    let mut info = Vec::new();
+    let fen = format!("FEN: Nope");
+    info.push(fen.as_str());
+    let zobrist = format!(
+        "Zobrist Key: {}",
+        pos.hash()
+    );
+    info.push(zobrist.as_str());
+    let castle_rights = format!(
+        "Castle Rights: {}",
+        pos.board().rights()
+    );
+    info.push(castle_rights.as_str());
+    let side_sign = format!(
+        "Side To Move: {}",
+        pos.stm()
+    );
+    info.push(side_sign.as_str());
+    let en_passant = format!(
+        "En Passant: {}",
+        pos.board().enp_sq()
+    );
+    info.push(en_passant.as_str());
+    let half_moves = format!(
+        "Half Moves: {}",
+        pos.board().halfm()
+    );
+    info.push(half_moves.as_str());
+    let in_check = format!(
+        "In Check: {}",
+        String::new()
+    );
+    info.push(in_check.as_str());
+    let phase = format!(
+        "Phase: {}",
+        String::new()
+    );
+    info.push(phase.as_str());
+
+    let mut result = " -----------------\n".to_string();
+    for rank in 0..8 {
+        result += "|";
+        for file in 0..8 {
+            let square = if pos.stm() == 0 { 7 - rank } else { rank } * 8 + if pos.stm() == 0 { file } else { 7 - file };
+            
+            if square == pos.board().enp_sq() && pos.board().enp_sq() != 0 {
+                result += " x";
+                continue;
+            }
+
+            let piece_type = pos.board().get_pc(1 << square);
+            let piece_side = usize::from(pos.board().bbs()[1] & (1 << square) > 0);
+            if piece_type == 0 {
+                result += " .";
+            } else {
+                result += piece_icons[piece_side][piece_type - 2];
+            }
+        }
+        result += format!(" | {}", info[rank as usize])
+            .as_str();
+        result += "\n".to_string().as_str();
+    }
+    result += " -----------------\n";
+    println!("{}", result);
 }

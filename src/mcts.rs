@@ -19,7 +19,10 @@ use std::{
     time::Instant,
 };
 
+pub use iteration::print_board;
+
 pub static REPORT_ITERS: AtomicBool = AtomicBool::new(false);
+pub static DEBUG: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy)]
 pub struct Limits {
@@ -103,6 +106,10 @@ impl<'a> Searcher<'a> {
             let mut pos = self.tree.root_position().clone();
             let mut this_depth = 0;
 
+            if DEBUG.load(Ordering::Relaxed) {
+                println!("Start iter -> Current root: ({}, {})", self.tree.root_node().half(), self.tree.root_node().idx());
+            }
+
             if iteration::perform_one(
                 self,
                 &mut pos,
@@ -113,6 +120,10 @@ impl<'a> Searcher<'a> {
             .is_none()
             {
                 return false;
+            }
+
+            if DEBUG.load(Ordering::Relaxed) {
+                println!("Iteration end");
             }
 
             search_stats.add_iter(thread_id, this_depth, main_thread);
@@ -248,7 +259,7 @@ impl<'a> Searcher<'a> {
         // the root node is added to an empty tree, **and not counted** towards the
         // total node count, in order for `go nodes 1` to give the expected result
         if self.tree.is_empty() {
-            let ptr = self.tree.push_new_node().unwrap();
+            let ptr = self.tree.push_new_node(0).unwrap();
 
             assert_eq!(node, ptr);
 
@@ -312,7 +323,7 @@ impl<'a> Searcher<'a> {
             });
 
             if !self.abort.load(Ordering::Relaxed) {
-                self.tree.flip(true, threads);
+                self.tree.flip(true);
             }
         }
 
