@@ -349,7 +349,7 @@ impl Tree {
         board: &ChessState,
         depth: u8,
     ) -> NodePtr {
-        if this_board == board {
+        if this_board.board() == board.board() {
             return start;
         }
 

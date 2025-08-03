@@ -57,7 +57,7 @@ impl std::fmt::Display for GameState {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct ChessState {
     board: Board,
     castling: Castling,
