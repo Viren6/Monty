@@ -3,7 +3,7 @@ use super::{
     consts::{Piece, Right, Side},
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Castling {
     chess960: bool,
     castle_mask: [u8; 64],
