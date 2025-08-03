@@ -109,6 +109,10 @@ impl ChessState {
         self.board.hash()
     }
 
+    pub fn stack(&self) -> &[u64] {
+        &self.stack
+    }
+
     pub fn make_move(&mut self, mov: Move) {
         self.stack.push(self.board.hash());
         self.board.make(mov, &self.castling);

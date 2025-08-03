@@ -349,11 +349,15 @@ impl Tree {
         board: &ChessState,
         depth: u8,
     ) -> NodePtr {
-        if this_board.board() == board.board() {
+        if start.is_null() {
+            return NodePtr::NULL;
+        }
+
+        if this_board.board() == board.board() && this_board.stack() == board.stack() {
             return start;
         }
 
-        if start.is_null() || depth == 0 {
+        if depth == 0 {
             return NodePtr::NULL;
         }
 
