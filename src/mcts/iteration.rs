@@ -110,22 +110,82 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
     let fpu = SearchHelpers::get_fpu(node);
     let expl_scale = SearchHelpers::get_explore_scaling(searcher.params, node);
 
-    let expl = cpuct * expl_scale;
+    // Check if we should use the RENTS/TENTS algorithm instead of PUCT.
+    if searcher.params.use_rents() != 0 {
+        // Compute softmax over child Q values to obtain the expected policy
+        // distribution.  This is a simplified implementation of the
+        // RENTS/TENTS idea, which biases exploration towards moves whose
+        // network prior deviates from the softmax of their Q-values.
+        let temp = searcher.params.rents_temp();
+        let lambda = searcher.params.rents_lambda();
 
-    searcher.tree.get_best_child_by_key(ptr, |child| {
-        let mut q = SearchHelpers::get_action_value(child, fpu);
+        let first_child_ptr = node.actions();
+        let num_actions = node.num_actions();
 
-        // virtual loss
-        let threads = f64::from(child.threads());
-        if threads > 0.0 {
-            let visits = f64::from(child.visits());
-            let q2 = f64::from(q) * visits
-                / (visits + 1.0 + searcher.params.virtual_loss_weight() * (threads - 1.0));
-            q = q2 as f32;
+        let mut q_values = Vec::with_capacity(num_actions);
+        let mut max_q = f32::NEG_INFINITY;
+        for i in 0..num_actions {
+            let child = &searcher.tree[first_child_ptr + i];
+            let q = SearchHelpers::get_action_value(child, fpu);
+            if q > max_q {
+                max_q = q;
+            }
+            q_values.push(q);
         }
 
-        let u = expl * child.policy() / (1 + child.visits()) as f32;
+        let mut exp_sum = 0.0f32;
+        for q in q_values.iter_mut() {
+            let e = (( *q - max_q) / temp).exp();
+            *q = e;
+            exp_sum += e;
+        }
 
-        q + u
-    })
+        let rents_policy: Vec<f32> = q_values.iter().map(|e| e / exp_sum).collect();
+
+        let mut idx = 0usize;
+        let expl = cpuct * expl_scale;
+
+        searcher.tree.get_best_child_by_key(ptr, |child| {
+            let mut q = SearchHelpers::get_action_value(child, fpu);
+
+            // virtual loss
+            let threads = f64::from(child.threads());
+            if threads > 0.0 {
+                let visits = f64::from(child.visits());
+                let q2 = f64::from(q) * visits
+                    / (visits + 1.0 + searcher.params.virtual_loss_weight() * (threads - 1.0));
+                q = q2 as f32;
+            }
+
+            // PUCT-style base exploration term.
+            let base_u = expl * child.policy() / (1 + child.visits()) as f32;
+
+            // RENTS/TENTS exploration term: encourage divergence between the
+            // network prior and the current softmax of Q-values.
+            let diff = child.policy() - rents_policy[idx];
+            idx += 1;
+            let rent_u = lambda * diff / (1 + child.visits()) as f32;
+
+            q + base_u + rent_u
+        })
+    } else {
+        let expl = cpuct * expl_scale;
+
+        searcher.tree.get_best_child_by_key(ptr, |child| {
+            let mut q = SearchHelpers::get_action_value(child, fpu);
+
+            // virtual loss
+            let threads = f64::from(child.threads());
+            if threads > 0.0 {
+                let visits = f64::from(child.visits());
+                let q2 = f64::from(q) * visits
+                    / (visits + 1.0 + searcher.params.virtual_loss_weight() * (threads - 1.0));
+                q = q2 as f32;
+            }
+
+            let u = expl * child.policy() / (1 + child.visits()) as f32;
+
+            q + u
+        })
+    }
 }
