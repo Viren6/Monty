@@ -20,7 +20,7 @@ pub const L1: usize = 12288;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PolicyNetwork {
-    l1: Layer<i8, 768, L1>,
+    l1: Layer<i8, { 768 * 4 }, L1>,
     l2: TransposedLayer<i8, { L1 / 2 }, 1880>,
 }
 
