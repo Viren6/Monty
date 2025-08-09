@@ -10,6 +10,7 @@ pub fn perform_one(
     pos: &mut ChessState,
     ptr: NodePtr,
     depth: &mut usize,
+    thread_id: usize,
 ) -> Option<f32> {
     *depth += 1;
 
@@ -35,12 +36,19 @@ pub fn perform_one(
     } else {
         // expand node on the second visit
         if node.is_not_expanded() {
-            tree.expand_node(ptr, pos, searcher.params, searcher.policy, *depth)?;
+            tree.expand_node(
+                ptr,
+                pos,
+                searcher.params,
+                searcher.policy,
+                *depth,
+                thread_id,
+            )?;
         }
 
         // this node has now been accessed so we need to move its
         // children across if they are in the other tree half
-        tree.fetch_children(ptr)?;
+        tree.fetch_children(ptr, thread_id)?;
 
         // select action to take via PUCT
         let action = pick_action(searcher, ptr, node);
@@ -62,7 +70,7 @@ pub fn perform_one(
         };
 
         // descend further
-        let maybe_u = perform_one(searcher, pos, child_ptr, depth);
+        let maybe_u = perform_one(searcher, pos, child_ptr, depth, thread_id);
 
         drop(lock);
 
@@ -111,7 +119,8 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
         let threads = f64::from(child.threads());
         if threads > 0.0 {
             let visits = f64::from(child.visits());
-            let q2 = f64::from(q) * visits / (visits + threads);
+            let q2 = f64::from(q) * visits
+                / (visits + 1.0 + searcher.params.virtual_loss_weight() * (threads - 1.0));
             q = q2 as f32;
         }
 
