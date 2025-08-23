@@ -14,13 +14,10 @@ use std::{
 };
 
 use crate::{
-    chess::{ChessState, GameState},
+    chess::{ChessState, GameState, Move},
     mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
 };
-
-#[cfg(feature = "datagen")]
-use crate::chess::Move;
 
 pub struct Tree {
     root: ChessState,
@@ -238,16 +235,17 @@ impl Tree {
         let actions_ptr = actions.val();
 
         let hl = pos.get_policy_hl(policy);
-        let mut max = f32::NEG_INFINITY;
-        let mut policies = Vec::new();
 
+        let mut moves: Vec<Move> = Vec::with_capacity(num_actions);
         for action in 0..num_actions {
-            let mov = self[actions_ptr + action].parent_move();
-            let policy = pos.get_policy(mov, &hl, policy);
-
-            policies.push(policy);
-            max = max.max(policy);
+            moves.push(self[actions_ptr + action].parent_move());
         }
+
+        let mut policies = policy.dist(&pos.board(), &moves, &hl);
+        let max = policies
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
 
         let pst = SearchHelpers::get_pst(depth.into(), self[node_ptr].q(), params);
 

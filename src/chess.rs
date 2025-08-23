@@ -129,23 +129,22 @@ impl ChessState {
     pub fn map_moves_with_policies<F: FnMut(Move, f32)>(&self, policy: &PolicyNetwork, mut f: F) {
         let hl = policy.hl(&self.board);
 
-        self.map_legal_moves(|mov| {
-            let policy = policy.get(&self.board, &mov, &hl);
+        let mut moves = Vec::new();
+        self.map_legal_moves(|mov| moves.push(mov));
+
+        if moves.is_empty() {
+            return;
+        }
+
+        let dist = policy.dist(&self.board, &moves, &hl);
+
+        for (mov, policy) in moves.into_iter().zip(dist.into_iter()) {
             f(mov, policy);
-        });
+        }
     }
 
     pub fn get_policy_hl(&self, policy: &PolicyNetwork) -> Accumulator<i16, { POLICY_L1 / 2 }> {
         policy.hl(&self.board)
-    }
-
-    pub fn get_policy(
-        &self,
-        mov: Move,
-        hl: &Accumulator<i16, { POLICY_L1 / 2 }>,
-        policy: &PolicyNetwork,
-    ) -> f32 {
-        policy.get(&self.board, &mov, hl)
     }
 
     #[cfg(not(feature = "datagen"))]

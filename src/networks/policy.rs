@@ -10,7 +10,7 @@ use super::{
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals, dead_code)]
-pub const PolicyFileDefaultName: &str = "nn-06e27b5ef6e7.network";
+pub const PolicyFileDefaultName: &str = "quantised.bin";
 #[allow(non_upper_case_globals, dead_code)]
 pub const CompressedPolicyName: &str = "nn-bef5cb915ecf.network";
 #[allow(non_upper_case_globals, dead_code)]
@@ -31,6 +31,7 @@ pub const L1: usize = 6144;
 pub struct PolicyNetwork {
     l1: Layer<i8, { 768 * 4 }, L1>,
     l2: TransposedLayer<i8, { L1 / 2 }, NUM_MOVES_INDICES>,
+    l3: TransposedLayer<i8, NUM_MOVES_INDICES, NUM_MOVES_INDICES>,
 }
 
 impl PolicyNetwork {
@@ -65,17 +66,39 @@ impl PolicyNetwork {
         res
     }
 
-    pub fn get(&self, pos: &Board, mov: &Move, hl: &Accumulator<i16, { L1 / 2 }>) -> f32 {
-        let idx = map_move_to_index(pos, *mov);
-        let weights = &self.l2.weights[idx];
-
-        let mut res = 0;
-
-        for (&w, &v) in weights.0.iter().zip(hl.0.iter()) {
-            res += i32::from(w) * i32::from(v);
+    pub fn dist(
+        &self,
+        pos: &Board,
+        moves: &[Move],
+        hl: &Accumulator<i16, { L1 / 2 }>,
+    ) -> Vec<f32> {
+        let mut indices = Vec::with_capacity(moves.len());
+        for &mov in moves {
+            indices.push(map_move_to_index(pos, mov));
         }
 
-        (res as f32 / f32::from(QA * FACTOR) + f32::from(self.l2.biases.0[idx])) / f32::from(QB)
+        let mut l1_out = vec![0f32; moves.len()];
+        for (out, &idx) in l1_out.iter_mut().zip(indices.iter()) {
+            let weights = &self.l2.weights[idx];
+            let mut acc = 0i32;
+            for (&w, &v) in weights.0.iter().zip(hl.0.iter()) {
+                acc += i32::from(w) * i32::from(v);
+            }
+            let bias = f32::from(self.l2.biases.0[idx]) / f32::from(QB);
+            *out = acc as f32 / f32::from(QA * FACTOR) + bias;
+        }
+
+        let mut logits = vec![0f32; moves.len()];
+        for (i, &idx_out) in indices.iter().enumerate() {
+            let row = &self.l3.weights[idx_out];
+            let mut res = f32::from(self.l3.biases.0[idx_out]) / f32::from(QB);
+            for (j, &idx_in) in indices.iter().enumerate() {
+                res += f32::from(row.0[idx_in]) / f32::from(QA) * l1_out[j];
+            }
+            logits[i] = res;
+        }
+
+        logits
     }
 }
 
