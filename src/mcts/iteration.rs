@@ -114,7 +114,7 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
     let is_root = ptr == searcher.tree.root_node();
 
     let cpuct = SearchHelpers::get_cpuct(searcher.params, node, is_root);
-    let fpu = SearchHelpers::get_fpu(node);
+    let fpu = SearchHelpers::get_fpu(searcher.params, node, is_root);
     let expl_scale = SearchHelpers::get_explore_scaling(searcher.params, node);
 
     let expl = cpuct * expl_scale;

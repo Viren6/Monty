@@ -73,8 +73,18 @@ impl SearchHelpers {
     ///
     /// #### Note
     /// Must return a value in [0, 1].
-    pub fn get_fpu(node: &Node) -> f32 {
-        1.0 - node.q()
+    pub fn get_fpu(params: &MctsParams, node: &Node, is_root: bool) -> f32 {
+        let base = 1.0 - node.q();
+
+        if is_root {
+            return base.clamp(0.0, 1.0);
+        }
+
+        let sumsq = 1.0 - node.gini_impurity();
+        let concentration = sumsq.sqrt();
+
+        let reduced = base + 0.02 - params.fpu_reduction() * concentration;
+        reduced.clamp(0.0, 1.0)
     }
 
     /// Get a predicted win probability for an action
