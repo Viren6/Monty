@@ -39,7 +39,7 @@ fn main() {
     let params = MctsParams::default();
 
     if let Some(opts) = parse_args(args) {
-        run_datagen(params, opts, policy, value);
+        run_datagen(opts, policy, value);
     } else {
         uci::bench(ChessState::BENCH_DEPTH, policy, value, &params);
     }
@@ -147,7 +147,6 @@ impl Destination {
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_datagen(
-    params: MctsParams,
     opts: RunOptions,
     policy: &PolicyNetwork,
     value: &ValueNetwork,
@@ -180,12 +179,11 @@ pub fn run_datagen(
 
     std::thread::scope(|s| {
         for _ in 0..opts.threads {
-            let params = params.clone();
             std::thread::sleep(Duration::from_millis(10));
             let this_book = book.clone();
             let this_dest = dest_mutex.clone();
             s.spawn(move || {
-                let mut thread = DatagenThread::new(params.clone(), stop, this_book, this_dest);
+                let mut thread = DatagenThread::new(stop, this_book, this_dest);
                 thread.run(opts.policy_data, policy, value);
             });
         }

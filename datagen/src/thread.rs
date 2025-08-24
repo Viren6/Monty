@@ -1,10 +1,8 @@
 use crate::{Destination, Rand};
 
 use monty::{
-    chess::{ChessState, GameState},
-    mcts::{Limits, MctsParams, Searcher},
+    chess::{ChessState, GameState, Move},
     networks::{PolicyNetwork, ValueNetwork},
-    tree::Tree,
 };
 use montyformat::{MontyFormat, MontyValueFormat, SearchData};
 
@@ -15,7 +13,6 @@ use std::sync::{
 
 pub struct DatagenThread<'a> {
     rng: Rand,
-    params: MctsParams,
     dest: Arc<Mutex<Destination>>,
     stop: &'a AtomicBool,
     book: Option<Vec<&'a str>>,
@@ -23,14 +20,12 @@ pub struct DatagenThread<'a> {
 
 impl<'a> DatagenThread<'a> {
     pub fn new(
-        params: MctsParams,
         stop: &'a AtomicBool,
         book: Option<Vec<&'a str>>,
         dest: Arc<Mutex<Destination>>,
     ) -> Self {
         Self {
             rng: Rand::with_seed(),
-            params,
             dest,
             stop,
             book,
@@ -55,25 +50,7 @@ impl<'a> DatagenThread<'a> {
             ChessState::from_fen(ChessState::STARTPOS)
         };
 
-        let mut moves = Vec::new();
-        position.map_legal_moves(|mov| moves.push(mov));
-
-        if moves.is_empty() {
-            return;
-        }
-
-        let limits = Limits {
-            max_depth: 64,
-            max_nodes: 100000,
-            max_time: None,
-            opt_time: None,
-            kld_min_gain: Some(0.000005),
-        };
-
         let mut result = 0.5;
-
-        let mut tree = Tree::new_mb(8, 1);
-        let mut temp = 0.8;
 
         let pos = position.board();
 
@@ -101,58 +78,52 @@ impl<'a> DatagenThread<'a> {
         let mut policy_game = MontyFormat::new(montyformat_position, montyformat_castling);
 
         let mut total_iters = 0usize;
-        let mut searches = 0;
+        let mut searches = 0usize;
 
-        // play out game
+        // play out game using raw network outputs
         loop {
             if self.stop.load(Ordering::Relaxed) {
                 return;
             }
 
-            let abort = AtomicBool::new(false);
-            tree.set_root_position(&position);
-            let searcher = Searcher::new(&tree, &self.params, policy, value, &abort);
-
-            let (bm, score, iters) = searcher.search(1, limits, false, &mut 0, true, temp);
-
-            searches += 1;
-            total_iters += iters;
-
-            temp *= 0.9;
-            if temp <= 0.2 {
-                temp = 0.0;
+            let mut moves = Vec::new();
+            position.map_legal_moves(|mov| moves.push(mov));
+            if moves.is_empty() {
+                break;
             }
 
-            let best_move = montyformat::chess::Move::from(u16::from(bm));
+            let hl = policy.hl(&position.board());
 
-            value_game.push(position.stm(), best_move, score);
+            let mut dist = Vec::with_capacity(moves.len());
+            let mut best_move: Move = moves[0];
+            let mut best_score = f32::NEG_INFINITY;
 
-            let mut root_count = 0;
-            position.map_legal_moves(|_| root_count += 1);
-
-            let dist = if root_count == 0 {
-                None
-            } else {
-                let mut dist = Vec::new();
-
-                let actions = tree[tree.root_node()].actions();
-
-                for action in 0..tree[tree.root_node()].num_actions() {
-                    let node = &tree[actions + action];
-                    let mov = montyformat::chess::Move::from(u16::from(node.parent_move()));
-                    dist.push((mov, node.visits()));
+            for mov in moves {
+                let p = policy.get(&position.board(), &mov, &hl);
+                let mf_move = montyformat::chess::Move::from(u16::from(mov));
+                let visits = (p * 65535.0) as u32;
+                dist.push((mf_move, visits));
+                if p > best_score {
+                    best_score = p;
+                    best_move = mov;
                 }
+            }
 
-                assert_eq!(root_count, dist.len());
+            let (win, draw, _) = value.eval(&position.board());
+            let score = win + draw / 2.0;
+            let mf_best_move = montyformat::chess::Move::from(u16::from(best_move));
 
-                Some(dist)
-            };
+            if output_policy {
+                let search_data = SearchData::new(mf_best_move, score, Some(dist));
+                policy_game.push(search_data);
+            } else {
+                value_game.push(position.stm(), mf_best_move, score);
+            }
 
-            let search_data = SearchData::new(best_move, score, dist);
+            searches += 1;
+            total_iters += 1;
 
-            policy_game.push(search_data);
-
-            position.make_move(bm);
+            position.make_move(best_move);
 
             let game_state = position.game_state();
             match game_state {
@@ -175,12 +146,13 @@ impl<'a> DatagenThread<'a> {
                     break;
                 }
             }
-
-            tree.clear(1);
         }
 
-        value_game.result = result;
-        policy_game.result = result;
+        if output_policy {
+            policy_game.result = result;
+        } else {
+            value_game.result = result;
+        }
 
         if self.stop.load(Ordering::Relaxed) {
             return;
