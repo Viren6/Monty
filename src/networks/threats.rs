@@ -51,13 +51,19 @@ pub fn map_features<F: FnMut(usize)>(pos: &Board, mut f: F) {
                     _ => unreachable!(),
                 } & occ;
 
-                f(TOTAL_THREATS + [0, 384][side] + 64 * (piece - 2) + sq);
+                let mut any = false;
+
                 map_bb(threats, |dest| {
                     let enemy = (1 << dest) & opps > 0;
                     if let Some(idx) = map_piece_threat(piece, sq, dest, pieces[dest], enemy) {
                         f(side_offset + idx);
+                        any = true;
                     }
                 });
+
+        		if !any {
+                    f(TOTAL_THREATS + [0, 384][side] + 64 * (piece - 2) + sq);
+                }
             });
         }
     }
