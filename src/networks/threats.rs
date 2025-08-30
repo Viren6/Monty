@@ -4,7 +4,23 @@ use crate::chess::{
 };
 
 const TOTAL_THREATS: usize = 2 * ValueOffsets::END;
-pub const TOTAL: usize = TOTAL_THREATS + 768;
+
+const PIECE_BUCKETS: usize = 13;
+const PIECE_FEATURES: usize = 768;
+
+pub const TOTAL: usize = TOTAL_THREATS + PIECE_BUCKETS * PIECE_FEATURES;
+
+const BUCKET_LAYOUT: [usize; 32] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 9, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11,
+    12, 12, 12, 12, 12, 12, 12, 12,
+];
+
+fn king_bucket(sq: usize) -> usize {
+    let file = sq % 8;
+    let rank = sq / 8;
+    let file = if file > 3 { 7 - file } else { file };
+    BUCKET_LAYOUT[rank * 4 + file]
+}
 
 pub fn map_features<F: FnMut(usize)>(pos: &Board, mut f: F) {
     let mut bbs = pos.bbs();
@@ -13,17 +29,21 @@ pub fn map_features<F: FnMut(usize)>(pos: &Board, mut f: F) {
     if pos.stm() == Side::BLACK {
         bbs.swap(0, 1);
         for bb in bbs.iter_mut() {
-            *bb = bb.swap_bytes()
+            *bb = bb.swap_bytes();
         }
     }
 
-    // horiontal mirror
+    // horizontal mirror based on our king
     let ksq = (bbs[0] & bbs[Piece::KING]).trailing_zeros();
     if ksq % 8 > 3 {
         for bb in bbs.iter_mut() {
             *bb = flip_horizontal(*bb);
         }
-    };
+    }
+
+    let wk = (bbs[0] & bbs[Piece::KING]).trailing_zeros() as usize;
+    let bk = (bbs[1] & bbs[Piece::KING]).trailing_zeros() as usize;
+    let king_buckets = [king_bucket(wk), king_bucket(bk)];
 
     let mut pieces = [13; 64];
     for side in [Side::WHITE, Side::BLACK] {
@@ -51,7 +71,9 @@ pub fn map_features<F: FnMut(usize)>(pos: &Board, mut f: F) {
                     _ => unreachable!(),
                 } & occ;
 
-                f(TOTAL_THREATS + [0, 384][side] + 64 * (piece - 2) + sq);
+                let bucket = king_buckets[side];
+                f(TOTAL_THREATS + bucket * PIECE_FEATURES + [0, 384][side]
+                    + 64 * (piece - 2) + sq);
                 map_bb(threats, |dest| {
                     let enemy = (1 << dest) & opps > 0;
                     if let Some(idx) = map_piece_threat(piece, sq, dest, pieces[dest], enemy) {
