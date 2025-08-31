@@ -1,16 +1,17 @@
 use crate::chess::Board;
 
-use super::{activation::SCReLU, layer::Layer, threats, Accumulator};
+use super::{activation::{Activation, SCReLU}, layer::Layer, threats, Accumulator};
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals, dead_code)]
-pub const ValueFileDefaultName: &str = "nn-04d9060cdbab.network";
+pub const ValueFileDefaultName: &str = "sb1000-single-layer.network";
 #[allow(non_upper_case_globals, dead_code)]
 pub const CompressedValueName: &str = "nn-f004da0ebf25.network";
 #[allow(non_upper_case_globals, dead_code)]
 pub const DatagenValueFileName: &str = "nn-5601bb8c241d.network";
 
-const QA: i16 = 512;
+const QA: i16 = 255;
+const QB: i16 = 128;
 
 const L1: usize = 3072;
 
@@ -18,7 +19,7 @@ const L1: usize = 3072;
 pub struct ValueNetwork {
     pst: [Accumulator<f32, 3>; threats::TOTAL],
     l1: Layer<i16, { threats::TOTAL }, L1>,
-    l2: Layer<f32, L1, 3>,
+    l2: Layer<i16, L1, 3>,
 }
 
 impl ValueNetwork {
@@ -43,7 +44,17 @@ impl ValueNetwork {
             *a = f32::from(i) / f32::from(QA);
         }
 
-        let mut out = self.l2.forward::<SCReLU>(&act);
+        let mut out = Accumulator([0.0; 3]);
+
+        for (o, &b) in out.0.iter_mut().zip(self.l2.biases.0.iter()) {
+            *o = f32::from(b) / f32::from(QB);
+        }
+
+        for (i, weights) in act.0.iter().zip(self.l2.weights.iter()) {
+            let act_i = SCReLU::activate(*i);
+            out.madd_i16(act_i / f32::from(QB), weights);
+        }
+
         out.add(&pst);
 
         let mut win = out.0[2];
