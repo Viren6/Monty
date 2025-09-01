@@ -1,6 +1,6 @@
 use crate::chess::Board;
 
-use super::{activation::{Activation, SCReLU}, layer::Layer, threats, Accumulator};
+use super::{activation::{Activation, SCReLU}, layer::{Layer, TransposedLayer}, threats, Accumulator};
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals, dead_code)]
@@ -19,7 +19,7 @@ const L1: usize = 3072;
 pub struct ValueNetwork {
     pst: [Accumulator<f32, 3>; threats::TOTAL],
     l1: Layer<i16, { threats::TOTAL }, L1>,
-    l2: Layer<i16, L1, 3>,
+    l2: TransposedLayer<i16, L1, 3>,
 }
 
 impl ValueNetwork {
@@ -45,14 +45,17 @@ impl ValueNetwork {
         }
 
         let mut out = Accumulator([0.0; 3]);
-
         for (o, &b) in out.0.iter_mut().zip(self.l2.biases.0.iter()) {
             *o = f32::from(b) / f32::from(QB);
         }
-
-        for (i, weights) in act.0.iter().zip(self.l2.weights.iter()) {
-            let act_i = SCReLU::activate(*i);
-            out.madd_i16(act_i / f32::from(QB), weights);
+        // l2 weights are stored as OUT×IN
+        let inv_qb = 1.0 / f32::from(QB);
+        for (o, row) in out.0.iter_mut().zip(self.l2.weights.iter()) {
+            let mut s = 0.0f32;
+            for (a, &w) in act.0.iter().zip(row.0.iter()) {
+                s += SCReLU::activate(*a) * f32::from(w) * inv_qb;
+            }
+            *o += s;
         }
 
         out.add(&pst);
