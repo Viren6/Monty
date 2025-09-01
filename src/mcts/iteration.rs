@@ -19,6 +19,8 @@ pub fn perform_one(
     let tree = searcher.tree;
     let node = &tree[ptr];
 
+    let mut inflight = None;
+
     let mut u = if node.is_terminal() || node.visits() == 0 {
         if node.visits() == 0 {
             node.set_state(pos.game_state());
@@ -28,6 +30,17 @@ pub fn perform_one(
         if node.state() == GameState::Ongoing {
             if let Some(entry) = tree.probe_hash(cur_hash) {
                 entry.q()
+            } else if tree.try_lock_inflight(cur_hash) {
+                inflight = Some(cur_hash);
+                get_utility(searcher, ptr, pos)
+            } else if tree.is_inflight(cur_hash) {
+                loop {
+                    if let Some(entry) = tree.probe_hash(cur_hash) {
+                        break entry.q();
+                    }
+
+                    std::hint::spin_loop();
+                }
             } else {
                 get_utility(searcher, ptr, pos)
             }
@@ -93,6 +106,10 @@ pub fn perform_one(
         tree.push_hash(h, 1.0 - u);
     } else {
         tree.push_hash(cur_hash, u);
+
+        if let Some(h) = inflight {
+            tree.unlock_inflight(h);
+        }
     }
 
     // flip perspective and backpropagate

@@ -1,10 +1,12 @@
 mod half;
 mod hash;
+mod inflight;
 mod lock;
 mod node;
 
 use half::TreeHalf;
 use hash::{HashEntry, HashTable};
+use inflight::InflightTable;
 pub use node::{Node, NodePtr};
 
 use std::{
@@ -27,6 +29,7 @@ pub struct Tree {
     tree: [TreeHalf; 2],
     half: AtomicBool,
     hash: HashTable,
+    inflight: InflightTable,
 }
 
 impl Index<NodePtr> for Tree {
@@ -58,6 +61,7 @@ impl Tree {
             ],
             half: AtomicBool::new(false),
             hash: HashTable::new(hash_cap / 4, threads),
+            inflight: InflightTable::new(hash_cap / 4, threads),
         }
     }
 
@@ -147,6 +151,18 @@ impl Tree {
         self.hash.push(hash, wins);
     }
 
+    pub fn try_lock_inflight(&self, hash: u64) -> bool {
+        self.inflight.try_insert(hash)
+    }
+
+    pub fn unlock_inflight(&self, hash: u64) {
+        self.inflight.remove(hash);
+    }
+
+    pub fn is_inflight(&self, hash: u64) -> bool {
+        self.inflight.contains(hash)
+    }
+
     fn clear_halves(&self) {
         self.tree[0].clear();
         self.tree[1].clear();
@@ -156,6 +172,7 @@ impl Tree {
         self.root = ChessState::default();
         self.clear_halves();
         self.hash.clear(threads);
+        self.inflight.clear(threads);
     }
 
     pub fn is_empty(&self) -> bool {
