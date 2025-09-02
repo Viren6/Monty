@@ -122,21 +122,20 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
     let actions_ptr = node.actions();
     let mut acc = 0.0;
     let mut k = 0;
-    while k < node.num_actions() && acc < 0.5 {
+    while k < node.num_actions() && acc < 0.7 {
         acc += searcher.tree[actions_ptr + k].policy();
         k += 1;
     }
-    let mut limit = k.max(6);
-    let mut thresh = 8;
-    while node.visits() >= thresh && limit < node.num_actions() {
-        limit += 2;
+    let mut thresh = 16;
+    while node.visits() >= thresh && k < node.num_actions() {
+        k += 2;
         thresh <<= 1;
     }
-    limit = limit.min(node.num_actions());
+    k = k.min(node.num_actions());
 
     searcher
         .tree
-        .get_best_child_by_key_lim(ptr, limit, |child| {
+        .get_best_child_by_key_lim(ptr, k, |child| {
         let mut q = SearchHelpers::get_action_value(child, fpu);
 
         // virtual loss
