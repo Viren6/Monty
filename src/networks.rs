@@ -1,5 +1,6 @@
 mod accumulator;
 mod activation;
+pub mod corrhist;
 mod layer;
 mod policy;
 mod threats;

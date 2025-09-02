@@ -1,5 +1,6 @@
 use crate::{
     chess::{ChessState, GameState},
+    networks::corrhist,
     tree::{Node, NodePtr},
 };
 
@@ -27,6 +28,11 @@ pub fn perform_one(
         // probe hash table to use in place of network
         if node.state() == GameState::Ongoing {
             if let Some(entry) = tree.probe_hash(cur_hash) {
+                // update correction history with the difference between
+                // searched value and static evaluation
+                let eval_cp = pos.get_value(searcher.value, searcher.params);
+                let tt_cp = Searcher::get_cp(entry.q()) as i32;
+                corrhist::update(&pos.board(), tt_cp - eval_cp);
                 entry.q()
             } else {
                 get_utility(searcher, ptr, pos)

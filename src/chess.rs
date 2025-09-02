@@ -6,7 +6,7 @@ mod moves;
 
 use crate::{
     mcts::MctsParams,
-    networks::{Accumulator, PolicyNetwork, ValueNetwork, POLICY_L1},
+    networks::{corrhist, Accumulator, PolicyNetwork, ValueNetwork, POLICY_L1},
 };
 
 pub use self::{attacks::Attacks, board::Board, frc::Castling, moves::Move};
@@ -158,7 +158,10 @@ impl ChessState {
         let (win, draw, _) = value.eval(&self.board);
 
         let score = win + draw / 2.0;
-        let cp = (-K * (1.0 / score.clamp(0.0, 1.0) - 1.0).ln()) as i32;
+        let mut cp = (-K * (1.0 / score.clamp(0.0, 1.0) - 1.0).ln()) as i32;
+
+        // Apply correction history using threat-based buckets
+        cp += corrhist::correction(&self.board);
 
         #[cfg(not(feature = "datagen"))]
         {
