@@ -51,6 +51,9 @@ pub fn perform_one(
         // children across if they are in the other tree half
         tree.fetch_children(ptr, thread_id)?;
 
+        // progressively widen children based on visits
+        tree.maybe_widen(ptr);
+
         // select action to take via PUCT
         let action = pick_action(searcher, ptr, node);
 

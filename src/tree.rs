@@ -14,13 +14,10 @@ use std::{
 };
 
 use crate::{
-    chess::{ChessState, GameState},
+    chess::{ChessState, GameState, Move},
     mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
 };
-
-#[cfg(feature = "datagen")]
-use crate::chess::Move;
 
 pub struct Tree {
     root: ChessState,
@@ -42,11 +39,11 @@ impl Tree {
         let bytes = mb * 1024 * 1024;
 
         const _: () = assert!(
-            std::mem::size_of::<Node>() == 40,
+            std::mem::size_of::<Node>() == 48,
             "You must reconsider this allocation!"
         );
 
-        Self::new(bytes / 42, bytes / 42 / 16, threads)
+        Self::new(bytes / 50, bytes / 50 / 16, threads)
     }
 
     fn new(tree_cap: usize, hash_cap: usize, threads: usize) -> Self {
@@ -86,6 +83,7 @@ impl Tree {
         let t = self[to].actions_mut();
 
         self[to].copy_from(&self[from]);
+        self[to].set_total_actions(self[from].total_actions());
         self[to].set_num_actions(self[from].num_actions());
         t.store(f.val());
     }
@@ -205,14 +203,30 @@ impl Tree {
             item.write((mov, policy));
         }
 
+        // convert to initialized slice for sorting
+        let moves_slice = unsafe {
+            &mut *(&mut moves[..count] as *mut [MaybeUninit<(Move, f32)>]
+                as *mut [(Move, f32)])
+        };
+
+        // sort by policy descending
+        moves_slice.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        // determine initial number of moves to expand based on policy mass
+        let mut acc = 0.0f32;
+        let mut k = 0usize;
+        while k < count && acc < 0.88 * total {
+            acc += moves_slice[k].1;
+            k += 1;
+        }
+        k = k.max(6).min(count);
+
         let mut sum_of_squares = 0.0;
 
-        for (action, item) in moves.iter().take(count).enumerate() {
-            let (mov, policy) = unsafe { item.assume_init() };
+        for (action, (mov, mut policy)) in moves_slice.iter_mut().enumerate() {
+            policy /= total;
             let ptr = new_ptr + action;
-            let policy = policy / total;
-
-            self[ptr].set_new(mov, policy);
+            self[ptr].set_new(*mov, policy);
             sum_of_squares += policy * policy;
         }
 
@@ -220,9 +234,30 @@ impl Tree {
         node.set_gini_impurity(gini_impurity);
 
         actions_ptr.store(new_ptr);
-        node.set_num_actions(count);
+        node.set_total_actions(count);
+        node.set_num_actions(k);
+        node.set_next_widen(8);
 
         Some(())
+    }
+
+    pub fn maybe_widen(&self, node_ptr: NodePtr) {
+        let node = &self[node_ptr];
+        let total = node.total_actions();
+        let current = node.num_actions();
+
+        if current >= total {
+            return;
+        }
+
+        let visits = node.visits();
+        let next = node.next_widen();
+
+        if visits >= next {
+            let add = usize::min(2, total - current);
+            node.set_num_actions(current + add);
+            node.set_next_widen(next * 2);
+        }
     }
 
     pub fn relabel_policy(

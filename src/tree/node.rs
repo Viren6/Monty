@@ -52,6 +52,8 @@ impl Add<usize> for NodePtr {
 pub struct Node {
     actions: CustomLock,
     num_actions: AtomicU8,
+    total_actions: AtomicU8,
+    next_widen: AtomicU32,
     state: AtomicU16,
     threads: AtomicU16,
     mov: AtomicU16,
@@ -67,6 +69,8 @@ impl Node {
         Node {
             actions: CustomLock::new(NodePtr::NULL),
             num_actions: AtomicU8::new(0),
+            total_actions: AtomicU8::new(0),
+            next_widen: AtomicU32::new(0),
             state: AtomicU16::new(u16::from(state)),
             threads: AtomicU16::new(0),
             mov: AtomicU16::new(0),
@@ -94,6 +98,22 @@ impl Node {
 
     pub fn set_num_actions(&self, num: usize) {
         self.num_actions.store(num as u8, Ordering::Relaxed);
+    }
+
+    pub fn total_actions(&self) -> usize {
+        usize::from(self.total_actions.load(Ordering::Relaxed))
+    }
+
+    pub fn set_total_actions(&self, num: usize) {
+        self.total_actions.store(num as u8, Ordering::Relaxed);
+    }
+
+    pub fn next_widen(&self) -> u32 {
+        self.next_widen.load(Ordering::Relaxed)
+    }
+
+    pub fn set_next_widen(&self, val: u32) {
+        self.next_widen.store(val, Ordering::Relaxed);
     }
 
     pub fn threads(&self) -> u16 {
@@ -185,6 +205,8 @@ impl Node {
     pub fn clear_actions(&self) {
         self.actions.write().store(NodePtr::NULL);
         self.num_actions.store(0, Ordering::Relaxed);
+        self.total_actions.store(0, Ordering::Relaxed);
+        self.next_widen.store(0, Ordering::Relaxed);
     }
 
     pub fn parent_move(&self) -> Move {
@@ -200,6 +222,10 @@ impl Node {
         self.state.store(other.state.load(Relaxed), Relaxed);
         self.gini_impurity
             .store(other.gini_impurity.load(Relaxed), Relaxed);
+        self.total_actions
+            .store(other.total_actions.load(Relaxed), Relaxed);
+        self.next_widen
+            .store(other.next_widen.load(Relaxed), Relaxed);
         self.visits.store(other.visits.load(Relaxed), Relaxed);
         self.sum_q.store(other.sum_q.load(Relaxed), Relaxed);
         self.sum_sq_q.store(other.sum_sq_q.load(Relaxed), Relaxed);
