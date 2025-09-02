@@ -8,19 +8,15 @@ use hash::{HashEntry, HashTable};
 pub use node::{Node, NodePtr};
 
 use std::{
-    mem::MaybeUninit,
     ops::Index,
     sync::atomic::{AtomicBool, Ordering},
 };
 
 use crate::{
-    chess::{ChessState, GameState},
+    chess::{ChessState, GameState, Move},
     mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
 };
-
-#[cfg(feature = "datagen")]
-use crate::chess::Move;
 
 pub struct Tree {
     root: ChessState,
@@ -183,36 +179,51 @@ impl Tree {
         }
 
         let mut max = f32::NEG_INFINITY;
-        let mut moves = [const { MaybeUninit::uninit() }; 256];
-        let mut count = 0;
+        let mut moves: Vec<(Move, f32)> = Vec::with_capacity(256);
 
         pos.map_moves_with_policies(policy, |mov, policy| {
-            moves[count].write((mov, policy));
-            count += 1;
             max = max.max(policy);
+            moves.push((mov, policy));
         });
+
+        let count = moves.len();
 
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
 
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
 
         let mut total = 0.0;
+        for item in &mut moves {
+            item.1 = ((item.1 - max) / pst).exp();
+            total += item.1;
+        }
 
-        for item in moves.iter_mut().take(count) {
-            let (mov, mut policy) = unsafe { item.assume_init() };
-            policy = ((policy - max) / pst).exp();
-            total += policy;
-            item.write((mov, policy));
+        for item in &mut moves {
+            item.1 /= total;
+        }
+
+        moves.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        let mut acc = 0.0;
+        let mut k = 0;
+        while k < moves.len() && acc < 0.88 {
+            acc += moves[k].1;
+            k += 1;
+        }
+        k = k.max(6);
+        if k > moves.len() {
+            k = moves.len();
         }
 
         let mut sum_of_squares = 0.0;
 
-        for (action, item) in moves.iter().take(count).enumerate() {
-            let (mov, policy) = unsafe { item.assume_init() };
+        for (action, (mov, policy)) in moves.iter().enumerate() {
             let ptr = new_ptr + action;
-            let policy = policy / total;
-
-            self[ptr].set_new(mov, policy);
+            if action < k {
+                self[ptr].set_new(*mov, *policy);
+            } else {
+                self[ptr].set_policy(*policy);
+            }
             sum_of_squares += policy * policy;
         }
 
@@ -220,9 +231,95 @@ impl Tree {
         node.set_gini_impurity(gini_impurity);
 
         actions_ptr.store(new_ptr);
-        node.set_num_actions(count);
+        node.set_num_actions(k);
 
         Some(())
+    }
+
+    pub fn maybe_widen_node(
+        &self,
+        node_ptr: NodePtr,
+        pos: &ChessState,
+        params: &MctsParams,
+        policy: &PolicyNetwork,
+        depth: usize,
+    ) {
+        let node = &self[node_ptr];
+        let visits = node.visits();
+
+        if visits < 8 || !visits.is_power_of_two() {
+            return;
+        }
+
+        let lock = node.actions_mut();
+        let first_child_ptr = lock.val();
+        let current = node.num_actions();
+
+        let mut max = f32::NEG_INFINITY;
+        let mut moves: Vec<(Move, f32)> = Vec::with_capacity(256);
+
+        pos.map_moves_with_policies(policy, |mov, policy| {
+            max = max.max(policy);
+            moves.push((mov, policy));
+        });
+
+        let pst = SearchHelpers::get_pst(depth, node.q(), params);
+        let mut total = 0.0;
+        for item in &mut moves {
+            item.1 = ((item.1 - max) / pst).exp();
+            total += item.1;
+        }
+        for item in &mut moves {
+            item.1 /= total;
+        }
+        moves.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        let mut acc = 0.0;
+        let mut k0 = 0;
+        while k0 < moves.len() && acc < 0.88 {
+            acc += moves[k0].1;
+            k0 += 1;
+        }
+        k0 = k0.max(6);
+
+        let mut allowed = k0;
+        let mut threshold = 8;
+        while threshold <= visits && allowed < moves.len() {
+            if allowed < moves.len() {
+                allowed += 2;
+            }
+            threshold <<= 1;
+        }
+        if allowed > moves.len() {
+            allowed = moves.len();
+        }
+
+        if allowed > current {
+            for (action, (mov, policy)) in moves
+                .iter()
+                .enumerate()
+                .skip(current)
+                .take(allowed - current)
+            {
+                let ptr = first_child_ptr + action;
+                self[ptr].set_new(*mov, *policy);
+            }
+            node.set_num_actions(allowed);
+        }
+
+        // refresh policies for all considered moves
+        let limit = node.num_actions();
+        for (action, (_, policy)) in moves.iter().enumerate().take(limit) {
+            let ptr = first_child_ptr + action;
+            self[ptr].set_policy(*policy);
+        }
+
+        let mut sum_of_squares = 0.0;
+        for &(_, policy) in &moves {
+            sum_of_squares += policy * policy;
+        }
+        let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
+        node.set_gini_impurity(gini_impurity);
     }
 
     pub fn relabel_policy(
