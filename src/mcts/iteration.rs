@@ -126,6 +126,7 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
         acc += searcher.tree[actions_ptr + k].policy();
         k += 1;
     }
+    k += 4;
     let mut thresh = 1;
     while node.visits() >= thresh && k < node.num_actions() {
         k += 1;
