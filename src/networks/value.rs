@@ -4,13 +4,13 @@ use super::{activation::{Activation, SCReLU}, layer::{Layer, TransposedLayer}, t
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals, dead_code)]
-pub const ValueFileDefaultName: &str = "sb1000-single-layer.network";
+pub const ValueFileDefaultName: &str = "sb4000-single-layer.network";
 #[allow(non_upper_case_globals, dead_code)]
 pub const CompressedValueName: &str = "nn-f004da0ebf25.network";
 #[allow(non_upper_case_globals, dead_code)]
 pub const DatagenValueFileName: &str = "nn-5601bb8c241d.network";
 
-const QA: i16 = 255;
+const QA: i16 = 128;
 const QB: i16 = 128;
 
 const L1: usize = 3072;
@@ -18,7 +18,7 @@ const L1: usize = 3072;
 #[repr(C, align(64))]
 pub struct ValueNetwork {
     pst: [Accumulator<f32, 3>; threats::TOTAL],
-    l1: Layer<i16, { threats::TOTAL }, L1>,
+    l1: Layer<i8, { threats::TOTAL }, L1>,
     l2: TransposedLayer<i16, L1, 3>,
 }
 
@@ -34,9 +34,13 @@ impl ValueNetwork {
             count += 1;
         });
 
-        let mut l1 = self.l1.biases;
+        let mut l1 = Accumulator([0; L1]);
 
-        l1.add_multi(&feats[..count], &self.l1.weights);
+        for (r, &b) in l1.0.iter_mut().zip(self.l1.biases.0.iter()) {
+            *r = i16::from(b);
+        }
+
+        l1.add_multi_i8(&feats[..count], &self.l1.weights);
 
         let mut act = Accumulator([0.0; L1]);
 
