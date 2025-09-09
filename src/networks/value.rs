@@ -8,7 +8,7 @@ use super::{
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals, dead_code)]
-pub const ValueFileDefaultName: &str = "nn-58274aa39e13.network";
+pub const ValueFileDefaultName: &str = "king-buc.network";
 #[allow(non_upper_case_globals, dead_code)]
 pub const CompressedValueName: &str = "nn-fa1a8afd872c.network";
 #[allow(non_upper_case_globals, dead_code)]
@@ -23,8 +23,8 @@ const L1: usize = 3072;
 pub struct ValueNetwork {
     pst: [Accumulator<f32, 3>; threats::TOTAL],
     l1: Layer<i8, { threats::TOTAL }, L1>,
-    l2: TransposedLayer<i16, { L1 / 2 }, 16>,
-    l3: Layer<f32, 16, 128>,
+    l2: TransposedLayer<i16, { L1 / 2 }, 128>,
+    l3: Layer<f32, 128, 128>,
     l4: Layer<f32, 128, 3>,
 }
 
@@ -59,7 +59,7 @@ impl ValueNetwork {
             *a = i * j;
         }
 
-        let mut fwd = [0; 16];
+        let mut fwd = [0; 128];
 
         for (f, row) in fwd.iter_mut().zip(self.l2.weights.iter()) {
             for (&a, &w) in act.iter().zip(row.0.iter()) {
@@ -67,7 +67,7 @@ impl ValueNetwork {
             }
         }
 
-        let mut l3 = Accumulator([0.0; 16]);
+        let mut l3 = Accumulator([0.0; 128]);
 
         for (r, (&f, &b)) in l3.0.iter_mut().zip(fwd.iter().zip(self.l2.biases.0.iter())) {
             *r = (f as f32 / f32::from(QA * QA) + f32::from(b)) / f32::from(QB);
