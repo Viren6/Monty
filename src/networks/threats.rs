@@ -4,7 +4,8 @@ use crate::chess::{
 };
 
 const TOTAL_THREATS: usize = 2 * ValueOffsets::END;
-pub const TOTAL: usize = TOTAL_THREATS + 768;
+const FIFTY_MR_BUCKETS: usize = 12;
+pub const TOTAL: usize = TOTAL_THREATS + 768 + FIFTY_MR_BUCKETS;
 
 pub fn map_features<F: FnMut(usize)>(pos: &Board, mut f: F) {
     let mut bbs = pos.bbs();
@@ -61,6 +62,24 @@ pub fn map_features<F: FnMut(usize)>(pos: &Board, mut f: F) {
             });
         }
     }
+
+    let halfm = pos.halfm() as usize;
+    let bucket = match halfm {
+        0 => 0,
+        1 => 1,
+        2 => 2,
+        3..=4 => 3,
+        5..=8 => 4,
+        9..=12 => 5,
+        13..=17 => 6,
+        18..=24 => 7,
+        25..=34 => 8,
+        35..=49 => 9,
+        50..=69 => 10,
+        _ => 11,
+    };
+    let idx = TOTAL_THREATS + 768 + bucket;
+    f(idx);
 }
 
 fn map_bb<F: FnMut(usize)>(mut bb: u64, mut f: F) {
