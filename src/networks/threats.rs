@@ -7,8 +7,12 @@ const TOTAL_THREATS: usize = 2 * ValueOffsets::END;
 
 const PIECE_BUCKETS: usize = 13;
 const PIECE_FEATURES: usize = 768;
+// Additional common bucket at the end of the input list
+const COMMON_BUCKET_SIZE: usize = PIECE_FEATURES;
 
-pub const TOTAL: usize = TOTAL_THREATS + PIECE_BUCKETS * PIECE_FEATURES;
+pub const TOTAL: usize = TOTAL_THREATS
+    + PIECE_BUCKETS * PIECE_FEATURES
+    + COMMON_BUCKET_SIZE;
 
 const BUCKET_LAYOUT: [usize; 32] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 9, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11,
@@ -72,8 +76,11 @@ pub fn map_features<F: FnMut(usize)>(pos: &Board, mut f: F) {
                 } & occ;
 
                 let bucket = king_buckets[side];
-                f(TOTAL_THREATS + bucket * PIECE_FEATURES + [0, 384][side]
-                    + 64 * (piece - 2) + sq);
+                let base = [0, 384][side] + 64 * (piece - 2) + sq;
+                // King-specific bucket
+                f(TOTAL_THREATS + bucket * PIECE_FEATURES + base);
+                // Common bucket at the end of the input list
+                f(TOTAL_THREATS + PIECE_BUCKETS * PIECE_FEATURES + base);
                 map_bb(threats, |dest| {
                     let enemy = (1 << dest) & opps > 0;
                     if let Some(idx) = map_piece_threat(piece, sq, dest, pieces[dest], enemy) {
