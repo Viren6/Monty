@@ -487,6 +487,7 @@ impl Tree {
             q: f32,
             visits: u32,
             board: Vec<String>,
+            materialcount: i32,
             children: Vec<ExportNode>,
         }
 
@@ -523,6 +524,18 @@ impl Tree {
                 rows.push(row);
             }
             rows
+        }
+
+        fn material_count(board: Board) -> i32 {
+            let our = board.boys();
+            let opp = board.opps();
+            let pc = |p: usize, side: u64| (board.piece(p) & side).count_ones() as i32;
+
+            (pc(Piece::PAWN, our) - pc(Piece::PAWN, opp))
+                + (pc(Piece::KNIGHT, our) - pc(Piece::KNIGHT, opp)) * 3
+                + (pc(Piece::BISHOP, our) - pc(Piece::BISHOP, opp)) * 3
+                + (pc(Piece::ROOK, our) - pc(Piece::ROOK, opp)) * 5
+                + (pc(Piece::QUEEN, our) - pc(Piece::QUEEN, opp)) * 9
         }
 
         fn build(
@@ -580,6 +593,7 @@ impl Tree {
                 q: 1.0 - node.q(),
                 visits: node.visits(),
                 board: unicode_board(state.board()),
+                materialcount: material_count(state.board()),
                 children,
             })
         }
@@ -593,6 +607,7 @@ impl Tree {
                 q: 0.0,
                 visits: 0,
                 board: unicode_board(root_state.board()),
+                materialcount: material_count(root_state.board()),
                 children: Vec::new(),
             },
         );
