@@ -15,7 +15,7 @@ use std::{
 };
 
 use crate::{
-    chess::{ChessState, GameState, Move},
+    chess::{consts::Piece, Board, ChessState, GameState, Move},
     mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
 };
@@ -486,10 +486,52 @@ impl Tree {
             policy: f32,
             q: f32,
             visits: u32,
+            board: Vec<String>,
             children: Vec<ExportNode>,
         }
 
-        fn build(tree: &Tree, ptr: NodePtr, min_visits: u32, is_root: bool) -> Option<ExportNode> {
+        fn unicode_board(board: Board) -> Vec<String> {
+            let mut rows = Vec::new();
+            for rank in (0..8).rev() {
+                let mut row = String::new();
+                for file in 0..8 {
+                    let sq = rank * 8 + file;
+                    let bit = 1u64 << sq;
+                    let pc = board.get_pc(bit);
+                    let ch = if pc == Piece::EMPTY {
+                        '.'
+                    } else {
+                        let is_white = (board.piece(0) & bit) != 0;
+                        match (is_white, pc) {
+                            (true, Piece::KING) => 'K',
+                            (true, Piece::QUEEN) => 'Q',
+                            (true, Piece::ROOK) => 'R',
+                            (true, Piece::BISHOP) => 'B',
+                            (true, Piece::KNIGHT) => 'N',
+                            (true, Piece::PAWN) => 'P',
+                            (false, Piece::KING) => 'k',
+                            (false, Piece::QUEEN) => 'q',
+                            (false, Piece::ROOK) => 'r',
+                            (false, Piece::BISHOP) => 'b',
+                            (false, Piece::KNIGHT) => 'n',
+                            (false, Piece::PAWN) => 'p',
+                            _ => '.',
+                        }
+                    };
+                    row.push(ch);
+                }
+                rows.push(row);
+            }
+            rows
+        }
+
+        fn build(
+            tree: &Tree,
+            ptr: NodePtr,
+            state: &ChessState,
+            min_visits: u32,
+            is_root: bool,
+        ) -> Option<ExportNode> {
             let node = &tree[ptr];
 
             if !is_root && node.visits() < min_visits {
@@ -503,8 +545,10 @@ impl Tree {
 
                 for action in 0..node.num_actions() {
                     let child_ptr = first_child_ptr + action;
+                    let mut child_state = state.clone();
+                    child_state.make_move(tree[child_ptr].parent_move());
 
-                    if let Some(child) = build(tree, child_ptr, min_visits, false) {
+                    if let Some(child) = build(tree, child_ptr, &child_state, min_visits, false) {
                         children.push(child);
                     }
                 }
@@ -519,19 +563,22 @@ impl Tree {
                 policy: node.policy() * 100.0,
                 q: node.q(),
                 visits: node.visits(),
+                board: unicode_board(state.board()),
                 children,
             })
         }
 
         let root_ptr = self.root_node();
-        let root = build(self, root_ptr, min_visits, true).unwrap_or(ExportNode {
+        let root_state = self.root.clone();
+        let root = build(self, root_ptr, &root_state, min_visits, true).unwrap_or(ExportNode {
             mov: None,
             policy: 0.0,
             q: 0.0,
             visits: 0,
+            board: unicode_board(root_state.board()),
             children: Vec::new(),
         });
 
-        serde_json::to_string(&root).unwrap()
+        serde_json::to_string_pretty(&root).unwrap()
     }
 }
