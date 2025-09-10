@@ -561,7 +561,7 @@ impl Tree {
                     Some(node.parent_move().to_string())
                 },
                 policy: node.policy() * 100.0,
-                q: node.q(),
+                q: 1.0 - node.q(),
                 visits: node.visits(),
                 board: unicode_board(state.board()),
                 children,
