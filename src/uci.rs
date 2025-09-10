@@ -6,7 +6,7 @@ use crate::{
 };
 
 use std::{
-    io, process,
+    fs, io, process,
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
@@ -123,6 +123,16 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
             "ucinewgame" => {
                 root_game_ply = 0;
                 tree.clear(threads);
+            }
+            "export_json" => {
+                let min_visits = commands
+                    .get(1)
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(0);
+                let json = tree.export_json(min_visits);
+                if let Err(e) = fs::write("tree.json", json) {
+                    eprintln!("failed to write tree.json: {e}");
+                }
             }
             _ => {}
         }
