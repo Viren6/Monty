@@ -479,7 +479,7 @@ impl Tree {
         }
     }
 
-    pub fn export_json(&self, min_visits: u32) -> String {
+    pub fn export_json(&self, min_visits: u32, depth: Option<usize>, top: Option<usize>) -> String {
         #[derive(Serialize)]
         struct ExportNode {
             mov: Option<String>,
@@ -530,6 +530,8 @@ impl Tree {
             ptr: NodePtr,
             state: &ChessState,
             min_visits: u32,
+            depth: Option<usize>,
+            top: Option<usize>,
             is_root: bool,
         ) -> Option<ExportNode> {
             let node = &tree[ptr];
@@ -537,18 +539,32 @@ impl Tree {
             if !is_root && node.visits() < min_visits {
                 return None;
             }
-
             let mut children = Vec::new();
 
-            if node.has_children() {
+            if depth.map_or(true, |d| d > 0) && node.has_children() {
                 let first_child_ptr = node.actions();
 
-                for action in 0..node.num_actions() {
-                    let child_ptr = first_child_ptr + action;
+                let mut child_ptrs: Vec<NodePtr> = (0..node.num_actions())
+                    .map(|action| first_child_ptr + action)
+                    .collect();
+                child_ptrs.sort_by(|a, b| tree[*b].visits().cmp(&tree[*a].visits()));
+
+                let limit = top.unwrap_or(child_ptrs.len());
+
+                for child_ptr in child_ptrs.into_iter().take(limit) {
                     let mut child_state = state.clone();
                     child_state.make_move(tree[child_ptr].parent_move());
 
-                    if let Some(child) = build(tree, child_ptr, &child_state, min_visits, false) {
+                    let next_depth = depth.map(|d| d.saturating_sub(1));
+                    if let Some(child) = build(
+                        tree,
+                        child_ptr,
+                        &child_state,
+                        min_visits,
+                        next_depth,
+                        top,
+                        false,
+                    ) {
                         children.push(child);
                     }
                 }
@@ -570,14 +586,16 @@ impl Tree {
 
         let root_ptr = self.root_node();
         let root_state = self.root.clone();
-        let root = build(self, root_ptr, &root_state, min_visits, true).unwrap_or(ExportNode {
-            mov: None,
-            policy: 0.0,
-            q: 0.0,
-            visits: 0,
-            board: unicode_board(root_state.board()),
-            children: Vec::new(),
-        });
+        let root = build(self, root_ptr, &root_state, min_visits, depth, top, true).unwrap_or(
+            ExportNode {
+                mov: None,
+                policy: 0.0,
+                q: 0.0,
+                visits: 0,
+                board: unicode_board(root_state.board()),
+                children: Vec::new(),
+            },
+        );
 
         serde_json::to_string_pretty(&root).unwrap()
     }

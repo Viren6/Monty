@@ -125,11 +125,37 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
                 tree.clear(threads);
             }
             "export_json" => {
-                let min_visits = commands
-                    .get(1)
-                    .and_then(|v| v.parse::<u32>().ok())
-                    .unwrap_or(0);
-                let json = tree.export_json(min_visits);
+                let mut depth = None;
+                let mut top = None;
+                let mut visits = 0;
+
+                let mut i = 1;
+                while i < commands.len() {
+                    match commands[i] {
+                        "depth" => {
+                            if let Some(v) = commands.get(i + 1) {
+                                depth = v.parse::<usize>().ok();
+                            }
+                            i += 1;
+                        }
+                        "top" => {
+                            if let Some(v) = commands.get(i + 1) {
+                                top = v.parse::<usize>().ok();
+                            }
+                            i += 1;
+                        }
+                        "visits" => {
+                            if let Some(v) = commands.get(i + 1) {
+                                visits = v.parse::<u32>().unwrap_or(0);
+                            }
+                            i += 1;
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+
+                let json = tree.export_json(visits, depth, top);
                 if let Err(e) = fs::write("tree.json", json) {
                     eprintln!("failed to write tree.json: {e}");
                 }
