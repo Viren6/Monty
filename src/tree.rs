@@ -6,6 +6,7 @@ mod node;
 use half::TreeHalf;
 use hash::{HashEntry, HashTable};
 pub use node::{Node, NodePtr};
+use serde::Serialize;
 
 use std::{
     mem::MaybeUninit,
@@ -476,5 +477,61 @@ impl Tree {
             let mixed = (1.0 - prop) * child.policy() + prop * (x * inv_sum);
             child.set_policy(mixed);
         }
+    }
+
+    pub fn export_json(&self, min_visits: u32) -> String {
+        #[derive(Serialize)]
+        struct ExportNode {
+            mov: Option<String>,
+            policy: f32,
+            q: f32,
+            visits: u32,
+            children: Vec<ExportNode>,
+        }
+
+        fn build(tree: &Tree, ptr: NodePtr, min_visits: u32, is_root: bool) -> Option<ExportNode> {
+            let node = &tree[ptr];
+
+            if !is_root && node.visits() < min_visits {
+                return None;
+            }
+
+            let mut children = Vec::new();
+
+            if node.has_children() {
+                let first_child_ptr = node.actions();
+
+                for action in 0..node.num_actions() {
+                    let child_ptr = first_child_ptr + action;
+
+                    if let Some(child) = build(tree, child_ptr, min_visits, false) {
+                        children.push(child);
+                    }
+                }
+            }
+
+            Some(ExportNode {
+                mov: if is_root {
+                    None
+                } else {
+                    Some(node.parent_move().to_string())
+                },
+                policy: node.policy() * 100.0,
+                q: node.q(),
+                visits: node.visits(),
+                children,
+            })
+        }
+
+        let root_ptr = self.root_node();
+        let root = build(self, root_ptr, min_visits, true).unwrap_or(ExportNode {
+            mov: None,
+            policy: 0.0,
+            q: 0.0,
+            visits: 0,
+            children: Vec::new(),
+        });
+
+        serde_json::to_string(&root).unwrap()
     }
 }
