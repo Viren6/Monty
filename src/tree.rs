@@ -479,7 +479,13 @@ impl Tree {
         }
     }
 
-    pub fn export_json(&self, min_visits: u32, depth: Option<usize>, top: Option<usize>) -> String {
+    pub fn export_json(
+        &self,
+        min_visits: u32,
+        depth: Option<usize>,
+        top: Option<usize>,
+        simple: bool,
+    ) -> String {
         #[derive(Serialize)]
         struct ExportNode {
             mov: Option<String>,
@@ -598,19 +604,135 @@ impl Tree {
             })
         }
 
+        fn build_node(
+            tree: &Tree,
+            ptr: NodePtr,
+            state: &ChessState,
+            min_visits: u32,
+            is_root: bool,
+        ) -> Option<ExportNode> {
+            let node = &tree[ptr];
+            if !is_root && node.visits() < min_visits {
+                return None;
+            }
+            Some(ExportNode {
+                mov: if is_root {
+                    None
+                } else {
+                    Some(node.parent_move().to_string())
+                },
+                policy: node.policy() * 100.0,
+                q: 1.0 - node.q(),
+                visits: node.visits(),
+                board: unicode_board(state.board()),
+                materialcount: material_count(state.board()),
+                children: Vec::new(),
+            })
+        }
+
+        fn build_side(
+            tree: &Tree,
+            ptr: NodePtr,
+            state: &ChessState,
+            min_visits: u32,
+        ) -> Option<ExportNode> {
+            let mut node = build_node(tree, ptr, state, min_visits, false)?;
+            if tree[ptr].has_children() {
+                let first = tree[ptr].actions();
+                let mut child_ptrs: Vec<NodePtr> =
+                    (0..tree[ptr].num_actions()).map(|a| first + a).collect();
+                child_ptrs.sort_by(|a, b| tree[*b].visits().cmp(&tree[*a].visits()));
+                for child_ptr in child_ptrs.into_iter().take(2) {
+                    let mut child_state = state.clone();
+                    child_state.make_move(tree[child_ptr].parent_move());
+                    if let Some(mut child) =
+                        build_node(tree, child_ptr, &child_state, min_visits, false)
+                    {
+                        if tree[child_ptr].has_children() {
+                            let first_gc = tree[child_ptr].actions();
+                            let mut gc_ptrs: Vec<NodePtr> = (0..tree[child_ptr].num_actions())
+                                .map(|a| first_gc + a)
+                                .collect();
+                            gc_ptrs.sort_by(|a, b| tree[*b].visits().cmp(&tree[*a].visits()));
+                            if let Some(gc_ptr) = gc_ptrs.into_iter().next() {
+                                let mut gc_state = child_state.clone();
+                                gc_state.make_move(tree[gc_ptr].parent_move());
+                                if let Some(gc_node) =
+                                    build_node(tree, gc_ptr, &gc_state, min_visits, false)
+                                {
+                                    child.children.push(gc_node);
+                                }
+                            }
+                        }
+                        node.children.push(child);
+                    }
+                }
+            }
+            Some(node)
+        }
+
+        fn build_simple(
+            tree: &Tree,
+            ptr: NodePtr,
+            state: &ChessState,
+            min_visits: u32,
+            remaining: usize,
+            is_root: bool,
+        ) -> Option<ExportNode> {
+            let mut node = build_node(tree, ptr, state, min_visits, is_root)?;
+            if tree[ptr].has_children() {
+                let first_child_ptr = tree[ptr].actions();
+                let mut child_ptrs: Vec<NodePtr> = (0..tree[ptr].num_actions())
+                    .map(|a| first_child_ptr + a)
+                    .collect();
+                child_ptrs.sort_by(|a, b| tree[*b].visits().cmp(&tree[*a].visits()));
+                if let Some(&p1) = child_ptrs.get(0) {
+                    let mut st1 = state.clone();
+                    st1.make_move(tree[p1].parent_move());
+                    let child = if remaining > 1 {
+                        build_simple(tree, p1, &st1, min_visits, remaining - 1, false)
+                    } else {
+                        build_node(tree, p1, &st1, min_visits, false)
+                    };
+                    if let Some(ch) = child {
+                        node.children.push(ch);
+                    }
+                }
+                if let Some(&p2) = child_ptrs.get(1) {
+                    let mut st2 = state.clone();
+                    st2.make_move(tree[p2].parent_move());
+                    if let Some(ch) = build_side(tree, p2, &st2, min_visits) {
+                        node.children.push(ch);
+                    }
+                }
+                if let Some(&p3) = child_ptrs.get(2) {
+                    let mut st3 = state.clone();
+                    st3.make_move(tree[p3].parent_move());
+                    if let Some(ch) = build_side(tree, p3, &st3, min_visits) {
+                        node.children.push(ch);
+                    }
+                }
+            }
+            Some(node)
+        }
+
         let root_ptr = self.root_node();
         let root_state = self.root.clone();
-        let root = build(self, root_ptr, &root_state, min_visits, depth, top, true).unwrap_or(
-            ExportNode {
-                mov: None,
-                policy: 0.0,
-                q: 0.0,
-                visits: 0,
-                board: unicode_board(root_state.board()),
-                materialcount: material_count(root_state.board()),
-                children: Vec::new(),
-            },
-        );
+
+        let root = if simple {
+            build_simple(self, root_ptr, &root_state, min_visits, 12, true)
+        } else {
+            build(self, root_ptr, &root_state, min_visits, depth, top, true)
+        }
+        .unwrap_or(ExportNode {
+            mov: None,
+            policy: 0.0,
+            q: 0.0,
+            visits: 0,
+            board: unicode_board(root_state.board()),
+            materialcount: material_count(root_state.board()),
+            children: Vec::new(),
+        });
 
         serde_json::to_string_pretty(&root).unwrap()
     }

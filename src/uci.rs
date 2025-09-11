@@ -128,6 +128,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
                 let mut depth = None;
                 let mut top = None;
                 let mut visits = 0;
+                let mut simple = false;
 
                 let mut i = 1;
                 while i < commands.len() {
@@ -150,12 +151,15 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
                             }
                             i += 1;
                         }
+                        "simple" => {
+                            simple = true;
+                        }
                         _ => {}
                     }
                     i += 1;
                 }
 
-                let json = tree.export_json(visits, depth, top);
+                let json = tree.export_json(visits, depth, top, simple);
                 if let Err(e) = fs::write("tree.json", json) {
                     eprintln!("failed to write tree.json: {e}");
                 }
