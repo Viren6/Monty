@@ -79,6 +79,7 @@ impl<'a> DatagenThread<'a> {
 
         let mut total_iters = 0usize;
         let mut searches = 0usize;
+        let mut temp = 0.8f32;
 
         // play out game using raw network outputs
         loop {
@@ -95,19 +96,43 @@ impl<'a> DatagenThread<'a> {
             let hl = policy.hl(&position.board());
 
             let mut dist = Vec::with_capacity(moves.len());
-            let mut best_move: Move = moves[0];
-            let mut best_score = f32::NEG_INFINITY;
+            let mut probs = Vec::with_capacity(moves.len());
 
             for mov in moves {
                 let p = policy.get(&position.board(), &mov, &hl);
                 let mf_move = montyformat::chess::Move::from(u16::from(mov));
                 let visits = (p * 65535.0) as u32;
                 dist.push((mf_move, visits));
-                if p > best_score {
-                    best_score = p;
-                    best_move = mov;
-                }
+                probs.push((mov, p));
             }
+
+            let best_move: Move = if temp == 0.0 {
+                probs
+                    .iter()
+                    .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                    .map(|(m, _)| *m)
+                    .unwrap()
+            } else {
+                let t = 1.0 / f64::from(temp);
+                let mut weights = Vec::with_capacity(probs.len());
+                let mut total = 0.0f64;
+                for (_, p) in &probs {
+                    let w = f64::from(*p).powf(t);
+                    weights.push(w);
+                    total += w;
+                }
+                let rand = f64::from(self.rng.rand_int()) / f64::from(u32::MAX);
+                let mut cumulative = 0.0f64;
+                let mut chosen = probs[probs.len() - 1].0;
+                for (i, weight) in weights.iter().enumerate() {
+                    cumulative += *weight;
+                    if cumulative / total > rand {
+                        chosen = probs[i].0;
+                        break;
+                    }
+                }
+                chosen
+            };
 
             let (win, draw, _) = value.eval(&position.board());
             let score = win + draw / 2.0;
@@ -122,6 +147,11 @@ impl<'a> DatagenThread<'a> {
 
             searches += 1;
             total_iters += 1;
+
+            temp *= 0.9;
+            if temp <= 0.2 {
+                temp = 0.0;
+            }
 
             position.make_move(best_move);
 
