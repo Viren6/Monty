@@ -1,5 +1,5 @@
 use crate::{
-    chess::{ChessState, GameState},
+    chess::{ChessState, GameState, Move},
     tree::{Node, NodePtr},
 };
 
@@ -18,6 +18,8 @@ pub fn perform_one(
     let mut child_hash: Option<u64> = None;
     let tree = searcher.tree;
     let node = &tree[ptr];
+
+    let mut history_info: Option<(usize, Move)> = None;
 
     let mut u = if node.is_terminal() || node.visits() == 0 {
         if node.visits() == 0 {
@@ -57,6 +59,7 @@ pub fn perform_one(
         let child_ptr = node.actions() + action;
 
         let mov = tree[child_ptr].parent_move();
+        let parent_side = pos.stm();
 
         pos.make_move(mov);
 
@@ -84,6 +87,10 @@ pub fn perform_one(
 
         tree.propogate_proven_mates(ptr, tree[child_ptr].state());
 
+        if tree[child_ptr].state() == GameState::Ongoing {
+            history_info = Some((parent_side, mov));
+        }
+
         u
     };
 
@@ -97,6 +104,11 @@ pub fn perform_one(
 
     // flip perspective and backpropagate
     u = 1.0 - u;
+
+    if let Some((side, mov)) = history_info {
+        tree.update_butterfly(side, mov, u);
+    }
+
     node.update(u);
     Some(u)
 }

@@ -8,9 +8,10 @@ use hash::{HashEntry, HashTable};
 pub use node::{Node, NodePtr};
 
 use std::{
+    array,
     mem::MaybeUninit,
     ops::Index,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicI16, Ordering},
 };
 
 use crate::{
@@ -24,6 +25,7 @@ pub struct Tree {
     tree: [TreeHalf; 2],
     half: AtomicBool,
     hash: HashTable,
+    butterfly_table: [[[AtomicI16; 64]; 64]; 2],
 }
 
 impl Index<NodePtr> for Tree {
@@ -55,6 +57,9 @@ impl Tree {
             ],
             half: AtomicBool::new(false),
             hash: HashTable::new(hash_cap / 4, threads),
+            butterfly_table: array::from_fn(|_| {
+                array::from_fn(|_| array::from_fn(|_| AtomicI16::new(0)))
+            }),
         }
     }
 
@@ -149,10 +154,48 @@ impl Tree {
         self.tree[1].clear();
     }
 
+    fn clear_butterfly(&self) {
+        for side in &self.butterfly_table {
+            for from in side {
+                for entry in from {
+                    entry.store(0, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
+    fn butterfly_entry(&self, side: usize, mov: Move) -> &AtomicI16 {
+        &self.butterfly_table[side][usize::from(mov.src())][usize::from(mov.to())]
+    }
+
+    fn scale_bonus(score: i16, bonus: i16) -> i16 {
+        let score = i32::from(score);
+        let bonus = i32::from(bonus);
+        let scaled = bonus - score * bonus.abs() / 8192;
+        scaled.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+    }
+
+    fn prob_to_bonus(prob: f32) -> i16 {
+        let prob = prob.clamp(0.001, 0.999);
+        let cp = -400.0 * (1.0 / f64::from(prob) - 1.0).ln();
+        cp.round().clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16
+    }
+
+    pub(crate) fn update_butterfly(&self, side: usize, mov: Move, prob: f32) {
+        let bonus = Self::prob_to_bonus(prob);
+        let entry = self.butterfly_entry(side, mov);
+        let _ = entry.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            let scaled = Self::scale_bonus(current, bonus);
+            let new = i32::from(current) + i32::from(scaled);
+            Some(new.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16)
+        });
+    }
+
     pub fn clear(&mut self, threads: usize) {
         self.root = ChessState::default();
         self.clear_halves();
         self.hash.clear(threads);
+        self.clear_butterfly();
     }
 
     pub fn is_empty(&self) -> bool {
@@ -183,10 +226,14 @@ impl Tree {
         let mut moves = [const { MaybeUninit::uninit() }; 256];
         let mut count = 0;
 
+        let side = pos.stm();
         pos.map_moves_with_policies(policy, |mov, policy| {
-            moves[count].write((mov, policy));
+            let bonus =
+                f32::from(self.butterfly_entry(side, mov).load(Ordering::Relaxed)) / 16384.0;
+            let adjusted = policy + bonus;
+            moves[count].write((mov, adjusted));
             count += 1;
-            max = max.max(policy);
+            max = max.max(adjusted);
         });
 
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
@@ -237,12 +284,15 @@ impl Tree {
         let actions_ptr = actions.val();
 
         let hl = pos.get_policy_hl(policy);
+        let side = pos.stm();
         let mut max = f32::NEG_INFINITY;
         let mut policies = Vec::new();
 
         for action in 0..num_actions {
             let mov = self[actions_ptr + action].parent_move();
-            let policy = pos.get_policy(mov, &hl, policy);
+            let bonus =
+                f32::from(self.butterfly_entry(side, mov).load(Ordering::Relaxed)) / 16384.0;
+            let policy = pos.get_policy(mov, &hl, policy) + bonus;
 
             policies.push(policy);
             max = max.max(policy);
@@ -306,6 +356,7 @@ impl Tree {
     pub fn set_root_position(&mut self, new_root: &ChessState) {
         let old_root = self.root.clone();
         self.root = new_root.clone();
+        self.clear_butterfly();
 
         if self.is_empty() {
             return;
