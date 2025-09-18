@@ -43,8 +43,17 @@ impl ButterflyTable {
         &self.data[idx]
     }
 
-    fn policy_bonus(&self, side: usize, mov: Move) -> f32 {
-        f32::from(self.entry(side, mov).load(Ordering::Relaxed)) / 16384.0
+    fn policy_bonus(&self, side: usize, mov: Move, visits: u32) -> f32 {
+        let bonus = f32::from(self.entry(side, mov).load(Ordering::Relaxed)) / 16384.0;
+
+        if bonus == 0.0 {
+            return 0.0;
+        }
+
+        // Reduce the influence of the history correction as the node becomes
+        // well explored so that search statistics dominate in high-visit nodes.
+        let scale = (1.0 + visits as f32).sqrt().recip();
+        bonus * scale
     }
 
     fn clear(&self) {
@@ -234,6 +243,7 @@ impl Tree {
         thread_id: usize,
     ) -> Option<()> {
         let node = &self[node_ptr];
+        let visit_count = node.visits();
 
         let actions_ptr = node.actions_mut();
 
@@ -250,7 +260,7 @@ impl Tree {
         let stm = pos.stm();
 
         pos.map_moves_with_policies(policy, |mov, policy| {
-            let adjusted = policy + self.butterfly.policy_bonus(stm, mov);
+            let adjusted = policy + self.butterfly.policy_bonus(stm, mov, visit_count);
             moves[count].write((mov, adjusted));
             count += 1;
             max = max.max(adjusted);
@@ -258,7 +268,7 @@ impl Tree {
 
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
 
-        let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
+        let pst = SearchHelpers::get_pst(depth, node.q(), params);
 
         let slice = unsafe {
             std::slice::from_raw_parts_mut(moves.as_mut_ptr() as *mut (Move, f32), count)
@@ -299,8 +309,10 @@ impl Tree {
         policy: &PolicyNetwork,
         depth: u8,
     ) {
-        let actions = self[node_ptr].actions_mut();
-        let num_actions = self[node_ptr].num_actions();
+        let node = &self[node_ptr];
+        let visit_count = node.visits();
+        let actions = node.actions_mut();
+        let num_actions = node.num_actions();
         let actions_ptr = actions.val();
 
         let hl = pos.get_policy_hl(policy);
@@ -310,13 +322,14 @@ impl Tree {
         let stm = pos.stm();
         for action in 0..num_actions {
             let mov = self[actions_ptr + action].parent_move();
-            let policy = pos.get_policy(mov, &hl, policy) + self.butterfly.policy_bonus(stm, mov);
+            let policy = pos.get_policy(mov, &hl, policy)
+                + self.butterfly.policy_bonus(stm, mov, visit_count);
 
             policies.push(policy);
             max = max.max(policy);
         }
 
-        let pst = SearchHelpers::get_pst(depth.into(), self[node_ptr].q(), params);
+        let pst = SearchHelpers::get_pst(depth.into(), node.q(), params);
 
         let mut total = 0.0;
 
