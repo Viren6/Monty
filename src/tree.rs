@@ -53,13 +53,16 @@ impl ButterflyTable {
         }
     }
 
-    fn update(&self, side: usize, mov: Move, score: f32) {
+    fn update(&self, side: usize, mov: Move, score: f32, visits: u32) {
         if !score.is_finite() {
             return;
         }
 
         let score = score.clamp(0.001, 0.999);
         let cp = (-400.0 * ((1.0 / score) - 1.0).ln()).round() as i32;
+        let visits = visits.saturating_sub(1);
+        let weight = 1.0 + (visits as f32).ln_1p();
+        let cp = (cp as f32 * weight).round() as i32;
         let cell = self.entry(side, mov);
 
         let mut current = cell.load(Ordering::Relaxed);
@@ -337,8 +340,8 @@ impl Tree {
         self[node_ptr].set_gini_impurity(gini_impurity);
     }
 
-    pub fn update_butterfly(&self, side: usize, mov: Move, score: f32) {
-        self.butterfly.update(side, mov, score);
+    pub fn update_butterfly(&self, side: usize, mov: Move, score: f32, visits: u32) {
+        self.butterfly.update(side, mov, score, visits);
     }
 
     pub fn clear_butterfly_table(&self) {

@@ -84,7 +84,8 @@ pub fn perform_one(
         let u = maybe_u?;
 
         if tree[child_ptr].state() == GameState::Ongoing {
-            tree.update_butterfly(stm, mov, u);
+            let visits = tree[child_ptr].visits();
+            tree.update_butterfly(stm, mov, u, visits);
         }
 
         tree.propogate_proven_mates(ptr, tree[child_ptr].state());
