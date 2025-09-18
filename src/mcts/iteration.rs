@@ -58,6 +58,7 @@ pub fn perform_one(
         let child_ptr = node.actions() + action;
 
         let mov = tree[child_ptr].parent_move();
+        let piece = pos.board().get_pc(1 << mov.src());
 
         pos.make_move(mov);
 
@@ -84,7 +85,7 @@ pub fn perform_one(
         let u = maybe_u?;
 
         if tree[child_ptr].state() == GameState::Ongoing {
-            tree.update_butterfly(stm, mov, u);
+            tree.update_butterfly(stm, piece, mov, u);
         }
 
         tree.propogate_proven_mates(ptr, tree[child_ptr].state());

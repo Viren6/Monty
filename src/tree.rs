@@ -14,13 +14,15 @@ use std::{
 };
 
 use crate::{
-    chess::{ChessState, GameState, Move},
+    chess::{consts::Piece, ChessState, GameState, Move},
     mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
 };
 
 const NUM_SIDES: usize = 2;
 const NUM_SQUARES: usize = 64;
+const PIECE_OFFSET: usize = Piece::PAWN;
+const NUM_PIECES: usize = Piece::KING - Piece::PAWN + 1;
 
 struct ButterflyTable {
     data: Vec<AtomicI16>,
@@ -28,23 +30,29 @@ struct ButterflyTable {
 
 impl ButterflyTable {
     fn new() -> Self {
-        let capacity = NUM_SIDES * NUM_SQUARES * NUM_SQUARES;
+        let capacity = NUM_SIDES * NUM_PIECES * NUM_SQUARES * NUM_SQUARES;
         let mut data = Vec::with_capacity(capacity);
         data.extend((0..capacity).map(|_| AtomicI16::new(0)));
         Self { data }
     }
 
-    fn index(side: usize, from: u16, to: u16) -> usize {
-        side * NUM_SQUARES * NUM_SQUARES + usize::from(from) * NUM_SQUARES + usize::from(to)
+    fn index(side: usize, piece: usize, from: u16, to: u16) -> usize {
+        debug_assert!(piece >= PIECE_OFFSET && piece <= Piece::KING);
+
+        let piece_index = piece - PIECE_OFFSET;
+        side * NUM_PIECES * NUM_SQUARES * NUM_SQUARES
+            + piece_index * NUM_SQUARES * NUM_SQUARES
+            + usize::from(from) * NUM_SQUARES
+            + usize::from(to)
     }
 
-    fn entry(&self, side: usize, mov: Move) -> &AtomicI16 {
-        let idx = Self::index(side, mov.src(), mov.to());
+    fn entry(&self, side: usize, piece: usize, mov: Move) -> &AtomicI16 {
+        let idx = Self::index(side, piece, mov.src(), mov.to());
         &self.data[idx]
     }
 
-    fn policy_bonus(&self, side: usize, mov: Move) -> f32 {
-        f32::from(self.entry(side, mov).load(Ordering::Relaxed)) / 16384.0
+    fn policy_bonus(&self, side: usize, piece: usize, mov: Move) -> f32 {
+        f32::from(self.entry(side, piece, mov).load(Ordering::Relaxed)) / 16384.0
     }
 
     fn clear(&self) {
@@ -53,14 +61,14 @@ impl ButterflyTable {
         }
     }
 
-    fn update(&self, side: usize, mov: Move, score: f32) {
+    fn update(&self, side: usize, piece: usize, mov: Move, score: f32) {
         if !score.is_finite() {
             return;
         }
 
         let score = score.clamp(0.001, 0.999);
         let cp = (-400.0 * ((1.0 / score) - 1.0).ln()).round() as i32;
-        let cell = self.entry(side, mov);
+        let cell = self.entry(side, piece, mov);
 
         let mut current = cell.load(Ordering::Relaxed);
         loop {
@@ -249,8 +257,11 @@ impl Tree {
         let mut count = 0;
         let stm = pos.stm();
 
+        let board = pos.board();
         pos.map_moves_with_policies(policy, |mov, policy| {
-            let adjusted = policy + self.butterfly.policy_bonus(stm, mov);
+            let piece = board.get_pc(1 << mov.src());
+            debug_assert!(piece >= Piece::PAWN && piece <= Piece::KING);
+            let adjusted = policy + self.butterfly.policy_bonus(stm, piece, mov);
             moves[count].write((mov, adjusted));
             count += 1;
             max = max.max(adjusted);
@@ -308,9 +319,13 @@ impl Tree {
         let mut policies = Vec::new();
 
         let stm = pos.stm();
+        let board = pos.board();
         for action in 0..num_actions {
             let mov = self[actions_ptr + action].parent_move();
-            let policy = pos.get_policy(mov, &hl, policy) + self.butterfly.policy_bonus(stm, mov);
+            let piece = board.get_pc(1 << mov.src());
+            debug_assert!(piece >= Piece::PAWN && piece <= Piece::KING);
+            let policy =
+                pos.get_policy(mov, &hl, policy) + self.butterfly.policy_bonus(stm, piece, mov);
 
             policies.push(policy);
             max = max.max(policy);
@@ -337,8 +352,8 @@ impl Tree {
         self[node_ptr].set_gini_impurity(gini_impurity);
     }
 
-    pub fn update_butterfly(&self, side: usize, mov: Move, score: f32) {
-        self.butterfly.update(side, mov, score);
+    pub fn update_butterfly(&self, side: usize, piece: usize, mov: Move, score: f32) {
+        self.butterfly.update(side, piece, mov, score);
     }
 
     pub fn clear_butterfly_table(&self) {
