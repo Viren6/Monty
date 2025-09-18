@@ -21,6 +21,7 @@ use crate::{
 
 const NUM_SIDES: usize = 2;
 const NUM_SQUARES: usize = 64;
+const NUM_CAPTURE_STATES: usize = 2;
 
 struct ButterflyTable {
     data: Vec<AtomicI16>,
@@ -28,18 +29,22 @@ struct ButterflyTable {
 
 impl ButterflyTable {
     fn new() -> Self {
-        let capacity = NUM_SIDES * NUM_SQUARES * NUM_SQUARES;
+        let capacity = NUM_SIDES * NUM_SQUARES * NUM_SQUARES * NUM_CAPTURE_STATES;
         let mut data = Vec::with_capacity(capacity);
         data.extend((0..capacity).map(|_| AtomicI16::new(0)));
         Self { data }
     }
 
-    fn index(side: usize, from: u16, to: u16) -> usize {
-        side * NUM_SQUARES * NUM_SQUARES + usize::from(from) * NUM_SQUARES + usize::from(to)
+    fn index(side: usize, from: u16, to: u16, is_capture: bool) -> usize {
+        let capture_idx = usize::from(is_capture as u8);
+        side * NUM_SQUARES * NUM_SQUARES * NUM_CAPTURE_STATES
+            + usize::from(from) * NUM_SQUARES * NUM_CAPTURE_STATES
+            + usize::from(to) * NUM_CAPTURE_STATES
+            + capture_idx
     }
 
     fn entry(&self, side: usize, mov: Move) -> &AtomicI16 {
-        let idx = Self::index(side, mov.src(), mov.to());
+        let idx = Self::index(side, mov.src(), mov.to(), mov.is_capture());
         &self.data[idx]
     }
 
