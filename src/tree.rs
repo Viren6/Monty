@@ -43,8 +43,16 @@ impl ButterflyTable {
         &self.data[idx]
     }
 
-    fn policy_bonus(&self, side: usize, mov: Move) -> f32 {
-        f32::from(self.entry(side, mov).load(Ordering::Relaxed)) / 16384.0
+    fn policy_bonus(&self, side: usize, mov: Move, visits: u32) -> f32 {
+        let base = f32::from(self.entry(side, mov).load(Ordering::Relaxed)) / 16384.0;
+
+        if base == 0.0 {
+            return 0.0;
+        }
+
+        let scale = (visits as f32).ln_1p() + 1.0;
+
+        base * scale
     }
 
     fn clear(&self) {
@@ -249,8 +257,10 @@ impl Tree {
         let mut count = 0;
         let stm = pos.stm();
 
+        let visit_count = node.visits();
+
         pos.map_moves_with_policies(policy, |mov, policy| {
-            let adjusted = policy + self.butterfly.policy_bonus(stm, mov);
+            let adjusted = policy + self.butterfly.policy_bonus(stm, mov, visit_count);
             moves[count].write((mov, adjusted));
             count += 1;
             max = max.max(adjusted);
@@ -308,9 +318,12 @@ impl Tree {
         let mut policies = Vec::new();
 
         let stm = pos.stm();
+        let visit_count = self[node_ptr].visits();
+
         for action in 0..num_actions {
             let mov = self[actions_ptr + action].parent_move();
-            let policy = pos.get_policy(mov, &hl, policy) + self.butterfly.policy_bonus(stm, mov);
+            let policy = pos.get_policy(mov, &hl, policy)
+                + self.butterfly.policy_bonus(stm, mov, visit_count);
 
             policies.push(policy);
             max = max.max(policy);
