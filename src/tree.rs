@@ -59,8 +59,8 @@ impl ButterflyTable {
             return;
         }
 
-        let score = score.clamp(0.001, 0.999);
-        let cp = (-400.0 * ((1.0 / score) - 1.0).ln()).round() as i32;
+        let wdl = (score - 0.5) * 2.0;
+        let cp = (660.6 * wdl / (1.0 - 0.9751875 * wdl.powi(10))).round() as i32;
         let cell = self.entry(side, mov);
 
         let mut current = cell.load(Ordering::Relaxed);
