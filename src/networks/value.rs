@@ -8,7 +8,7 @@ use super::{
 
 // DO NOT MOVE
 #[allow(non_upper_case_globals, dead_code)]
-pub const ValueFileDefaultName: &str = "nn-58274aa39e13.network";
+pub const ValueFileDefaultName: &str = "out-buc.network";
 #[allow(non_upper_case_globals, dead_code)]
 pub const CompressedValueName: &str = "nn-fa1a8afd872c.network";
 #[allow(non_upper_case_globals, dead_code)]
@@ -20,7 +20,8 @@ const QB: i16 = 1024;
 const L1: usize = 3072;
 const VALUE_BUCKETS: usize = 37;
 const BUCKET_OUTPUTS: usize = 3;
-const BUCKET_HIDDEN: usize = 16;
+const BUCKET_HIDDEN_L1: usize = 16;
+const BUCKET_HIDDEN_L2: usize = 128;
 const TOTAL_THREATS: usize = 2 * ValueOffsets::END;
 
 #[derive(Clone, Copy)]
@@ -298,9 +299,9 @@ const PIECE_THREAT_BUCKETS: [Bucket; VALUE_BUCKETS] = [
 pub struct ValueNetwork {
     pst: [Accumulator<f32, { threats::TOTAL }>; VALUE_BUCKETS * BUCKET_OUTPUTS],
     l0: Layer<i8, { threats::TOTAL }, L1>,
-    l1: TransposedLayer<i16, { L1 / 2 }, { VALUE_BUCKETS * BUCKET_HIDDEN }>,
-    l2: Layer<f32, BUCKET_HIDDEN, { VALUE_BUCKETS * BUCKET_HIDDEN }>,
-    l3: Layer<f32, BUCKET_HIDDEN, { VALUE_BUCKETS * BUCKET_OUTPUTS }>,
+    l1: TransposedLayer<i16, { L1 / 2 }, { VALUE_BUCKETS * BUCKET_HIDDEN_L1 }>,
+    l2: Layer<f32, BUCKET_HIDDEN_L1, { VALUE_BUCKETS * BUCKET_HIDDEN_L2 }>,
+    l3: Layer<f32, BUCKET_HIDDEN_L2, { VALUE_BUCKETS * BUCKET_OUTPUTS }>,
 }
 
 impl ValueNetwork {
@@ -351,13 +352,13 @@ impl ValueNetwork {
         let l1 = self.forward_bucket_l1(bucket, &act);
         let l2 = self.forward_bucket_dense::<
             SCReLU,
-            BUCKET_HIDDEN,
-            BUCKET_HIDDEN,
-            { VALUE_BUCKETS * BUCKET_HIDDEN },
+            BUCKET_HIDDEN_L1,
+            BUCKET_HIDDEN_L2,
+            { VALUE_BUCKETS * BUCKET_HIDDEN_L2 },
         >(&self.l2, bucket, &l1);
         let mut out = self.forward_bucket_dense::<
             SCReLU,
-            BUCKET_HIDDEN,
+            BUCKET_HIDDEN_L2,
             BUCKET_OUTPUTS,
             { VALUE_BUCKETS * BUCKET_OUTPUTS },
         >(&self.l3, bucket, &l2);
@@ -383,13 +384,13 @@ impl ValueNetwork {
         &self,
         bucket: usize,
         input: &[i16; L1 / 2],
-    ) -> Accumulator<f32, BUCKET_HIDDEN> {
-        let mut res = Accumulator([0.0; BUCKET_HIDDEN]);
-        let start = bucket * BUCKET_HIDDEN;
+    ) -> Accumulator<f32, BUCKET_HIDDEN_L1> {
+        let mut res = Accumulator([0.0; BUCKET_HIDDEN_L1]);
+        let start = bucket * BUCKET_HIDDEN_L1;
         for (out, (weights, &bias)) in res.0.iter_mut().zip(
-            self.l1.weights[start..start + BUCKET_HIDDEN]
+            self.l1.weights[start..start + BUCKET_HIDDEN_L1]
                 .iter()
-                .zip(self.l1.biases.0[start..start + BUCKET_HIDDEN].iter()),
+                .zip(self.l1.biases.0[start..start + BUCKET_HIDDEN_L1].iter()),
         ) {
             let mut acc = 0i32;
             for (&inp, &w) in input.iter().zip(weights.0.iter()) {
