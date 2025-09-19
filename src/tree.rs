@@ -59,7 +59,6 @@ impl ButterflyTable {
             return;
         }
 
-        let score = score.clamp(0.05, 0.95);
         let cp = (-400.0 * ((1.0 / score) - 1.0).ln()).round() as i32;
         let cell = self.entry(side, mov);
 
