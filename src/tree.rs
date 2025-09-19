@@ -59,7 +59,7 @@ impl ButterflyTable {
             return;
         }
 
-        let wdl = (score - 0.5) * 2.0;
+        let wdl = (score.clamp(0.02, 0.98) - 0.5) * 2.0;
         let cp = (660.6 * wdl / (1.0 - 0.9751875 * wdl.powi(10))).round() as i32;
         let cell = self.entry(side, mov);
 
