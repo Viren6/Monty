@@ -123,6 +123,7 @@ impl<'a> Searcher<'a> {
                 self.tree.root_node(),
                 &mut this_depth,
                 thread_id,
+                Move::NULL,
             )
             .is_none()
             {

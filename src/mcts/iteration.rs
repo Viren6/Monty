@@ -1,5 +1,5 @@
 use crate::{
-    chess::{ChessState, GameState},
+    chess::{ChessState, GameState, Move},
     tree::{Node, NodePtr},
 };
 
@@ -11,6 +11,7 @@ pub fn perform_one(
     ptr: NodePtr,
     depth: &mut usize,
     thread_id: usize,
+    last_move: Move,
 ) -> Option<f32> {
     *depth += 1;
 
@@ -75,7 +76,7 @@ pub fn perform_one(
         };
 
         // descend further
-        let maybe_u = perform_one(searcher, pos, child_ptr, depth, thread_id);
+        let maybe_u = perform_one(searcher, pos, child_ptr, depth, thread_id, mov);
 
         drop(lock);
 
@@ -85,6 +86,7 @@ pub fn perform_one(
 
         if tree[child_ptr].state() == GameState::Ongoing {
             tree.update_butterfly(stm, mov, u, searcher.params);
+            tree.update_continuation(stm, last_move, mov, u, searcher.params);
         }
 
         tree.propogate_proven_mates(ptr, tree[child_ptr].state());
