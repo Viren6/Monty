@@ -1,6 +1,6 @@
 use crate::{
     chess::{ChessState, GameState},
-    tree::{Node, NodePtr},
+    tree::{butterfly_feature_index, Node, NodePtr},
 };
 
 use super::{SearchHelpers, Searcher};
@@ -58,6 +58,7 @@ pub fn perform_one(
         let child_ptr = node.actions() + action;
 
         let mov = tree[child_ptr].parent_move();
+        let butterfly_idx = butterfly_feature_index(pos, mov);
 
         pos.make_move(mov);
 
@@ -84,7 +85,7 @@ pub fn perform_one(
         let u = maybe_u?;
 
         if tree[child_ptr].state() == GameState::Ongoing {
-            tree.update_butterfly(stm, mov, u, searcher.params);
+            tree.update_butterfly(stm, butterfly_idx, u, searcher.params);
         }
 
         tree.propogate_proven_mates(ptr, tree[child_ptr].state());

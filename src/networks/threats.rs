@@ -3,7 +3,7 @@ use crate::chess::{
     Attacks, Board,
 };
 
-const TOTAL_THREATS: usize = 2 * ValueOffsets::END;
+pub const TOTAL_THREATS: usize = 2 * ValueOffsets::END;
 pub const TOTAL: usize = TOTAL_THREATS + 768;
 
 pub fn map_features<F: FnMut(usize)>(pos: &Board, mut f: F) {
