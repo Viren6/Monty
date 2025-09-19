@@ -297,7 +297,7 @@ const PIECE_THREAT_BUCKETS: [Bucket; VALUE_BUCKETS] = [
 
 #[repr(C, align(64))]
 pub struct ValueNetwork {
-    pst: [Accumulator<f32, { threats::TOTAL }>; VALUE_BUCKETS * BUCKET_OUTPUTS],
+    pst: [Accumulator<f32, { VALUE_BUCKETS * BUCKET_OUTPUTS }>; threats::TOTAL],
     l0: Layer<i8, { threats::TOTAL }, L1>,
     l1: TransposedLayer<i16, { L1 / 2 }, { VALUE_BUCKETS * BUCKET_HIDDEN_L1 }>,
     l2: Layer<f32, BUCKET_HIDDEN_L1, { VALUE_BUCKETS * BUCKET_HIDDEN_L2 }>,
@@ -323,10 +323,11 @@ impl ValueNetwork {
         let bucket = select_bucket(piece_count as u8, threat_count);
 
         let mut pst = Accumulator([0.0; BUCKET_OUTPUTS]);
-        let pst_rows = &self.pst[bucket * BUCKET_OUTPUTS..(bucket + 1) * BUCKET_OUTPUTS];
+        let start = bucket * BUCKET_OUTPUTS;
         for &feat in feats[..count].iter() {
-            for (acc, row) in pst.0.iter_mut().zip(pst_rows.iter()) {
-                *acc += row.0[feat];
+            let weights = &self.pst[feat].0[start..start + BUCKET_OUTPUTS];
+            for (acc, &weight) in pst.0.iter_mut().zip(weights.iter()) {
+                *acc += weight;
             }
         }
 
