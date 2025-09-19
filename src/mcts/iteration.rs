@@ -85,6 +85,7 @@ pub fn perform_one(
 
         if tree[child_ptr].state() == GameState::Ongoing {
             tree.update_butterfly(stm, mov, u, searcher.params);
+            tree.update_countermove(stm, node.parent_move(), mov, u, searcher.params);
         }
 
         tree.propogate_proven_mates(ptr, tree[child_ptr].state());
