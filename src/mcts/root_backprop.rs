@@ -37,17 +37,7 @@ impl Default for ThreadAccumCell {
 unsafe impl Sync for ThreadAccumCell {}
 
 fn compute_flush_threshold(threads: usize) -> u32 {
-    if threads >= 384 {
-        32
-    } else if threads >= 96 {
-        16
-    } else if threads >= 32 {
-        8
-    } else if threads >= 8 {
-        4
-    } else {
-        1
-    }
+	threads.try_into().unwrap()
 }
 
 pub(crate) struct RootBackprop<'a> {
