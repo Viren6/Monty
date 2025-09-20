@@ -3,10 +3,11 @@ use crate::{
     tree::{Node, NodePtr},
 };
 
-use super::{SearchHelpers, Searcher};
+use super::{root_backprop::RootBackprop, SearchHelpers, Searcher};
 
 pub fn perform_one(
     searcher: &Searcher,
+    root_backprop: &RootBackprop,
     pos: &mut ChessState,
     ptr: NodePtr,
     depth: &mut usize,
@@ -75,7 +76,7 @@ pub fn perform_one(
         };
 
         // descend further
-        let maybe_u = perform_one(searcher, pos, child_ptr, depth, thread_id);
+        let maybe_u = perform_one(searcher, root_backprop, pos, child_ptr, depth, thread_id);
 
         drop(lock);
 
@@ -102,7 +103,11 @@ pub fn perform_one(
 
     // flip perspective and backpropagate
     u = 1.0 - u;
-    node.update(u);
+    if ptr == searcher.tree.root_node() {
+        root_backprop.record(thread_id, u);
+    } else {
+        node.update(u);
+    }
     Some(u)
 }
 

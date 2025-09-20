@@ -1,6 +1,7 @@
 mod helpers;
 mod iteration;
 mod params;
+mod root_backprop;
 mod search_stats;
 
 pub use helpers::SearchHelpers;
@@ -21,6 +22,8 @@ use std::{
     thread,
     time::Instant,
 };
+
+use root_backprop::RootBackprop;
 
 #[cfg(feature = "datagen")]
 pub type SearchRet = (Move, f32, usize);
@@ -72,6 +75,7 @@ impl<'a> Searcher<'a> {
         timer: &Instant,
         #[cfg(not(feature = "uci-minimal"))] timer_last_output: &mut Instant,
         search_stats: &SearchStats,
+        root_backprop: &RootBackprop,
         best_move: &mut Move,
         best_move_changes: &mut i32,
         previous_score: &mut f32,
@@ -79,7 +83,7 @@ impl<'a> Searcher<'a> {
         #[cfg(not(feature = "uci-minimal"))] uci_output: bool,
         thread_id: usize,
     ) {
-        if self.playout_until_full_internal(search_stats, true, thread_id, || {
+        if self.playout_until_full_internal(search_stats, true, thread_id, root_backprop, || {
             self.check_limits(
                 limits,
                 timer,
@@ -99,8 +103,16 @@ impl<'a> Searcher<'a> {
         }
     }
 
-    fn playout_until_full_worker(&self, search_stats: &SearchStats, thread_id: usize) {
-        let _ = self.playout_until_full_internal(search_stats, false, thread_id, || false);
+    fn playout_until_full_worker(
+        &self,
+        search_stats: &SearchStats,
+        root_backprop: &RootBackprop,
+        thread_id: usize,
+    ) {
+        let _ =
+            self.playout_until_full_internal(search_stats, false, thread_id, root_backprop, || {
+                false
+            });
     }
 
     fn playout_until_full_internal<F>(
@@ -108,6 +120,7 @@ impl<'a> Searcher<'a> {
         search_stats: &SearchStats,
         main_thread: bool,
         thread_id: usize,
+        root_backprop: &RootBackprop,
         mut stop: F,
     ) -> bool
     where
@@ -119,6 +132,7 @@ impl<'a> Searcher<'a> {
 
             if iteration::perform_one(
                 self,
+                root_backprop,
                 &mut pos,
                 self.tree.root_node(),
                 &mut this_depth,
@@ -126,6 +140,7 @@ impl<'a> Searcher<'a> {
             )
             .is_none()
             {
+                root_backprop.flush(thread_id);
                 return false;
             }
 
@@ -133,15 +148,24 @@ impl<'a> Searcher<'a> {
 
             // proven checkmate
             if self.tree[self.tree.root_node()].is_terminal() {
+                root_backprop.flush(thread_id);
                 return true;
             }
 
             // stop signal sent
             if self.abort.load(Ordering::Relaxed) {
+                root_backprop.flush(thread_id);
                 return true;
             }
 
+            if main_thread {
+                root_backprop.flush(thread_id);
+            }
+
             if stop() {
+                if !main_thread {
+                    root_backprop.flush(thread_id);
+                }
                 return true;
             }
         }
@@ -333,6 +357,7 @@ impl<'a> Searcher<'a> {
 
         let search_stats = SearchStats::new(threads);
         let stats_ref = &search_stats;
+        let root_backprop = RootBackprop::new(self.tree, threads);
 
         let mut best_move = Move::NULL;
         let mut best_move_changes = 0;
@@ -350,6 +375,7 @@ impl<'a> Searcher<'a> {
                         #[cfg(not(feature = "uci-minimal"))]
                         &mut timer_last_output,
                         stats_ref,
+                        &root_backprop,
                         &mut best_move,
                         &mut best_move_changes,
                         &mut previous_score,
@@ -362,14 +388,19 @@ impl<'a> Searcher<'a> {
                 });
 
                 for i in 1..threads {
-                    s.spawn(move || self.playout_until_full_worker(stats_ref, i));
+                    let backprop_ref = &root_backprop;
+                    s.spawn(move || self.playout_until_full_worker(stats_ref, backprop_ref, i));
                 }
             });
+
+            root_backprop.flush_all();
 
             if !self.abort.load(Ordering::Relaxed) {
                 self.tree.flip(true, threads);
             }
         }
+
+        root_backprop.flush_all();
 
         *update_nodes += search_stats.total_nodes();
 

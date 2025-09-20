@@ -7,7 +7,7 @@ use crate::chess::{GameState, Move};
 
 use super::lock::{CustomLock, WriteGuard};
 
-const QUANT: i32 = 16384 * 4;
+pub(crate) const QUANT: i32 = 16384 * 4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NodePtr(u32);
@@ -215,8 +215,24 @@ impl Node {
         self.threads.store(0, Ordering::Relaxed);
     }
 
+    #[inline]
+    pub(crate) fn quantize_value(q: f32) -> u64 {
+        (f64::from(q) * f64::from(QUANT)) as u64
+    }
+
+    #[inline]
+    pub(crate) fn apply_batch_stats(&self, visits: u32, sum_q: u64, sum_sq_q: u64) {
+        if visits == 0 {
+            return;
+        }
+
+        self.visits.fetch_add(visits, Ordering::Relaxed);
+        self.sum_q.fetch_add(sum_q, Ordering::Relaxed);
+        self.sum_sq_q.fetch_add(sum_sq_q, Ordering::Relaxed);
+    }
+
     pub fn update(&self, q: f32) -> f32 {
-        let q = (f64::from(q) * f64::from(QUANT)) as u64;
+        let q = Self::quantize_value(q);
         let old_v = self.visits.fetch_add(1, Ordering::Relaxed);
         let old_q = self.sum_q.fetch_add(q, Ordering::Relaxed);
         self.sum_sq_q.fetch_add(q * q, Ordering::Relaxed);
