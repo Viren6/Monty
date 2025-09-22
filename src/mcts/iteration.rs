@@ -83,11 +83,17 @@ pub fn perform_one(
 
         let u = maybe_u?;
 
-        if tree[child_ptr].state() == GameState::Ongoing {
-            tree.update_butterfly(stm, mov, u, searcher.params);
-        }
+        let child_state = tree[child_ptr].state();
+        let butterfly_score = match child_state {
+            GameState::Ongoing => u,
+            GameState::Draw => 0.5,
+            GameState::Lost(_) => 1.0,
+            GameState::Won(_) => 0.0,
+        };
 
-        tree.propogate_proven_mates(ptr, tree[child_ptr].state());
+        tree.update_butterfly(stm, mov, butterfly_score, searcher.params);
+
+        tree.propogate_proven_mates(ptr, child_state);
 
         u
     };
