@@ -257,7 +257,7 @@ impl Tree {
         pos.map_moves_with_policies(policy, |mov, policy| {
             let is_check = pos.gives_check(mov);
             let adjusted = policy + self.butterfly.policy_bonus(stm, mov, is_check, params);
-            moves[count].write((mov, adjusted));
+            moves[count].write((mov, adjusted, is_check));
             count += 1;
             max = max.max(adjusted);
         });
@@ -267,11 +267,11 @@ impl Tree {
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
 
         let slice = unsafe {
-            std::slice::from_raw_parts_mut(moves.as_mut_ptr() as *mut (Move, f32), count)
+            std::slice::from_raw_parts_mut(moves.as_mut_ptr() as *mut (Move, f32, bool), count)
         };
 
         let mut total = 0.0;
-        for (_, policy) in slice.iter_mut() {
+        for (_, policy, _) in slice.iter_mut() {
             *policy = ((*policy - max) / pst).exp();
             total += *policy;
         }
@@ -280,11 +280,11 @@ impl Tree {
 
         let mut sum_of_squares = 0.0;
 
-        for (action, (mov, policy)) in slice.iter().enumerate() {
+        for (action, (mov, policy, is_check)) in slice.iter().enumerate() {
             let ptr = new_ptr + action;
-            let policy = policy / total;
+            let policy = *policy / total;
 
-            self[ptr].set_new(*mov, policy);
+            self[ptr].set_new(*mov, policy, *is_check);
             sum_of_squares += policy * policy;
         }
 
@@ -316,7 +316,7 @@ impl Tree {
         let stm = pos.stm();
         for action in 0..num_actions {
             let mov = self[actions_ptr + action].parent_move();
-            let is_check = pos.gives_check(mov);
+            let is_check = self[actions_ptr + action].gives_check();
             let policy = pos.get_policy(mov, &hl, policy)
                 + self.butterfly.policy_bonus(stm, mov, is_check, params);
 

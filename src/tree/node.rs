@@ -1,6 +1,6 @@
 use std::{
     ops::Add,
-    sync::atomic::{AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering},
+    sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering},
 };
 
 use crate::chess::{GameState, Move};
@@ -52,6 +52,7 @@ impl Add<usize> for NodePtr {
 pub struct Node {
     actions: CustomLock,
     num_actions: AtomicU8,
+    gives_check: AtomicBool,
     state: AtomicU16,
     threads: AtomicU16,
     mov: AtomicU16,
@@ -67,6 +68,7 @@ impl Node {
         Node {
             actions: CustomLock::new(NodePtr::NULL),
             num_actions: AtomicU8::new(0),
+            gives_check: AtomicBool::new(false),
             state: AtomicU16::new(u16::from(state)),
             threads: AtomicU16::new(0),
             mov: AtomicU16::new(0),
@@ -78,10 +80,11 @@ impl Node {
         }
     }
 
-    pub fn set_new(&self, mov: Move, policy: f32) {
+    pub fn set_new(&self, mov: Move, policy: f32, gives_check: bool) {
         self.clear();
         self.mov.store(u16::from(mov), Ordering::Relaxed);
         self.set_policy(policy);
+        self.set_gives_check(gives_check);
     }
 
     pub fn is_terminal(&self) -> bool {
@@ -163,6 +166,14 @@ impl Node {
             .store((policy * f32::from(u16::MAX)) as u16, Ordering::Relaxed);
     }
 
+    pub fn gives_check(&self) -> bool {
+        self.gives_check.load(Ordering::Relaxed)
+    }
+
+    pub fn set_gives_check(&self, gives_check: bool) {
+        self.gives_check.store(gives_check, Ordering::Relaxed);
+    }
+
     pub fn has_children(&self) -> bool {
         self.num_actions() != 0
     }
@@ -203,6 +214,8 @@ impl Node {
         self.visits.store(other.visits.load(Relaxed), Relaxed);
         self.sum_q.store(other.sum_q.load(Relaxed), Relaxed);
         self.sum_sq_q.store(other.sum_sq_q.load(Relaxed), Relaxed);
+        self.gives_check
+            .store(other.gives_check.load(Relaxed), Relaxed);
     }
 
     pub fn clear(&self) {
@@ -213,6 +226,7 @@ impl Node {
         self.sum_q.store(0, Ordering::Relaxed);
         self.sum_sq_q.store(0, Ordering::Relaxed);
         self.threads.store(0, Ordering::Relaxed);
+        self.gives_check.store(false, Ordering::Relaxed);
     }
 
     pub fn update(&self, q: f32) -> f32 {

@@ -58,7 +58,7 @@ pub fn perform_one(
         let child_ptr = node.actions() + action;
 
         let mov = tree[child_ptr].parent_move();
-        let gives_check = pos.gives_check(mov);
+        let gives_check = tree[child_ptr].gives_check();
 
         pos.make_move(mov);
 
