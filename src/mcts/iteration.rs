@@ -1,6 +1,6 @@
 use crate::{
     chess::{ChessState, GameState},
-    tree::{Node, NodePtr},
+    tree::{Node, NodePtr, POLICY_SEE_THRESHOLD},
 };
 
 use super::{SearchHelpers, Searcher};
@@ -59,6 +59,8 @@ pub fn perform_one(
 
         let mov = tree[child_ptr].parent_move();
 
+        let see_bucket = usize::from(pos.board().see(&mov, POLICY_SEE_THRESHOLD));
+
         pos.make_move(mov);
 
         // capture child hash (value is stored from the side to move at this child)
@@ -84,7 +86,7 @@ pub fn perform_one(
         let u = maybe_u?;
 
         if tree[child_ptr].state() == GameState::Ongoing {
-            tree.update_butterfly(stm, mov, u, searcher.params);
+            tree.update_butterfly(stm, see_bucket, mov, u, searcher.params);
         }
 
         tree.propogate_proven_mates(ptr, tree[child_ptr].state());

@@ -14,13 +14,16 @@ use std::{
 };
 
 use crate::{
-    chess::{ChessState, GameState, Move},
+    chess::{Board, ChessState, GameState, Move},
     mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
 };
 
 const NUM_SIDES: usize = 2;
 const NUM_SQUARES: usize = 64;
+const NUM_SEE_BUCKETS: usize = 2;
+
+pub(crate) const POLICY_SEE_THRESHOLD: i32 = -108;
 
 struct ButterflyTable {
     data: Vec<AtomicI16>,
@@ -28,24 +31,25 @@ struct ButterflyTable {
 
 impl ButterflyTable {
     fn new() -> Self {
-        let capacity = NUM_SIDES * NUM_SQUARES * NUM_SQUARES;
+        let capacity = NUM_SIDES * NUM_SEE_BUCKETS * NUM_SQUARES * NUM_SQUARES;
         let mut data = Vec::with_capacity(capacity);
         data.extend((0..capacity).map(|_| AtomicI16::new(0)));
         Self { data }
     }
 
-    fn index(side: usize, from: u16, to: u16) -> usize {
-        side * NUM_SQUARES * NUM_SQUARES + usize::from(from) * NUM_SQUARES + usize::from(to)
+    fn index(side: usize, bucket: usize, from: u16, to: u16) -> usize {
+        (((side * NUM_SEE_BUCKETS) + bucket) * NUM_SQUARES + usize::from(from)) * NUM_SQUARES
+            + usize::from(to)
     }
 
-    fn entry(&self, side: usize, mov: Move) -> &AtomicI16 {
-        let idx = Self::index(side, mov.src(), mov.to());
+    fn entry(&self, side: usize, bucket: usize, mov: Move) -> &AtomicI16 {
+        let idx = Self::index(side, bucket, mov.src(), mov.to());
         &self.data[idx]
     }
 
-    fn policy_bonus(&self, side: usize, mov: Move, params: &MctsParams) -> f32 {
+    fn policy_bonus(&self, side: usize, bucket: usize, mov: Move, params: &MctsParams) -> f32 {
         let divisor = params.butterfly_policy_divisor().max(1) as f32;
-        f32::from(self.entry(side, mov).load(Ordering::Relaxed)) / divisor
+        f32::from(self.entry(side, bucket, mov).load(Ordering::Relaxed)) / divisor
     }
 
     fn clear(&self) {
@@ -54,14 +58,14 @@ impl ButterflyTable {
         }
     }
 
-    fn update(&self, side: usize, mov: Move, score: f32, params: &MctsParams) {
+    fn update(&self, side: usize, bucket: usize, mov: Move, score: f32, params: &MctsParams) {
         if !score.is_finite() {
             return;
         }
 
         let score = score.clamp(0.001, 0.999);
         let cp = (-400.0 * ((1.0 / score) - 1.0).ln()).round() as i32;
-        let cell = self.entry(side, mov);
+        let cell = self.entry(side, bucket, mov);
 
         let mut current = cell.load(Ordering::Relaxed);
         loop {
@@ -81,6 +85,10 @@ fn scale_bonus(score: i16, bonus: i32, reduction_factor: i32) -> i16 {
     let reduction = i32::from(score) * bonus.abs() / reduction_factor;
     let adjusted = bonus - reduction;
     adjusted.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+}
+
+fn see_bucket(board: &Board, mov: Move) -> usize {
+    usize::from(board.see(&mov, POLICY_SEE_THRESHOLD))
 }
 
 pub struct Tree {
@@ -250,9 +258,11 @@ impl Tree {
         let mut moves = [const { MaybeUninit::uninit() }; 256];
         let mut count = 0;
         let stm = pos.stm();
+        let board = pos.board();
 
         pos.map_moves_with_policies(policy, |mov, policy| {
-            let adjusted = policy + self.butterfly.policy_bonus(stm, mov, params);
+            let bucket = see_bucket(&board, mov);
+            let adjusted = policy + self.butterfly.policy_bonus(stm, bucket, mov, params);
             moves[count].write((mov, adjusted));
             count += 1;
             max = max.max(adjusted);
@@ -310,10 +320,12 @@ impl Tree {
         let mut policies = Vec::new();
 
         let stm = pos.stm();
+        let board = pos.board();
         for action in 0..num_actions {
             let mov = self[actions_ptr + action].parent_move();
-            let policy =
-                pos.get_policy(mov, &hl, policy) + self.butterfly.policy_bonus(stm, mov, params);
+            let bucket = see_bucket(&board, mov);
+            let policy = pos.get_policy(mov, &hl, policy)
+                + self.butterfly.policy_bonus(stm, bucket, mov, params);
 
             policies.push(policy);
             max = max.max(policy);
@@ -340,8 +352,15 @@ impl Tree {
         self[node_ptr].set_gini_impurity(gini_impurity);
     }
 
-    pub fn update_butterfly(&self, side: usize, mov: Move, score: f32, params: &MctsParams) {
-        self.butterfly.update(side, mov, score, params);
+    pub fn update_butterfly(
+        &self,
+        side: usize,
+        bucket: usize,
+        mov: Move,
+        score: f32,
+        params: &MctsParams,
+    ) {
+        self.butterfly.update(side, bucket, mov, score, params);
     }
 
     pub fn clear_butterfly_table(&self) {
