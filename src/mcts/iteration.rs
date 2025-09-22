@@ -125,6 +125,28 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
     let expl = cpuct * expl_scale;
 
     let actions_ptr = node.actions();
+
+    // Short-circuit selection when we already know the exact game-theoretic
+    // result of a child. Immediate wins should always be played, while
+    // proven losses for the side to move should be avoided unless they are
+    // forced.
+    let mut fallback_draw = None;
+    let mut fallback_loss = None;
+
+    for action in 0..node.num_actions() {
+        let child_ptr = actions_ptr + action;
+        match searcher.tree[child_ptr].state() {
+            GameState::Lost(_) => return action,
+            GameState::Draw => {
+                fallback_draw.get_or_insert(action);
+            }
+            GameState::Won(_) => {
+                fallback_loss.get_or_insert(action);
+            }
+            GameState::Ongoing => {}
+        }
+    }
+
     let mut acc = 0.0;
     let mut k = 0;
     while k < node.num_actions() && acc < searcher.params.policy_top_p() {
@@ -139,9 +161,13 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
     }
     limit = limit.min(node.num_actions());
 
-    searcher
+    let best_child = searcher
         .tree
         .get_best_child_by_key_lim(ptr, limit, |child| {
+            if matches!(child.state(), GameState::Won(_)) {
+                return -1.0e9_f32;
+            }
+
             let mut q = SearchHelpers::get_action_value(child, fpu);
 
             // virtual loss
@@ -156,5 +182,19 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
             let u = expl * child.policy() / (1 + child.visits()) as f32;
 
             q + u
-        })
+        });
+
+    if best_child != usize::MAX {
+        return best_child;
+    }
+
+    if let Some(action) = fallback_draw {
+        return action;
+    }
+
+    if let Some(action) = fallback_loss {
+        return action;
+    }
+
+    0
 }
