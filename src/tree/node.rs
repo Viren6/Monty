@@ -10,33 +10,68 @@ use super::lock::{CustomLock, WriteGuard};
 const QUANT: i32 = 16384 * 4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct NodePtr(u32);
+pub struct NodePtr([u8; 6]);
 
 impl NodePtr {
-    pub const NULL: Self = Self(u32::MAX);
+    const HALF_MASK: u64 = 1_u64 << 47;
+    const INDEX_MASK: u64 = Self::HALF_MASK - 1;
+    const STORED_MASK: u64 = (1_u64 << 48) - 1;
+
+    const fn pack(bits: u64) -> [u8; 6] {
+        [
+            (bits & 0xFF) as u8,
+            ((bits >> 8) & 0xFF) as u8,
+            ((bits >> 16) & 0xFF) as u8,
+            ((bits >> 24) & 0xFF) as u8,
+            ((bits >> 32) & 0xFF) as u8,
+            ((bits >> 40) & 0xFF) as u8,
+        ]
+    }
+
+    fn bits(self) -> u64 {
+        (self.0[0] as u64)
+            | ((self.0[1] as u64) << 8)
+            | ((self.0[2] as u64) << 16)
+            | ((self.0[3] as u64) << 24)
+            | ((self.0[4] as u64) << 32)
+            | ((self.0[5] as u64) << 40)
+    }
+
+    pub const NULL: Self = Self(Self::pack(Self::STORED_MASK));
 
     pub fn is_null(self) -> bool {
         self == Self::NULL
     }
 
-    pub fn new(half: bool, idx: u32) -> Self {
-        Self((u32::from(half) << 31) | idx)
+    pub fn new(half: bool, idx: usize) -> Self {
+        let idx = idx as u64;
+        assert!(
+            idx <= Self::INDEX_MASK,
+            "node index exceeds representable range"
+        );
+        let bits = (if half { Self::HALF_MASK } else { 0 }) | idx;
+        Self(Self::pack(bits))
     }
 
     pub fn half(self) -> bool {
-        self.0 & (1 << 31) > 0
+        self.bits() & Self::HALF_MASK > 0
     }
 
     pub fn idx(self) -> usize {
-        (self.0 & 0x7FFFFFFF) as usize
+        debug_assert!(!self.is_null());
+        (self.bits() & Self::INDEX_MASK) as usize
     }
 
-    pub fn inner(self) -> u32 {
-        self.0
+    pub fn inner(self) -> u64 {
+        self.bits()
     }
 
-    pub fn from_raw(inner: u32) -> Self {
-        Self(inner)
+    pub fn from_raw(inner: u64) -> Self {
+        assert!(
+            inner & !Self::STORED_MASK == 0,
+            "node pointer contains bits outside the supported range",
+        );
+        Self(Self::pack(inner))
     }
 }
 
@@ -44,36 +79,41 @@ impl Add<usize> for NodePtr {
     type Output = NodePtr;
 
     fn add(self, rhs: usize) -> Self::Output {
-        Self(self.0 + rhs as u32)
+        let new_idx = (self.idx() as u64) + rhs as u64;
+        assert!(
+            new_idx <= Self::INDEX_MASK,
+            "node index exceeds representable range"
+        );
+        Self::new(self.half(), new_idx as usize)
     }
 }
 
 #[derive(Debug)]
 pub struct Node {
+    sum_q: AtomicU64,
+    sum_sq_q: AtomicU64,
     actions: CustomLock,
-    num_actions: AtomicU8,
-    state: AtomicU16,
+    visits: AtomicU32,
     threads: AtomicU16,
     mov: AtomicU16,
     policy: AtomicU16,
-    visits: AtomicU32,
-    sum_q: AtomicU64,
-    sum_sq_q: AtomicU64,
+    state: AtomicU16,
+    num_actions: AtomicU8,
     gini_impurity: AtomicU8,
 }
 
 impl Node {
     pub fn new(state: GameState) -> Self {
         Node {
+            sum_q: AtomicU64::new(0),
+            sum_sq_q: AtomicU64::new(0),
             actions: CustomLock::new(NodePtr::NULL),
-            num_actions: AtomicU8::new(0),
-            state: AtomicU16::new(u16::from(state)),
+            visits: AtomicU32::new(0),
             threads: AtomicU16::new(0),
             mov: AtomicU16::new(0),
             policy: AtomicU16::new(0),
-            visits: AtomicU32::new(0),
-            sum_q: AtomicU64::new(0),
-            sum_sq_q: AtomicU64::new(0),
+            state: AtomicU16::new(u16::from(state)),
+            num_actions: AtomicU8::new(0),
             gini_impurity: AtomicU8::new(0),
         }
     }

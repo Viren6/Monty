@@ -102,13 +102,11 @@ impl Index<NodePtr> for Tree {
 impl Tree {
     pub fn new_mb(mb: usize, threads: usize) -> Self {
         let bytes = mb * 1024 * 1024;
+        let node_bytes = std::mem::size_of::<Node>();
+        let approx_node_bytes = node_bytes + 2;
+        let tree_cap = bytes / approx_node_bytes;
 
-        const _: () = assert!(
-            std::mem::size_of::<Node>() == 40,
-            "You must reconsider this allocation!"
-        );
-
-        Self::new(bytes / 42, bytes / 42 / 16, threads)
+        Self::new(tree_cap, tree_cap / 16, threads)
     }
 
     fn new(tree_cap: usize, hash_cap: usize, threads: usize) -> Self {
