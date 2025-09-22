@@ -263,7 +263,7 @@ impl Tree {
         pos.map_moves_with_policies(policy, |mov, policy| {
             let bucket = see_bucket(&board, mov);
             let adjusted = policy + self.butterfly.policy_bonus(stm, bucket, mov, params);
-            moves[count].write((mov, adjusted));
+            moves[count].write((mov, adjusted, bucket as u8));
             count += 1;
             max = max.max(adjusted);
         });
@@ -273,11 +273,11 @@ impl Tree {
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
 
         let slice = unsafe {
-            std::slice::from_raw_parts_mut(moves.as_mut_ptr() as *mut (Move, f32), count)
+            std::slice::from_raw_parts_mut(moves.as_mut_ptr() as *mut (Move, f32, u8), count)
         };
 
         let mut total = 0.0;
-        for (_, policy) in slice.iter_mut() {
+        for (_, policy, _) in slice.iter_mut() {
             *policy = ((*policy - max) / pst).exp();
             total += *policy;
         }
@@ -286,11 +286,12 @@ impl Tree {
 
         let mut sum_of_squares = 0.0;
 
-        for (action, (mov, policy)) in slice.iter().enumerate() {
+        for (action, (mov, policy, bucket)) in slice.iter().enumerate() {
             let ptr = new_ptr + action;
             let policy = policy / total;
 
             self[ptr].set_new(*mov, policy);
+            self[ptr].set_see_bucket(usize::from(*bucket));
             sum_of_squares += policy * policy;
         }
 
@@ -322,8 +323,9 @@ impl Tree {
         let stm = pos.stm();
         let board = pos.board();
         for action in 0..num_actions {
-            let mov = self[actions_ptr + action].parent_move();
-            let bucket = see_bucket(&board, mov);
+            let child = &self[actions_ptr + action];
+            let mov = child.parent_move();
+            let bucket = child.ensure_see_bucket(&board, POLICY_SEE_THRESHOLD);
             let policy = pos.get_policy(mov, &hl, policy)
                 + self.butterfly.policy_bonus(stm, bucket, mov, params);
 

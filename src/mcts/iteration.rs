@@ -57,9 +57,13 @@ pub fn perform_one(
 
         let child_ptr = node.actions() + action;
 
-        let mov = tree[child_ptr].parent_move();
+        let child_node = &tree[child_ptr];
+        let mov = child_node.parent_move();
 
-        let see_bucket = usize::from(pos.board().see(&mov, POLICY_SEE_THRESHOLD));
+        let see_bucket = child_node.cached_see_bucket().unwrap_or_else(|| {
+            let board = pos.board();
+            child_node.ensure_see_bucket(&board, POLICY_SEE_THRESHOLD)
+        });
 
         pos.make_move(mov);
 

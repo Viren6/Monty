@@ -3,11 +3,12 @@ use std::{
     sync::atomic::{AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering},
 };
 
-use crate::chess::{GameState, Move};
+use crate::chess::{Board, GameState, Move};
 
 use super::lock::{CustomLock, WriteGuard};
 
 const QUANT: i32 = 16384 * 4;
+const SEE_BUCKET_UNKNOWN: u8 = u8::MAX;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NodePtr(u32);
@@ -59,6 +60,7 @@ pub struct Node {
     visits: AtomicU32,
     sum_q: AtomicU64,
     sum_sq_q: AtomicU64,
+    see_bucket: AtomicU8,
     gini_impurity: AtomicU8,
 }
 
@@ -74,6 +76,7 @@ impl Node {
             visits: AtomicU32::new(0),
             sum_q: AtomicU64::new(0),
             sum_sq_q: AtomicU64::new(0),
+            see_bucket: AtomicU8::new(SEE_BUCKET_UNKNOWN),
             gini_impurity: AtomicU8::new(0),
         }
     }
@@ -198,6 +201,8 @@ impl Node {
         self.mov.store(other.mov.load(Relaxed), Relaxed);
         self.policy.store(other.policy.load(Relaxed), Relaxed);
         self.state.store(other.state.load(Relaxed), Relaxed);
+        self.see_bucket
+            .store(other.see_bucket.load(Relaxed), Relaxed);
         self.gini_impurity
             .store(other.gini_impurity.load(Relaxed), Relaxed);
         self.visits.store(other.visits.load(Relaxed), Relaxed);
@@ -213,6 +218,32 @@ impl Node {
         self.sum_q.store(0, Ordering::Relaxed);
         self.sum_sq_q.store(0, Ordering::Relaxed);
         self.threads.store(0, Ordering::Relaxed);
+        self.see_bucket.store(SEE_BUCKET_UNKNOWN, Ordering::Relaxed);
+    }
+
+    pub fn cached_see_bucket(&self) -> Option<usize> {
+        let bucket = self.see_bucket.load(Ordering::Relaxed);
+        if bucket < SEE_BUCKET_UNKNOWN {
+            Some(bucket as usize)
+        } else {
+            None
+        }
+    }
+
+    pub fn set_see_bucket(&self, bucket: usize) {
+        debug_assert!(bucket <= 1);
+        self.see_bucket.store(bucket as u8, Ordering::Relaxed);
+    }
+
+    pub fn ensure_see_bucket(&self, board: &Board, threshold: i32) -> usize {
+        if let Some(bucket) = self.cached_see_bucket() {
+            bucket
+        } else {
+            let mov = self.parent_move();
+            let bucket = usize::from(board.see(&mov, threshold));
+            self.set_see_bucket(bucket);
+            bucket
+        }
     }
 
     pub fn update(&self, q: f32) -> f32 {
