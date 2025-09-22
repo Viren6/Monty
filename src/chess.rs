@@ -126,6 +126,12 @@ impl ChessState {
         self.board.stm()
     }
 
+    pub fn gives_check(&self, mov: Move) -> bool {
+        let mut board = self.board;
+        board.make(mov, &self.castling);
+        board.in_check()
+    }
+
     pub fn map_moves_with_policies<F: FnMut(Move, f32)>(&self, policy: &PolicyNetwork, mut f: F) {
         let hl = policy.hl(&self.board);
 
