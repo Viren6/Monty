@@ -564,31 +564,41 @@ impl Tree {
         };
 
         if !root.is_null() && self[root].has_children() {
-            found = true;
-
-            if DEBUG.load(Ordering::Relaxed) { 
+            if DEBUG.load(Ordering::Relaxed) {
                 println!("Previous root: ({}, {}) {} visits -> {}", root.half(), root.idx(), self[root].visits(), self[root].parent_move());
                 let first_child_ptr = self[root].actions();
-                for action in 0..self[root].num_actions() { 
+                for action in 0..self[root].num_actions() {
                     println!("  Node: ({}, {}) {} visits -> {}", (first_child_ptr + action).half(), (first_child_ptr + action).idx(), self[first_child_ptr + action].visits(), self[first_child_ptr + action].parent_move())
                 }
             }
 
             if root != self.root_node() {
                 self[self.root_node()].clear();
-                let _ = self.copy_node_across(root, self.root_node(), false);
+                if self.copy_node_across(root, self.root_node(), false).is_none() {
+                    println!("info string no subtree found");
+                    self.clear_halves();
+                    return;
+                }
             }
-            
+
+            let new_root = self.root_node();
+            if self[new_root].has_children() && self.fetch_children(new_root, 0).is_none() {
+                println!("info string no subtree found");
+                self.clear_halves();
+                return;
+            }
+
+            found = true;
             println!("info string found subtree");
 
-            if DEBUG.load(Ordering::Relaxed) { 
+            if DEBUG.load(Ordering::Relaxed) {
                 print_board(self.root_position());
                 println!("Root: ({}, {}) {} visits -> {}", self.root_node().half(), self.root_node().idx(), self[self.root_node()].visits(), self[self.root_node()].parent_move());
                 let first_child_ptr = self[self.root_node()].actions();
-                for action in 0..self[self.root_node()].num_actions() { 
+                for action in 0..self[self.root_node()].num_actions() {
                     println!("  Node: ({}, {}) {} visits -> {}", (first_child_ptr + action).half(), (first_child_ptr + action).idx(), self[first_child_ptr + action].visits(), self[first_child_ptr + action].parent_move())
                 }
-            } 
+            }
         }
 
         if !found {
