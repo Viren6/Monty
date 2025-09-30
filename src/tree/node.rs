@@ -73,6 +73,14 @@ impl NodeStatsDelta {
         }
     }
 
+    pub fn from_raw(visits: u64, sum_q: u64, sum_sq_q: u64) -> Self {
+        Self {
+            visits,
+            sum_q,
+            sum_sq_q,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.visits == 0 && self.sum_q == 0 && self.sum_sq_q == 0
     }

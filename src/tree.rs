@@ -9,10 +9,9 @@ use node::NodeStatsDelta;
 pub use node::{Node, NodePtr};
 
 use std::{
-    cell::UnsafeCell,
     mem::MaybeUninit,
     ops::Index,
-    sync::atomic::{AtomicBool, AtomicI16, Ordering},
+    sync::atomic::{AtomicBool, AtomicI16, AtomicU64, Ordering},
 };
 
 use crate::{
@@ -28,40 +27,104 @@ const ROOT_ACCUM_EAGER_LIMIT: u64 = 256;
 
 #[repr(align(64))]
 struct RootAccumulatorEntry {
-    pending: UnsafeCell<NodeStatsDelta>,
+    pending: NodeStatsDeltaAtomic,
 }
-
-unsafe impl Sync for RootAccumulatorEntry {}
 
 impl RootAccumulatorEntry {
     fn new() -> Self {
         Self {
-            pending: UnsafeCell::new(NodeStatsDelta::default()),
+            pending: NodeStatsDeltaAtomic::new(),
         }
     }
 
-    unsafe fn add(&self, delta: NodeStatsDelta) -> Option<NodeStatsDelta> {
-        let pending = &mut *self.pending.get();
-        *pending += delta;
+    fn add(&self, delta: NodeStatsDelta) -> Option<NodeStatsDelta> {
+        self.pending.add(delta)
+    }
 
-        if pending.visits >= ROOT_ACCUM_THRESHOLD {
-            let flush = *pending;
-            *pending = NodeStatsDelta::default();
-            Some(flush)
+    fn take(&self) -> NodeStatsDelta {
+        self.pending.take()
+    }
+
+    fn reset(&self) {
+        self.pending.reset();
+    }
+}
+
+#[derive(Default)]
+struct NodeStatsDeltaAtomic {
+    visits: AtomicU64,
+    sum_q: AtomicU64,
+    sum_sq_q: AtomicU64,
+}
+
+impl NodeStatsDeltaAtomic {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn add(&self, delta: NodeStatsDelta) -> Option<NodeStatsDelta> {
+        if delta.is_empty() {
+            return None;
+        }
+
+        let new_visits = self.add_visits(delta.visits);
+        self.add_sum_q(delta.sum_q);
+        self.add_sum_sq_q(delta.sum_sq_q);
+
+        if new_visits >= ROOT_ACCUM_THRESHOLD {
+            let flush = self.take();
+
+            if flush.is_empty() {
+                None
+            } else {
+                Some(flush)
+            }
         } else {
             None
         }
     }
 
-    unsafe fn take(&self) -> NodeStatsDelta {
-        let pending = &mut *self.pending.get();
-        let flush = *pending;
-        *pending = NodeStatsDelta::default();
-        flush
+    fn take(&self) -> NodeStatsDelta {
+        NodeStatsDelta::from_raw(
+            self.visits.swap(0, Ordering::Relaxed),
+            self.sum_q.swap(0, Ordering::Relaxed),
+            self.sum_sq_q.swap(0, Ordering::Relaxed),
+        )
     }
 
-    unsafe fn reset(&self) {
-        *self.pending.get() = NodeStatsDelta::default();
+    fn reset(&self) {
+        self.visits.store(0, Ordering::Relaxed);
+        self.sum_q.store(0, Ordering::Relaxed);
+        self.sum_sq_q.store(0, Ordering::Relaxed);
+    }
+
+    fn add_visits(&self, delta: u64) -> u64 {
+        self.fetch_add_saturating(&self.visits, delta)
+    }
+
+    fn add_sum_q(&self, delta: u64) -> u64 {
+        self.fetch_add_saturating(&self.sum_q, delta)
+    }
+
+    fn add_sum_sq_q(&self, delta: u64) -> u64 {
+        self.fetch_add_saturating(&self.sum_sq_q, delta)
+    }
+
+    fn fetch_add_saturating(&self, cell: &AtomicU64, delta: u64) -> u64 {
+        if delta == 0 {
+            return cell.load(Ordering::Relaxed);
+        }
+
+        let mut current = cell.load(Ordering::Relaxed);
+
+        loop {
+            let new = current.saturating_add(delta);
+
+            match cell.compare_exchange(current, new, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => return new,
+                Err(actual) => current = actual,
+            }
+        }
     }
 }
 
@@ -92,10 +155,8 @@ impl RootAccumulator {
             return;
         }
 
-        unsafe {
-            if let Some(flush) = self.entries[thread_id].add(delta) {
-                root.apply_delta(flush);
-            }
+        if let Some(flush) = self.entries[thread_id].add(delta) {
+            root.apply_delta(flush);
         }
     }
 
@@ -104,12 +165,10 @@ impl RootAccumulator {
             return;
         }
 
-        unsafe {
-            let pending = self.entries[thread_id].take();
+        let pending = self.entries[thread_id].take();
 
-            if !pending.is_empty() {
-                root.apply_delta(pending);
-            }
+        if !pending.is_empty() {
+            root.apply_delta(pending);
         }
     }
 
@@ -121,9 +180,7 @@ impl RootAccumulator {
 
     fn reset(&self) {
         for entry in &self.entries {
-            unsafe {
-                entry.reset();
-            }
+            entry.reset();
         }
     }
 }
