@@ -135,8 +135,8 @@ make_mcts_params! {
     winning_pst_threshold: f32 = 0.603, 0.0, 1.0, 0.05, 0.002;
     winning_pst_max: f32 = 1.615, 0.1, 10.0, 0.1, 0.002;
     base_pst_adjustment: f32 = 0.1, 0.01, 1.0, 0.01, 0.002;
-    root_cpuct: f32 = 0.422, 0.1, 5.0, 0.065, 0.002;
-    cpuct: f32 = 0.269, 0.1, 5.0, 0.065, 0.002;
+    root_cpuct: f32 = if cfg!(feature = "datagen") { 1.0 } else { 0.422 }, 0.1, 5.0, 0.065, 0.002;
+    cpuct:      f32 = if cfg!(feature = "datagen") { 0.157 } else { 0.269 }, 0.1, 5.0, 0.065, 0.002;
     cpuct_var_weight: f32 = 0.808, 0.0, 2.0, 0.085, 0.002;
     cpuct_var_scale: f32 = 0.278, 0.0, 2.0, 0.02, 0.002;
     cpuct_var_warmup: f32 = 0.5, 0.0, 1.0, 0.01, 0.002;
@@ -180,5 +180,10 @@ make_mcts_params! {
     tm_bmv4: f32 = 2.561, 0.1, 8.0, 0.4, 0.002;
     tm_bmv5: f32 = 0.634, 0.1, 1.0, 0.055, 0.002;
     tm_bmv6: f32 = 1.894, 0.1, 3.0, 0.15, 0.002;
+    butterfly_reduction_factor: i32 = 8192, 1, 65536, 819, 0.002;
+    butterfly_policy_divisor: i32 = 16384, 1, 131072, 1638, 0.002;
+    policy_top_p: f32 = 0.7, 0.1, 1.0, 0.05, 0.002;
+    min_policy_actions: i32 = 6, 1, 32, 1, 0.002;
+    visit_threshold_power: i32 = 3, 0, 8, 1, 0.002;
     virtual_loss_weight: f64 = 2.5, 1.0, 5.0, 0.25, 0.002;
 }

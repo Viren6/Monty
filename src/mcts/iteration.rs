@@ -15,7 +15,8 @@ pub fn perform_one(
 ) -> Option<f32> {
     *depth += 1;
 
-    let hash = pos.hash();
+    let cur_hash = pos.hash();
+    let mut child_hash: Option<u64> = None;
     let tree = searcher.tree;
     let node = &tree[ptr];
 
@@ -35,7 +36,7 @@ pub fn perform_one(
 
         // probe hash table to use in place of network
         if node.state() == GameState::Ongoing {
-            if let Some(entry) = tree.probe_hash(hash) {
+            if let Some(entry) = tree.probe_hash(cur_hash) {
                 entry.q()
             } else {
                 get_utility(searcher, ptr, pos)
@@ -69,6 +70,7 @@ pub fn perform_one(
         }
         
         // select action to take via PUCT
+        let stm = pos.stm();
         let action = pick_action(searcher, ptr, node);
 
         let child_ptr = node.actions() + action;
@@ -80,6 +82,8 @@ pub fn perform_one(
         if DEBUG.load(Ordering::Relaxed) { 
             println!("New action ({}, {}) -> {}", child_ptr.half(), child_ptr.idx(), mov);
         }
+        // capture child hash (value is stored from the side to move at this child)
+        child_hash = Some(pos.hash());
 
         tree[child_ptr].inc_threads();
 
@@ -100,19 +104,26 @@ pub fn perform_one(
 
         let u = maybe_u?;
 
+        if tree[child_ptr].state() == GameState::Ongoing {
+            tree.update_butterfly(stm, mov, u, searcher.params);
+        }
+
         tree.propogate_proven_mates(ptr, tree[child_ptr].state());
 
         u
     };
 
-    // node scores are stored from the perspective
-    // **of the parent**, as they are usually only
-    // accessed from the parent's POV
+    // store value for the side to move at the visited node in TT
+    if let Some(h) = child_hash {
+        // `u` here is from the current node's perspective, so flip for the child
+        tree.push_hash(h, 1.0 - u);
+    } else {
+        tree.push_hash(cur_hash, u);
+    }
+
+    // flip perspective and backpropagate
     u = 1.0 - u;
-
-    let new_q = node.update(u);
-    tree.push_hash(hash, 1.0 - new_q);
-
+    tree.update_node_stats(ptr, u, thread_id);
     Some(u)
 }
 
@@ -134,22 +145,39 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
 
     let expl = cpuct * expl_scale;
 
-    searcher.tree.get_best_child_by_key(ptr, |child| {
-        let mut q = SearchHelpers::get_action_value(child, fpu);
+    let actions_ptr = node.actions();
+    let mut acc = 0.0;
+    let mut k = 0;
+    while k < node.num_actions() && acc < searcher.params.policy_top_p() {
+        acc += searcher.tree[actions_ptr + k].policy();
+        k += 1;
+    }
+    let mut limit = k.max(searcher.params.min_policy_actions() as usize);
+    let mut thresh = 1u64 << (searcher.params.visit_threshold_power() as u32);
+    while node.visits() >= thresh && limit < node.num_actions() {
+        limit += 2;
+        thresh = thresh.checked_shl(1).unwrap_or(u64::MAX);
+    }
+    limit = limit.min(node.num_actions());
 
-        // virtual loss
-        let threads = f64::from(child.threads());
-        if threads > 0.0 {
-            let visits = f64::from(child.visits());
-            let q2 = f64::from(q) * visits
-                / (visits + 1.0 + searcher.params.virtual_loss_weight() * (threads - 1.0));
-            q = q2 as f32;
-        }
+    searcher
+        .tree
+        .get_best_child_by_key_lim(ptr, limit, |child| {
+            let mut q = SearchHelpers::get_action_value(child, fpu);
 
-        let u = expl * child.policy() / (1 + child.visits()) as f32;
+            // virtual loss
+            let threads = f64::from(child.threads());
+            if threads > 0.0 {
+                let visits = child.visits() as f64;
+                let q2 = f64::from(q) * visits
+                    / (visits + 1.0 + searcher.params.virtual_loss_weight() * (threads - 1.0));
+                q = q2 as f32;
+            }
 
-        q + u
-    })
+            let u = expl * child.policy() / (1 + child.visits()) as f32;
+
+            q + u
+        })
 }
 
 pub fn print_board(pos: &ChessState) {
