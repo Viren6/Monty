@@ -389,6 +389,28 @@ impl Tree {
         }
     }
 
+    fn clear_child_pointer_if_matches(&self, parent_ptr: NodePtr, expected_ptr: NodePtr) {
+        let mut actions = self[parent_ptr].actions_mut();
+
+        if actions.val() == expected_ptr {
+            actions.store(NodePtr::NULL);
+            self[parent_ptr].set_num_actions(0);
+        }
+    }
+
+    fn invalidate_stale_children(&self, node_ptr: NodePtr, current_generation: u32) {
+        let first_child_ptr = self[node_ptr].actions();
+
+        if first_child_ptr.is_null() {
+            return;
+        }
+
+        let child_generation = self[first_child_ptr].generation();
+        if current_generation.saturating_sub(child_generation) > 1 {
+            self.clear_child_pointer_if_matches(node_ptr, first_child_ptr);
+        }
+    }
+
     pub fn flip(&self, copy_across: bool) {
         let old_root_ptr = self.root_node();
 
@@ -421,11 +443,13 @@ impl Tree {
         let current_half = self.half.load(Ordering::Relaxed);
         let current_generation = self.current_generation();
 
-        let needs_copy = if first_child_ptr.half() != current_half {
-            true
-        } else {
-            self[first_child_ptr].generation() != current_generation
-        };
+        let needs_copy = first_child_ptr.half() != current_half;
+
+        if !needs_copy && self[first_child_ptr].generation() != current_generation {
+            self.clear_child_pointer_if_matches(parent_ptr, first_child_ptr);
+            self[parent_ptr].set_generation(current_generation);
+            return Some(());
+        }
 
         if needs_copy {
             let most_recent_ptr = self[parent_ptr].actions_mut();
@@ -450,6 +474,10 @@ impl Tree {
             self.copy_across(first_child_ptr, num_children, new_ptr);
 
             most_recent_ptr.store(new_ptr);
+
+            for offset in 0..num_children {
+                self.invalidate_stale_children(new_ptr + offset, current_generation);
+            }
         }
 
         self[parent_ptr].set_generation(current_generation);
