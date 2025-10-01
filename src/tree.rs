@@ -12,7 +12,7 @@ use std::{
     array,
     mem::MaybeUninit,
     ops::Index,
-    sync::atomic::{AtomicBool, AtomicI16, AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicI16, AtomicU32, AtomicU64, Ordering},
 };
 
 use crate::{
@@ -287,6 +287,7 @@ pub struct Tree {
     root: ChessState,
     tree: [TreeHalf; 2],
     half: AtomicBool,
+    generation: AtomicU32,
     hash: HashTable,
     butterfly: ButterflyTable,
     root_accumulator: RootAccumulator,
@@ -322,6 +323,7 @@ impl Tree {
                 TreeHalf::new(tree_cap / 2, true, threads),
             ],
             half: AtomicBool::new(false),
+            generation: AtomicU32::new(0),
             hash: HashTable::new(hash_cap / 4, threads),
             butterfly: ButterflyTable::new(),
             root_accumulator: RootAccumulator::new(threads),
@@ -338,6 +340,16 @@ impl Tree {
 
     pub fn half(&self) -> usize {
         usize::from(self.half.load(Ordering::Relaxed))
+    }
+
+    fn current_generation(&self) -> u32 {
+        self.generation.load(Ordering::Relaxed)
+    }
+
+    fn advance_generation(&self) -> u32 {
+        self.generation
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1)
     }
 
     pub fn is_full(&self) -> bool {
@@ -358,7 +370,11 @@ impl Tree {
         let from_actions_ptr = from_actions.val();
 
         self[to].copy_from(&self[from]);
-        if clear_ptr && from_actions_ptr.half() == self.half.load(Ordering::Relaxed) {
+        self[to].set_generation(self.current_generation());
+        if clear_ptr
+            && !from_actions_ptr.is_null()
+            && from_actions_ptr.half() == self.half.load(Ordering::Relaxed)
+        {
             self[to].set_num_actions(0);
             to_actions.store(NodePtr::NULL);
         } else {
@@ -379,6 +395,7 @@ impl Tree {
         self.root_accumulator
             .flush_all(|ptr, delta| self[ptr].apply_delta(delta));
 
+        let new_generation = self.advance_generation();
         let old = usize::from(self.half.fetch_xor(true, Ordering::Relaxed));
         self.tree[old ^ 1].clear();
 
@@ -389,6 +406,7 @@ impl Tree {
             self.copy_node_across(old_root_ptr, new_root_ptr, true);
         }
 
+        self[self.root_node()].set_generation(new_generation);
         self.reset_root_accumulator();
     }
 
@@ -396,22 +414,45 @@ impl Tree {
     pub fn fetch_children(&self, parent_ptr: NodePtr, thread_id: usize) -> Option<()> {
         let first_child_ptr = { self[parent_ptr].actions() };
 
-        if first_child_ptr.half() != self.half.load(Ordering::Relaxed) {
-            let most_recent_ptr = self[parent_ptr].actions_mut();
+        if first_child_ptr.is_null() {
+            return Some(());
+        }
 
-            if most_recent_ptr.val().half() == self.half.load(Ordering::Relaxed) {
+        let current_half = self.half.load(Ordering::Relaxed);
+        let current_generation = self.current_generation();
+
+        let needs_copy = if first_child_ptr.half() != current_half {
+            true
+        } else {
+            self[first_child_ptr].generation() != current_generation
+        };
+
+        if needs_copy {
+            let most_recent_ptr = self[parent_ptr].actions_mut();
+            let current_ptr = most_recent_ptr.val();
+
+            if current_ptr.is_null() {
                 return Some(());
             }
 
-            assert_eq!(first_child_ptr, most_recent_ptr.val());
+            if current_ptr.half() == current_half
+                && self[current_ptr].generation() == current_generation
+            {
+                return Some(());
+            }
+
+            assert_eq!(first_child_ptr, current_ptr);
 
             let num_children = self[parent_ptr].num_actions();
-            let new_ptr = self.tree[self.half()].reserve_nodes_thread(num_children, thread_id)?;
+            let new_ptr = self.tree[usize::from(current_half)]
+                .reserve_nodes_thread(num_children, thread_id)?;
 
             self.copy_across(first_child_ptr, num_children, new_ptr);
 
             most_recent_ptr.store(new_ptr);
         }
+
+        self[parent_ptr].set_generation(current_generation);
 
         Some(())
     }
@@ -492,6 +533,7 @@ impl Tree {
         });
 
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
+        let generation = self.current_generation();
 
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
 
@@ -513,7 +555,7 @@ impl Tree {
             let ptr = new_ptr + action;
             let policy = policy / total;
 
-            self[ptr].set_new(*mov, policy);
+            self[ptr].set_new(*mov, policy, generation);
             sum_of_squares += policy * policy;
         }
 
@@ -522,6 +564,7 @@ impl Tree {
 
         actions_ptr.store(new_ptr);
         node.set_num_actions(count);
+        node.set_generation(generation);
 
         Some(())
     }

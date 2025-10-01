@@ -1,7 +1,7 @@
 use std::{
     convert::TryFrom,
     ops::{Add, AddAssign},
-    sync::atomic::{AtomicU16, AtomicU64, AtomicU8, Ordering},
+    sync::atomic::{AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering},
 };
 
 use crate::chess::{GameState, Move};
@@ -99,6 +99,7 @@ pub struct Node {
     sum_q: AtomicU64,
     sum_sq_q: AtomicU64,
     gini_impurity: AtomicU8,
+    generation: AtomicU32,
 }
 
 impl Node {
@@ -114,13 +115,15 @@ impl Node {
             sum_q: AtomicU64::new(0),
             sum_sq_q: AtomicU64::new(0),
             gini_impurity: AtomicU8::new(0),
+            generation: AtomicU32::new(0),
         }
     }
 
-    pub fn set_new(&self, mov: Move, policy: f32) {
+    pub fn set_new(&self, mov: Move, policy: f32, generation: u32) {
         self.clear();
         self.mov.store(u16::from(mov), Ordering::Relaxed);
         self.set_policy(policy);
+        self.set_generation(generation);
     }
 
     pub fn is_terminal(&self) -> bool {
@@ -221,6 +224,14 @@ impl Node {
         );
     }
 
+    pub fn generation(&self) -> u32 {
+        self.generation.load(Ordering::Relaxed)
+    }
+
+    pub fn set_generation(&self, generation: u32) {
+        self.generation.store(generation, Ordering::Relaxed);
+    }
+
     pub fn clear_actions(&self) {
         self.actions.write().store(NodePtr::NULL);
         self.num_actions.store(0, Ordering::Relaxed);
@@ -252,6 +263,7 @@ impl Node {
         self.sum_q.store(0, Ordering::Relaxed);
         self.sum_sq_q.store(0, Ordering::Relaxed);
         self.threads.store(0, Ordering::Relaxed);
+        self.generation.store(0, Ordering::Relaxed);
     }
 
     pub fn update(&self, q: f32) {
