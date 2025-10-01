@@ -177,7 +177,7 @@ impl<'a> Searcher<'a> {
 
                 for (action, visits) in visit_dist.iter_mut().enumerate() {
                     let v = self.tree[child_ptr + action].visits();
-                    // Saturate to i32::MAX (works whether visits() is u32 or usize)
+                    // Saturate to i32::MAX (works whether visits() is u64, or usize)
                     let v_i32 = (v as i64).min(i32::MAX as i64) as i32;
                     *visits = v_i32;
                 }
@@ -299,7 +299,7 @@ impl<'a> Searcher<'a> {
                 .expand_node(ptr, pos, self.params, self.policy, 1, 0);
 
             let root_eval = pos.get_value_wdl(self.value, self.params);
-            self.tree[ptr].update(1.0 - root_eval);
+            self.tree.update_node_stats(ptr, 1.0 - root_eval, 0);
         }
         // relabel preexisting root policies with root PST value
         else if self.tree[node].has_children() {
@@ -325,10 +325,10 @@ impl<'a> Searcher<'a> {
         // add dirichlet noise in datagen
         #[cfg(feature = "datagen")]
         if use_dirichlet_noise {
-            let epsilon = 0.03;
-            let alpha: f32 = if cfg!(feature = "policy") { 0.05 } else { 0.25 };
+            let alpha = 0.03;
+            let epsilon: f32 = if cfg!(feature = "policy") { 0.05 } else { 0.25 };
 
-            self.tree.add_dirichlet_noise_to_node(node, epsilon, alpha);
+            self.tree.add_dirichlet_noise_to_node(node, alpha, epsilon);
         }
 
         let search_stats = SearchStats::new(threads);
@@ -370,6 +370,8 @@ impl<'a> Searcher<'a> {
                 self.tree.flip(true, threads);
             }
         }
+
+        self.tree.flush_root_accumulator();
 
         *update_nodes += search_stats.total_nodes();
 
