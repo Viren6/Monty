@@ -5,12 +5,14 @@ mod node;
 
 use half::TreeHalf;
 use hash::{HashEntry, HashTable};
+use node::NodeStatsDelta;
 pub use node::{Node, NodePtr};
 
 use std::{
+    array,
     mem::MaybeUninit,
     ops::Index,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicI16, AtomicU64, Ordering},
 };
 
 use crate::{
@@ -19,11 +21,275 @@ use crate::{
     networks::PolicyNetwork,
 };
 
+const NUM_SIDES: usize = 2;
+const NUM_SQUARES: usize = 64;
+const ROOT_ACCUM_THRESHOLD: u64 = 32;
+const ROOT_ACCUM_EAGER_LIMIT: u64 = 256;
+const NODE_BATCH_THRESHOLD: u64 = 16384;
+const MAX_BATCHED_NODES: usize = 32;
+const BATCH_SLOT_RESERVED: u64 = u64::MAX - 1;
+
+#[repr(align(64))]
+struct RootAccumulatorEntry {
+    visits: AtomicU64,
+    sum_q: AtomicU64,
+    sum_sq_q: AtomicU64,
+}
+
+impl RootAccumulatorEntry {
+    fn new() -> Self {
+        Self {
+            visits: AtomicU64::new(0),
+            sum_q: AtomicU64::new(0),
+            sum_sq_q: AtomicU64::new(0),
+        }
+    }
+
+    fn add(&self, delta: NodeStatsDelta) -> Option<NodeStatsDelta> {
+        if delta.is_empty() {
+            return None;
+        }
+
+        let visits_added = delta.visits;
+        let previous_visits = self.visits.fetch_add(visits_added, Ordering::AcqRel);
+        self.sum_q.fetch_add(delta.sum_q, Ordering::AcqRel);
+        self.sum_sq_q.fetch_add(delta.sum_sq_q, Ordering::AcqRel);
+
+        let new_total = previous_visits.saturating_add(visits_added);
+        if new_total >= ROOT_ACCUM_THRESHOLD {
+            let flush = self.take();
+            if flush.is_empty() {
+                None
+            } else {
+                Some(flush)
+            }
+        } else {
+            None
+        }
+    }
+
+    fn take(&self) -> NodeStatsDelta {
+        NodeStatsDelta {
+            visits: self.visits.swap(0, Ordering::AcqRel),
+            sum_q: self.sum_q.swap(0, Ordering::AcqRel),
+            sum_sq_q: self.sum_sq_q.swap(0, Ordering::AcqRel),
+        }
+    }
+
+    fn reset(&self) {
+        self.visits.store(0, Ordering::Relaxed);
+        self.sum_q.store(0, Ordering::Relaxed);
+        self.sum_sq_q.store(0, Ordering::Relaxed);
+    }
+}
+
+impl Default for RootAccumulatorEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+struct RootAccumulator {
+    nodes: [AtomicU64; MAX_BATCHED_NODES],
+    entries: Vec<[RootAccumulatorEntry; MAX_BATCHED_NODES]>,
+}
+
+impl RootAccumulator {
+    fn new(threads: usize) -> Self {
+        let nodes = array::from_fn(|_| AtomicU64::new(NodePtr::NULL.inner()));
+        let mut entries = Vec::with_capacity(threads);
+        for _ in 0..threads {
+            entries.push(array::from_fn(|_| RootAccumulatorEntry::new()));
+        }
+
+        Self { nodes, entries }
+    }
+
+    fn add(&self, ptr: NodePtr, node: &Node, delta: NodeStatsDelta, thread_id: usize) {
+        if delta.is_empty() {
+            return;
+        }
+
+        if thread_id >= self.entries.len() {
+            node.apply_delta(delta);
+            return;
+        }
+
+        if ptr.idx() != 0 && node.visits() < NODE_BATCH_THRESHOLD {
+            node.apply_delta(delta);
+            return;
+        }
+
+        let Some(slot) = self.slot_for(ptr) else {
+            node.apply_delta(delta);
+            return;
+        };
+
+        if slot == 0 && node.visits() < ROOT_ACCUM_EAGER_LIMIT {
+            node.apply_delta(delta);
+            return;
+        }
+
+        if let Some(flush) = self.entries[thread_id][slot].add(delta) {
+            node.apply_delta(flush);
+        }
+    }
+
+    fn slot_for(&self, ptr: NodePtr) -> Option<usize> {
+        let inner = ptr.inner();
+
+        for (idx, slot) in self.nodes.iter().enumerate() {
+            let current = slot.load(Ordering::Acquire);
+
+            if current == inner {
+                return Some(idx);
+            }
+
+            if current == NodePtr::NULL.inner()
+                && slot
+                    .compare_exchange(
+                        NodePtr::NULL.inner(),
+                        BATCH_SLOT_RESERVED,
+                        Ordering::AcqRel,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+            {
+                self.clear_slot(idx);
+                slot.store(inner, Ordering::Release);
+                return Some(idx);
+            }
+        }
+
+        None
+    }
+
+    fn clear_slot(&self, slot: usize) {
+        for thread_entries in &self.entries {
+            thread_entries[slot].reset();
+        }
+    }
+
+    fn flush_thread<F>(&self, apply: &mut F, thread_id: usize)
+    where
+        F: FnMut(NodePtr, NodeStatsDelta),
+    {
+        if thread_id >= self.entries.len() {
+            return;
+        }
+
+        for slot in 0..MAX_BATCHED_NODES {
+            let pending = self.entries[thread_id][slot].take();
+
+            if pending.is_empty() {
+                continue;
+            }
+
+            let raw = self.nodes[slot].load(Ordering::Acquire);
+
+            if raw == NodePtr::NULL.inner() || raw == BATCH_SLOT_RESERVED {
+                continue;
+            }
+
+            apply(NodePtr::from_raw(raw), pending);
+        }
+    }
+
+    fn flush_all<F>(&self, mut apply: F)
+    where
+        F: FnMut(NodePtr, NodeStatsDelta),
+    {
+        for thread_id in 0..self.entries.len() {
+            self.flush_thread(&mut apply, thread_id);
+        }
+    }
+
+    fn reset(&self, root: NodePtr) {
+        for (idx, slot) in self.nodes.iter().enumerate() {
+            let value = if idx == 0 {
+                root.inner()
+            } else {
+                NodePtr::NULL.inner()
+            };
+            slot.store(value, Ordering::Relaxed);
+        }
+
+        for thread_entries in &self.entries {
+            for entry in thread_entries {
+                entry.reset();
+            }
+        }
+    }
+}
+
+struct ButterflyTable {
+    data: Vec<AtomicI16>,
+}
+
+impl ButterflyTable {
+    fn new() -> Self {
+        let capacity = NUM_SIDES * NUM_SQUARES * NUM_SQUARES;
+        let mut data = Vec::with_capacity(capacity);
+        data.extend((0..capacity).map(|_| AtomicI16::new(0)));
+        Self { data }
+    }
+
+    fn index(side: usize, from: u16, to: u16) -> usize {
+        side * NUM_SQUARES * NUM_SQUARES + usize::from(from) * NUM_SQUARES + usize::from(to)
+    }
+
+    fn entry(&self, side: usize, mov: Move) -> &AtomicI16 {
+        let idx = Self::index(side, mov.src(), mov.to());
+        &self.data[idx]
+    }
+
+    fn policy_bonus(&self, side: usize, mov: Move, params: &MctsParams) -> f32 {
+        let divisor = params.butterfly_policy_divisor().max(1) as f32;
+        f32::from(self.entry(side, mov).load(Ordering::Relaxed)) / divisor
+    }
+
+    fn clear(&self) {
+        for entry in &self.data {
+            entry.store(0, Ordering::Relaxed);
+        }
+    }
+
+    fn update(&self, side: usize, mov: Move, score: f32, params: &MctsParams) {
+        if !score.is_finite() {
+            return;
+        }
+
+        let score = score.clamp(0.001, 0.999);
+        let cp = (-400.0 * ((1.0 / score) - 1.0).ln()).round() as i32;
+        let cell = self.entry(side, mov);
+
+        let mut current = cell.load(Ordering::Relaxed);
+        loop {
+            let delta = scale_bonus(current, cp, params.butterfly_reduction_factor());
+            let new = current.saturating_add(delta);
+            match cell.compare_exchange(current, new, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+}
+
+fn scale_bonus(score: i16, bonus: i32, reduction_factor: i32) -> i16 {
+    let bonus = bonus.clamp(i16::MIN as i32, i16::MAX as i32);
+    let reduction_factor = reduction_factor.max(1);
+    let reduction = i32::from(score) * bonus.abs() / reduction_factor;
+    let adjusted = bonus - reduction;
+    adjusted.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+}
+
 pub struct Tree {
     root: ChessState,
     tree: [TreeHalf; 2],
     half: AtomicBool,
     hash: HashTable,
+    butterfly: ButterflyTable,
+    root_accumulator: RootAccumulator,
 }
 
 impl Index<NodePtr> for Tree {
@@ -39,15 +305,17 @@ impl Tree {
         let bytes = mb * 1024 * 1024;
 
         const _: () = assert!(
-            std::mem::size_of::<Node>() == 40,
+            std::mem::size_of::<Node>() == 64,
             "You must reconsider this allocation!"
         );
 
-        Self::new(bytes / 42, bytes / 42 / 16, threads)
+        let node_bytes = std::mem::size_of::<Node>() + 2;
+
+        Self::new(bytes / node_bytes, bytes / node_bytes / 16, threads)
     }
 
     fn new(tree_cap: usize, hash_cap: usize, threads: usize) -> Self {
-        Self {
+        let tree = Self {
             root: ChessState::default(),
             tree: [
                 TreeHalf::new(tree_cap / 2, false, threads),
@@ -55,7 +323,13 @@ impl Tree {
             ],
             half: AtomicBool::new(false),
             hash: HashTable::new(hash_cap / 4, threads),
-        }
+            butterfly: ButterflyTable::new(),
+            root_accumulator: RootAccumulator::new(threads),
+        };
+
+        tree.reset_root_accumulator();
+
+        tree
     }
 
     pub fn root_position(&self) -> &ChessState {
@@ -96,6 +370,9 @@ impl Tree {
     pub fn flip(&self, copy_across: bool, threads: usize) {
         let old_root_ptr = self.root_node();
 
+        self.root_accumulator
+            .flush_all(|ptr, delta| self[ptr].apply_delta(delta));
+
         let old = usize::from(self.half.fetch_xor(true, Ordering::Relaxed));
         self.tree[old].clear_ptrs(threads);
         self.tree[old ^ 1].clear();
@@ -106,6 +383,8 @@ impl Tree {
 
             self.copy_node_across(old_root_ptr, new_root_ptr);
         }
+
+        self.reset_root_accumulator();
     }
 
     #[must_use]
@@ -144,6 +423,20 @@ impl Tree {
         self.hash.push(hash, wins);
     }
 
+    pub fn update_node_stats(&self, ptr: NodePtr, value: f32, thread_id: usize) {
+        let delta = NodeStatsDelta::from_value(value);
+        self.root_accumulator.add(ptr, &self[ptr], delta, thread_id);
+    }
+
+    pub fn flush_root_accumulator(&self) {
+        self.root_accumulator
+            .flush_all(|ptr, delta| self[ptr].apply_delta(delta));
+    }
+
+    fn reset_root_accumulator(&self) {
+        self.root_accumulator.reset(self.root_node());
+    }
+
     fn clear_halves(&self) {
         self.tree[0].clear();
         self.tree[1].clear();
@@ -153,6 +446,8 @@ impl Tree {
         self.root = ChessState::default();
         self.clear_halves();
         self.hash.clear(threads);
+        self.butterfly.clear();
+        self.root_accumulator.reset(self.root_node());
     }
 
     pub fn is_empty(&self) -> bool {
@@ -182,11 +477,13 @@ impl Tree {
         let mut max = f32::NEG_INFINITY;
         let mut moves = [const { MaybeUninit::uninit() }; 256];
         let mut count = 0;
+        let stm = pos.stm();
 
         pos.map_moves_with_policies(policy, |mov, policy| {
-            moves[count].write((mov, policy));
+            let adjusted = policy + self.butterfly.policy_bonus(stm, mov, params);
+            moves[count].write((mov, adjusted));
             count += 1;
-            max = max.max(policy);
+            max = max.max(adjusted);
         });
 
         let new_ptr = self.tree[self.half()].reserve_nodes_thread(count, thread_id)?;
@@ -240,9 +537,11 @@ impl Tree {
         let mut max = f32::NEG_INFINITY;
         let mut policies = Vec::new();
 
+        let stm = pos.stm();
         for action in 0..num_actions {
             let mov = self[actions_ptr + action].parent_move();
-            let policy = pos.get_policy(mov, &hl, policy);
+            let policy =
+                pos.get_policy(mov, &hl, policy) + self.butterfly.policy_bonus(stm, mov, params);
 
             policies.push(policy);
             max = max.max(policy);
@@ -267,6 +566,14 @@ impl Tree {
 
         let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
         self[node_ptr].set_gini_impurity(gini_impurity);
+    }
+
+    pub fn update_butterfly(&self, side: usize, mov: Move, score: f32, params: &MctsParams) {
+        self.butterfly.update(side, mov, score, params);
+    }
+
+    pub fn clear_butterfly_table(&self) {
+        self.butterfly.clear();
     }
 
     pub fn propogate_proven_mates(&self, ptr: NodePtr, child_state: GameState) {
@@ -306,6 +613,9 @@ impl Tree {
     pub fn set_root_position(&mut self, new_root: &ChessState) {
         let old_root = self.root.clone();
         self.root = new_root.clone();
+
+        self.flush_root_accumulator();
+        self.reset_root_accumulator();
 
         if self.is_empty() {
             return;
@@ -427,7 +737,7 @@ impl Tree {
 
         for i in 0..node.num_actions() {
             let child = &self[child_ptr + i];
-            distribution[i] = f64::from(child.visits()).powf(t);
+            distribution[i] = (child.visits() as f64).powf(t);
             total += distribution[i];
         }
 

@@ -52,6 +52,7 @@ pub fn perform_one(
         tree.fetch_children(ptr, thread_id)?;
 
         // select action to take via PUCT
+        let stm = pos.stm();
         let action = pick_action(searcher, ptr, node);
 
         let child_ptr = node.actions() + action;
@@ -82,6 +83,10 @@ pub fn perform_one(
 
         let u = maybe_u?;
 
+        if tree[child_ptr].state() == GameState::Ongoing {
+            tree.update_butterfly(stm, mov, u, searcher.params);
+        }
+
         tree.propogate_proven_mates(ptr, tree[child_ptr].state());
 
         u
@@ -97,7 +102,7 @@ pub fn perform_one(
 
     // flip perspective and backpropagate
     u = 1.0 - u;
-    node.update(u);
+    tree.update_node_stats(ptr, u, thread_id);
     Some(u)
 }
 
@@ -127,10 +132,10 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
         k += 1;
     }
     let mut limit = k.max(searcher.params.min_policy_actions() as usize);
-    let mut thresh = 1u32 << (searcher.params.visit_threshold_power() as u32);
+    let mut thresh = 1u64 << (searcher.params.visit_threshold_power() as u32);
     while node.visits() >= thresh && limit < node.num_actions() {
         limit += 2;
-        thresh = thresh.checked_shl(1).unwrap_or(u32::MAX);
+        thresh = thresh.checked_shl(1).unwrap_or(u64::MAX);
     }
     limit = limit.min(node.num_actions());
 
@@ -142,7 +147,7 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
             // virtual loss
             let threads = f64::from(child.threads());
             if threads > 0.0 {
-                let visits = f64::from(child.visits());
+                let visits = child.visits() as f64;
                 let q2 = f64::from(q) * visits
                     / (visits + 1.0 + searcher.params.virtual_loss_weight() * (threads - 1.0));
                 q = q2 as f32;

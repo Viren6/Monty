@@ -15,7 +15,7 @@ use super::{activation::SCReLU, layer::Layer, threats, Accumulator};
 #[allow(non_upper_case_globals, dead_code)]
 pub const ValueFileDefaultName: &str = "fast_quantised.bin";
 #[allow(non_upper_case_globals, dead_code)]
-pub const CompressedValueName: &str = "nn-fa1a8afd872c.network";
+pub const CompressedValueName: &str = "nn-c1dd869bed55.network";
 #[allow(non_upper_case_globals, dead_code)]
 pub const DatagenValueFileName: &str = "nn-5601bb8c241d.network";
 
