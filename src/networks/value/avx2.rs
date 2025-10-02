@@ -1,7 +1,7 @@
 use super::*;
 use std::arch::x86_64::*;
 
-const L2: usize = 128;
+const L2: usize = 16;
 const L1S: usize = L1 / 2;
 
 fn ptr<T>(x: &T) -> *const T {

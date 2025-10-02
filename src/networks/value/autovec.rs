@@ -1,6 +1,6 @@
 use super::*;
 
-const L2: usize = 128;
+const L2: usize = 16;
 const L1S: usize = L1 / 2;
 
 pub unsafe fn l2(net: &ValueNetwork, l1: &Align64<u8, L1S>) -> Align64<i32, L2> {
