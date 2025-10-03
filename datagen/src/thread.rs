@@ -95,15 +95,32 @@ impl<'a> DatagenThread<'a> {
 
             let hl = policy.hl(&position.board());
 
-            let mut dist = Vec::with_capacity(moves.len());
             let mut probs = Vec::with_capacity(moves.len());
+            let mut max = f32::NEG_INFINITY;
 
             for mov in moves {
                 let p = policy.get(&position.board(), &mov, &hl);
-                let mf_move = montyformat::chess::Move::from(u16::from(mov));
-                let visits = (p * 65535.0) as u32;
-                dist.push((mf_move, visits));
+                max = max.max(p);
                 probs.push((mov, p));
+            }
+
+            let pst = 1.0f32;
+            let mut total = 0.0f32;
+            for (_, p) in probs.iter_mut() {
+                *p = ((*p - max) / pst).exp();
+                total += *p;
+            }
+
+            if total <= 0.0 {
+                total = 1.0;
+            }
+
+            let mut dist = Vec::with_capacity(probs.len());
+            for (mov, p) in probs.iter_mut() {
+                *p /= total;
+                let mf_move = montyformat::chess::Move::from(u16::from(*mov));
+                let visits = (*p * 65535.0) as u32;
+                dist.push((mf_move, visits));
             }
 
             let best_move: Move = if temp == 0.0 {
