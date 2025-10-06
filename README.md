@@ -11,6 +11,30 @@ This requires `make` and a recent enough rust version (see the [MSRV](Cargo.toml
 
 ## Development & Project Structure
 
+### Internal match reproducer
+
+The repository ships with an `internal_match` binary that mirrors how we
+typically use [fastchess](https://github.com/Disservin/fastchess) for branch
+vs. branch testing. It plays both sides of a match, starts each game from the
+initial position, and then makes eight random plies so that every game begins
+from a unique opening.
+
+```bash
+cargo run --release --bin internal_match -- --games 10 --nodes 2000 --hash-mb 1
+```
+
+`--games` controls the match length while `--nodes` and `--hash-mb` reproduce
+the problematic settings (`nodes=2000`, hash table = 1 MiB). The script also
+supports `--threads`, `--random-plies`, and `--max-plies` if you need to tweak
+the search configuration.
+
+The binary loads the same policy/value networks as the main engine. Building
+with `make` downloads the correct files automatically. If you ever need to
+fetch them manually, the expected filenames are recorded in
+[`src/networks/policy.rs`](src/networks/policy.rs) and
+[`src/networks/value.rs`](src/networks/value.rs); they can be downloaded from
+`https://tests.montychess.org/api/nn/<filename>`.
+
 #### Testing
 
 Development of Monty is facilitated by [montytest](https://tests.montychess.org/tests).
