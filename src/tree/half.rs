@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use super::{Node, NodePtr};
 use crate::chess::GameState;
@@ -10,6 +10,8 @@ pub struct TreeHalf {
     used: AtomicUsize,
     next: Vec<AtomicUsize>,
     end: Vec<AtomicUsize>,
+    generation: AtomicU32,
+    node_generation: Vec<AtomicU32>,
     half: bool,
 }
 
@@ -28,6 +30,8 @@ impl TreeHalf {
             used: AtomicUsize::new(0),
             next: (0..threads).map(|_| AtomicUsize::new(0)).collect(),
             end: (0..threads).map(|_| AtomicUsize::new(0)).collect(),
+            generation: AtomicU32::new(1),
+            node_generation: Vec::new(),
             half,
         };
 
@@ -52,12 +56,15 @@ impl TreeHalf {
             res.nodes.set_len(size);
         }
 
+        res.node_generation = (0..size).map(|_| AtomicU32::new(0)).collect();
+
         res
     }
 
     pub fn reserve_nodes_thread(&self, num: usize, thread: usize) -> Option<NodePtr> {
         let mut next = self.next[thread].load(Ordering::Relaxed);
         let mut end = self.end[thread].load(Ordering::Relaxed);
+        let generation = self.generation.load(Ordering::Relaxed);
 
         if next + num > end {
             let block = CACHE_SIZE.max(num);
@@ -69,14 +76,21 @@ impl TreeHalf {
             end = start + block;
             self.next[thread].store(next + num, Ordering::Relaxed);
             self.end[thread].store(end, Ordering::Relaxed);
+            for idx in start..end {
+                self.node_generation[idx].store(generation, Ordering::Relaxed);
+            }
             Some(NodePtr::new(self.half, start))
         } else {
             self.next[thread].store(next + num, Ordering::Relaxed);
+            for idx in next..next + num {
+                self.node_generation[idx].store(generation, Ordering::Relaxed);
+            }
             Some(NodePtr::new(self.half, next))
         }
     }
 
     pub fn clear(&self) {
+        self.generation.fetch_add(1, Ordering::Relaxed);
         self.used.store(0, Ordering::Relaxed);
         for (n, e) in self.next.iter().zip(&self.end) {
             n.store(0, Ordering::Relaxed);
@@ -94,5 +108,13 @@ impl TreeHalf {
 
     pub fn is_full(&self) -> bool {
         self.used() >= self.nodes.len()
+    }
+
+    pub fn node_generation(&self, idx: usize) -> u32 {
+        self.node_generation[idx].load(Ordering::Relaxed)
+    }
+
+    pub fn current_generation(&self) -> u32 {
+        self.generation.load(Ordering::Relaxed)
     }
 }

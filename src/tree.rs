@@ -358,7 +358,17 @@ impl Tree {
         let from_actions_ptr = from_actions.val();
 
         self[to].copy_from(&self[from]);
-        if clear_ptr && from_actions_ptr.half() == self.half.load(Ordering::Relaxed) {
+        let stale_children = if from_actions_ptr.is_null() {
+            true
+        } else {
+            let child_half = usize::from(from_actions_ptr.half());
+            self.tree[child_half].node_generation(from_actions_ptr.idx())
+                != self.tree[child_half].current_generation()
+        };
+
+        if clear_ptr && from_actions_ptr.half() == self.half.load(Ordering::Relaxed)
+            || stale_children
+        {
             self[to].set_num_actions(0);
             to_actions.store(NodePtr::NULL);
         } else {
