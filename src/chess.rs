@@ -248,9 +248,6 @@ impl ChessState {
 }
 
 fn apply_contempt(raw: EvalWdl, contempt: f32) -> EvalWdl {
-    if contempt == 0.0 {
-        return raw;
-    }
 
     let v = raw.win - raw.loss;
     let d = raw.draw;
@@ -273,7 +270,7 @@ fn apply_contempt(raw: EvalWdl, contempt: f32) -> EvalWdl {
     let s = 2.0 / denom;
     let mu = (a - b) / denom;
 
-    let delta_mu = contempt * std::f32::consts::LN_10 / 400.0;
+    let delta_mu = (contempt + 100.0) * std::f32::consts::LN_10 / (400.0 * 5.0);
     let mu_new = (mu + delta_mu).clamp(-8.0, 8.0);
     let s_new = s;
 
