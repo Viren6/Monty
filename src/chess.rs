@@ -5,6 +5,41 @@ use crate::{
 
 pub use montyformat::chess::{Attacks, Castling, GameState, Move, Position};
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EvalWdl {
+    pub win: f32,
+    pub draw: f32,
+    pub loss: f32,
+}
+
+impl EvalWdl {
+    pub fn new(win: f32, draw: f32, loss: f32) -> Self {
+        let mut res = Self { win, draw, loss };
+        res.normalize();
+        res
+    }
+
+    fn normalize(&mut self) {
+        let sum = self.win + self.draw + self.loss;
+        if sum > 0.0 {
+            let inv = 1.0 / sum;
+            self.win *= inv;
+            self.draw *= inv;
+            self.loss *= inv;
+        }
+    }
+
+    pub fn score(&self) -> f32 {
+        self.win + 0.5 * self.draw
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Evaluation {
+    pub raw: EvalWdl,
+    pub adjusted: EvalWdl,
+}
+
 #[derive(Clone)]
 pub struct ChessState {
     board: Position,
@@ -101,25 +136,31 @@ impl ChessState {
         self.board.piece(piece).count_ones() as i32
     }
 
-    pub fn get_value(&self, value: &ValueNetwork, _params: &MctsParams) -> i32 {
-        const K: f32 = 400.0;
-        let (win, draw, _) = value.eval(&self.board);
+    pub fn evaluate_wdl(&self, value: &ValueNetwork, params: &MctsParams) -> Evaluation {
+        let (win, draw, loss) = value.eval(&self.board);
+        let raw = EvalWdl::new(win, draw, loss);
+        let adjusted = apply_contempt(raw, params.contempt() as f32);
+        Evaluation { raw, adjusted }
+    }
 
-        let score = win + draw / 2.0;
+    pub fn get_value(&self, value: &ValueNetwork, params: &MctsParams) -> i32 {
+        const K: f32 = 400.0;
+        let evaluation = self.evaluate_wdl(value, params);
+        let score = evaluation.adjusted.score();
         let cp = (-K * (1.0 / score.clamp(0.0, 1.0) - 1.0).ln()) as i32;
 
         #[cfg(not(feature = "datagen"))]
         {
             use montyformat::chess::consts::Piece;
 
-            let mut mat = self.piece_count(Piece::KNIGHT) * _params.knight_value()
-                + self.piece_count(Piece::BISHOP) * _params.bishop_value()
-                + self.piece_count(Piece::ROOK) * _params.rook_value()
-                + self.piece_count(Piece::QUEEN) * _params.queen_value();
+            let mut mat = self.piece_count(Piece::KNIGHT) * params.knight_value()
+                + self.piece_count(Piece::BISHOP) * params.bishop_value()
+                + self.piece_count(Piece::ROOK) * params.rook_value()
+                + self.piece_count(Piece::QUEEN) * params.queen_value();
 
-            mat = _params.material_offset() + mat / _params.material_div1();
+            mat = params.material_offset() + mat / params.material_div1();
 
-            cp * mat / _params.material_div2()
+            cp * mat / params.material_div2()
         }
 
         #[cfg(feature = "datagen")]
@@ -127,7 +168,7 @@ impl ChessState {
     }
 
     pub fn get_value_wdl(&self, value: &ValueNetwork, params: &MctsParams) -> f32 {
-        1.0 / (1.0 + (-(self.get_value(value, params) as f32) / 400.0).exp())
+        self.evaluate_wdl(value, params).adjusted.score()
     }
 
     pub fn perft(&self, depth: usize) -> u64 {
@@ -204,6 +245,48 @@ impl ChessState {
 
         println!("+-----------------+");
     }
+}
+
+fn apply_contempt(raw: EvalWdl, contempt: f32) -> EvalWdl {
+    if contempt == 0.0 {
+        return raw;
+    }
+
+    let v = raw.win - raw.loss;
+    let d = raw.draw;
+    let w = (1.0 + v - d) * 0.5;
+    let l = (1.0 - v - d) * 0.5;
+    const EPS: f32 = 1e-4;
+
+    if w <= EPS || l <= EPS || w >= 1.0 - EPS || l >= 1.0 - EPS {
+        return raw;
+    }
+
+    let a = (1.0 / l - 1.0).ln();
+    let b = (1.0 / w - 1.0).ln();
+    let denom = a + b;
+
+    if !denom.is_finite() || denom.abs() < 1e-6 {
+        return raw;
+    }
+
+    let s = 2.0 / denom;
+    let mu = (a - b) / denom;
+
+    let delta_mu = contempt * std::f32::consts::LN_10 / 400.0;
+    let mu_new = (mu + delta_mu).clamp(-8.0, 8.0);
+    let s_new = s;
+
+    let logistic = |x: f32| 1.0 / (1.0 + (-x).exp());
+    let w_new = logistic((-1.0 + mu_new) / s_new);
+    let l_new = logistic((-1.0 - mu_new) / s_new);
+    let mut d_new = (1.0 - w_new - l_new).max(0.0);
+
+    if d_new > 1.0 {
+        d_new = 1.0;
+    }
+
+    EvalWdl::new(w_new, d_new, l_new)
 }
 
 fn perft<const ROOT: bool, const BULK: bool>(

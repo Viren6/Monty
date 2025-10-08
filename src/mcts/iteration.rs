@@ -5,13 +5,32 @@ use crate::{
 
 use super::{SearchHelpers, Searcher};
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NodeEvaluation {
+    pub value: f32,
+    pub draw: f32,
+}
+
+impl NodeEvaluation {
+    fn new(value: f32, draw: f32) -> Self {
+        Self { value, draw }
+    }
+
+    fn flipped(self) -> Self {
+        Self {
+            value: 1.0 - self.value,
+            draw: self.draw,
+        }
+    }
+}
+
 pub fn perform_one(
     searcher: &Searcher,
     pos: &mut ChessState,
     ptr: NodePtr,
     depth: &mut usize,
     thread_id: usize,
-) -> Option<f32> {
+) -> Option<NodeEvaluation> {
     *depth += 1;
 
     let cur_hash = pos.hash();
@@ -19,7 +38,7 @@ pub fn perform_one(
     let tree = searcher.tree;
     let node = &tree[ptr];
 
-    let mut u = if node.is_terminal() || node.visits() == 0 {
+    let eval = if node.is_terminal() || node.visits() == 0 {
         if node.visits() == 0 {
             node.set_state(pos.game_state());
         }
@@ -27,7 +46,7 @@ pub fn perform_one(
         // probe hash table to use in place of network
         if node.state() == GameState::Ongoing {
             if let Some(entry) = tree.probe_hash(cur_hash) {
-                entry.q()
+                NodeEvaluation::new(entry.q(), entry.d())
             } else {
                 get_utility(searcher, ptr, pos)
             }
@@ -75,43 +94,46 @@ pub fn perform_one(
         };
 
         // descend further
-        let maybe_u = perform_one(searcher, pos, child_ptr, depth, thread_id);
+        let maybe_eval = perform_one(searcher, pos, child_ptr, depth, thread_id);
 
         drop(lock);
 
         tree[child_ptr].dec_threads();
 
-        let u = maybe_u?;
+        let eval_from_child = maybe_eval?;
 
         if tree[child_ptr].state() == GameState::Ongoing {
-            tree.update_butterfly(stm, mov, u, searcher.params);
+            tree.update_butterfly(stm, mov, eval_from_child.value, searcher.params);
         }
 
         tree.propogate_proven_mates(ptr, tree[child_ptr].state());
 
-        u
+        eval_from_child
     };
 
     // store value for the side to move at the visited node in TT
     if let Some(h) = child_hash {
-        // `u` here is from the current node's perspective, so flip for the child
-        tree.push_hash(h, 1.0 - u);
+        let child_eval = eval.flipped();
+        tree.push_hash(h, child_eval.value, child_eval.draw);
     } else {
-        tree.push_hash(cur_hash, u);
+        tree.push_hash(cur_hash, eval.value, eval.draw);
     }
 
     // flip perspective and backpropagate
-    u = 1.0 - u;
-    tree.update_node_stats(ptr, u, thread_id);
-    Some(u)
+    let flipped = eval.flipped();
+    tree.update_node_stats(ptr, flipped.value, flipped.draw, thread_id);
+    Some(flipped)
 }
 
-fn get_utility(searcher: &Searcher, ptr: NodePtr, pos: &ChessState) -> f32 {
+fn get_utility(searcher: &Searcher, ptr: NodePtr, pos: &ChessState) -> NodeEvaluation {
     match searcher.tree[ptr].state() {
-        GameState::Ongoing => pos.get_value_wdl(searcher.value, searcher.params),
-        GameState::Draw => 0.5,
-        GameState::Lost(_) => 0.0,
-        GameState::Won(_) => 1.0,
+        GameState::Ongoing => {
+            let evaluation = pos.evaluate_wdl(searcher.value, searcher.params);
+            NodeEvaluation::new(evaluation.adjusted.score(), evaluation.adjusted.draw)
+        }
+        GameState::Draw => NodeEvaluation::new(0.5, 1.0),
+        GameState::Lost(_) => NodeEvaluation::new(0.0, 0.0),
+        GameState::Won(_) => NodeEvaluation::new(1.0, 0.0),
     }
 }
 

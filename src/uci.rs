@@ -86,11 +86,14 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
             "perft" => run_perft(&commands, &pos),
             "quit" => std::process::exit(0),
             "eval" => {
-                let (win, draw, loss) = value.eval(&pos.board());
-                println!("win: {:.2}%", win * 100.0);
-                println!("draw: {:.2}%", draw * 100.0);
-                println!("loss: {:.2}%", loss * 100.0);
-                println!("score: {:.2}%", 100.0 * pos.get_value_wdl(value, &params));
+                let evaluation = pos.evaluate_wdl(value, &params);
+                println!("raw win: {:.2}%", evaluation.raw.win * 100.0);
+                println!("raw draw: {:.2}%", evaluation.raw.draw * 100.0);
+                println!("raw loss: {:.2}%", evaluation.raw.loss * 100.0);
+                println!("adjusted win: {:.2}%", evaluation.adjusted.win * 100.0);
+                println!("adjusted draw: {:.2}%", evaluation.adjusted.draw * 100.0);
+                println!("adjusted loss: {:.2}%", evaluation.adjusted.loss * 100.0);
+                println!("score: {:.2}%", 100.0 * evaluation.adjusted.score());
             }
             "policy" => {
                 let mut max = f32::NEG_INFINITY;

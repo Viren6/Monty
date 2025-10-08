@@ -34,6 +34,7 @@ struct RootAccumulatorEntry {
     visits: AtomicU64,
     sum_q: AtomicU64,
     sum_sq_q: AtomicU64,
+    sum_d: AtomicU64,
 }
 
 impl RootAccumulatorEntry {
@@ -42,6 +43,7 @@ impl RootAccumulatorEntry {
             visits: AtomicU64::new(0),
             sum_q: AtomicU64::new(0),
             sum_sq_q: AtomicU64::new(0),
+            sum_d: AtomicU64::new(0),
         }
     }
 
@@ -54,6 +56,7 @@ impl RootAccumulatorEntry {
         let previous_visits = self.visits.fetch_add(visits_added, Ordering::AcqRel);
         self.sum_q.fetch_add(delta.sum_q, Ordering::AcqRel);
         self.sum_sq_q.fetch_add(delta.sum_sq_q, Ordering::AcqRel);
+        self.sum_d.fetch_add(delta.sum_d, Ordering::AcqRel);
 
         let new_total = previous_visits.saturating_add(visits_added);
         if new_total >= ROOT_ACCUM_THRESHOLD {
@@ -73,6 +76,7 @@ impl RootAccumulatorEntry {
             visits: self.visits.swap(0, Ordering::AcqRel),
             sum_q: self.sum_q.swap(0, Ordering::AcqRel),
             sum_sq_q: self.sum_sq_q.swap(0, Ordering::AcqRel),
+            sum_d: self.sum_d.swap(0, Ordering::AcqRel),
         }
     }
 
@@ -80,6 +84,7 @@ impl RootAccumulatorEntry {
         self.visits.store(0, Ordering::Relaxed);
         self.sum_q.store(0, Ordering::Relaxed);
         self.sum_sq_q.store(0, Ordering::Relaxed);
+        self.sum_d.store(0, Ordering::Relaxed);
     }
 }
 
@@ -428,12 +433,12 @@ impl Tree {
         self.hash.get(hash)
     }
 
-    pub fn push_hash(&self, hash: u64, wins: f32) {
-        self.hash.push(hash, wins);
+    pub fn push_hash(&self, hash: u64, wins: f32, draws: f32) {
+        self.hash.push(hash, wins, draws);
     }
 
-    pub fn update_node_stats(&self, ptr: NodePtr, value: f32, thread_id: usize) {
-        let delta = NodeStatsDelta::from_value(value);
+    pub fn update_node_stats(&self, ptr: NodePtr, value: f32, draw: f32, thread_id: usize) {
+        let delta = NodeStatsDelta::from_stats(value, draw);
         self.root_accumulator.add(ptr, &self[ptr], delta, thread_id);
     }
 
