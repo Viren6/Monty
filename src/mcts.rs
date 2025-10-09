@@ -10,6 +10,7 @@ pub use search_stats::SearchStats;
 use crate::{
     chess::{GameState, Move},
     networks::{PolicyNetwork, ValueNetwork},
+    numa,
     tree::{NodePtr, Tree},
 };
 
@@ -333,6 +334,7 @@ impl<'a> Searcher<'a> {
 
         let search_stats = SearchStats::new(threads);
         let stats_ref = &search_stats;
+        let thread_bindings = numa::thread_bindings(threads);
 
         let mut best_move = Move::NULL;
         let mut best_move_changes = 0;
@@ -343,7 +345,9 @@ impl<'a> Searcher<'a> {
         // search loop
         while !self.abort.load(Ordering::Relaxed) {
             thread::scope(|s| {
-                s.spawn(|| {
+                let main_binding = thread_bindings.get(0).copied().flatten();
+                s.spawn(move || {
+                    numa::bind_to(main_binding);
                     self.playout_until_full_main(
                         &limits,
                         &timer,
@@ -362,7 +366,11 @@ impl<'a> Searcher<'a> {
                 });
 
                 for i in 1..threads {
-                    s.spawn(move || self.playout_until_full_worker(stats_ref, i));
+                    let worker_binding = thread_bindings.get(i).copied().flatten();
+                    s.spawn(move || {
+                        numa::bind_to(worker_binding);
+                        self.playout_until_full_worker(stats_ref, i);
+                    });
                 }
             });
 

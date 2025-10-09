@@ -1,5 +1,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::numa;
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HashEntry {
     hash: u16,
@@ -49,10 +51,13 @@ impl HashTable {
             let ptr = table.table.as_mut_ptr().cast();
             let uninit: &mut [MaybeUninit<u8>] =
                 std::slice::from_raw_parts_mut(ptr, size * size_of::<HashEntryInternal>());
+            let thread_bindings = numa::thread_bindings(threads);
 
             std::thread::scope(|s| {
-                for chunk in uninit.chunks_mut(chunk_size) {
-                    s.spawn(|| {
+                for (idx, chunk) in uninit.chunks_mut(chunk_size).enumerate() {
+                    let binding = thread_bindings.get(idx).copied().flatten();
+                    s.spawn(move || {
+                        numa::bind_to(binding);
                         chunk.as_mut_ptr().write_bytes(0, chunk.len());
                     });
                 }
@@ -67,9 +72,13 @@ impl HashTable {
     pub fn clear(&mut self, threads: usize) {
         let chunk_size = self.table.len().div_ceil(threads);
 
+        let thread_bindings = numa::thread_bindings(threads);
+
         std::thread::scope(|s| {
-            for chunk in self.table.chunks_mut(chunk_size) {
-                s.spawn(|| {
+            for (idx, chunk) in self.table.chunks_mut(chunk_size).enumerate() {
+                let binding = thread_bindings.get(idx).copied().flatten();
+                s.spawn(move || {
+                    numa::bind_to(binding);
                     for entry in chunk.iter_mut() {
                         *entry = HashEntryInternal::default();
                     }

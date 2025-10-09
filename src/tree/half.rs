@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{Node, NodePtr};
-use crate::chess::GameState;
+use crate::{chess::GameState, numa};
 
 const CACHE_SIZE: usize = 1024;
 
@@ -38,10 +38,13 @@ impl TreeHalf {
             let chunk_size = size.div_ceil(threads);
             let ptr = res.nodes.as_mut_ptr().cast();
             let uninit: &mut [MaybeUninit<Node>] = std::slice::from_raw_parts_mut(ptr, size);
+            let thread_bindings = numa::thread_bindings(threads);
 
             std::thread::scope(|s| {
-                for chunk in uninit.chunks_mut(chunk_size) {
-                    s.spawn(|| {
+                for (idx, chunk) in uninit.chunks_mut(chunk_size).enumerate() {
+                    let binding = thread_bindings.get(idx).copied().flatten();
+                    s.spawn(move || {
+                        numa::bind_to(binding);
                         for node in chunk {
                             node.write(Node::new(GameState::Ongoing));
                         }
