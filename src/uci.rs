@@ -122,7 +122,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork) {
             "uci" => preamble(),
             "ucinewgame" => {
                 root_game_ply = 0;
-                tree.clear(threads);
+                tree.clear();
             }
             _ => {}
         }
@@ -212,7 +212,7 @@ pub fn bench(depth: usize, policy: &PolicyNetwork, value: &ValueNetwork, params:
         #[cfg(feature = "datagen")]
         searcher.search(1, limits, false, &mut total_nodes, false, 1.0);
         time += timer.elapsed().as_secs_f32();
-        tree.clear(1);
+        tree.clear();
     }
 
     println!(

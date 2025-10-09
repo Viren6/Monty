@@ -4,6 +4,8 @@ pub mod networks;
 pub mod tree;
 pub mod uci;
 
+mod topology;
+
 use memmap2::Mmap;
 
 pub struct MappedWeights<'a, T> {

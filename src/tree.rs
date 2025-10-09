@@ -19,6 +19,7 @@ use crate::{
     chess::{ChessState, GameState, Move},
     mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
+    topology::ThreadTopology,
 };
 
 const NUM_SIDES: usize = 2;
@@ -290,6 +291,8 @@ pub struct Tree {
     hash: HashTable,
     butterfly: ButterflyTable,
     root_accumulator: RootAccumulator,
+    topology: ThreadTopology,
+    thread_count: usize,
 }
 
 impl Index<NodePtr> for Tree {
@@ -315,16 +318,21 @@ impl Tree {
     }
 
     fn new(tree_cap: usize, hash_cap: usize, threads: usize) -> Self {
+        let topology = ThreadTopology::detect(threads);
+        let thread_count = topology.worker_count().max(1);
+
         let tree = Self {
             root: ChessState::default(),
             tree: [
-                TreeHalf::new(tree_cap / 2, false, threads),
-                TreeHalf::new(tree_cap / 2, true, threads),
+                TreeHalf::new(tree_cap / 2, false, &topology),
+                TreeHalf::new(tree_cap / 2, true, &topology),
             ],
             half: AtomicBool::new(false),
-            hash: HashTable::new(hash_cap / 4, threads),
+            hash: HashTable::new(hash_cap / 4, &topology),
             butterfly: ButterflyTable::new(),
-            root_accumulator: RootAccumulator::new(threads),
+            root_accumulator: RootAccumulator::new(thread_count),
+            topology,
+            thread_count,
         };
 
         tree.reset_root_accumulator();
@@ -451,12 +459,20 @@ impl Tree {
         self.tree[1].clear();
     }
 
-    pub fn clear(&mut self, threads: usize) {
+    pub fn clear(&mut self) {
         self.root = ChessState::default();
         self.clear_halves();
-        self.hash.clear(threads);
+        self.hash.clear(&self.topology);
         self.butterfly.clear();
         self.root_accumulator.reset(self.root_node());
+    }
+
+    pub fn thread_topology(&self) -> &ThreadTopology {
+        &self.topology
+    }
+
+    pub fn thread_count(&self) -> usize {
+        self.thread_count
     }
 
     pub fn is_empty(&self) -> bool {

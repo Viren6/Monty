@@ -331,6 +331,8 @@ impl<'a> Searcher<'a> {
             self.tree.add_dirichlet_noise_to_node(node, alpha, epsilon);
         }
 
+        let topology = self.tree.thread_topology();
+        let threads = threads.min(self.tree.thread_count()).max(1);
         let search_stats = SearchStats::new(threads);
         let stats_ref = &search_stats;
 
@@ -343,7 +345,11 @@ impl<'a> Searcher<'a> {
         // search loop
         while !self.abort.load(Ordering::Relaxed) {
             thread::scope(|s| {
-                s.spawn(|| {
+                let main_binding = topology.binding_for_worker(0);
+                s.spawn(move || {
+                    if let Some(binding) = main_binding {
+                        binding.apply();
+                    }
                     self.playout_until_full_main(
                         &limits,
                         &timer,
@@ -362,7 +368,13 @@ impl<'a> Searcher<'a> {
                 });
 
                 for i in 1..threads {
-                    s.spawn(move || self.playout_until_full_worker(stats_ref, i));
+                    let binding = topology.binding_for_worker(i);
+                    s.spawn(move || {
+                        if let Some(binding) = binding {
+                            binding.apply();
+                        }
+                        self.playout_until_full_worker(stats_ref, i);
+                    });
                 }
             });
 

@@ -162,7 +162,7 @@ impl<'a> DatagenThread<'a> {
                 }
             }
 
-            tree.clear(1);
+            tree.clear();
         }
 
         value_game.result = result;
