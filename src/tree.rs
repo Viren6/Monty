@@ -19,6 +19,7 @@ use crate::{
     chess::{ChessState, GameState, Move},
     mcts::{MctsParams, SearchHelpers},
     networks::PolicyNetwork,
+    numa::NumaBuffer,
 };
 
 const NUM_SIDES: usize = 2;
@@ -91,16 +92,13 @@ impl Default for RootAccumulatorEntry {
 
 struct RootAccumulator {
     nodes: [AtomicU64; MAX_BATCHED_NODES],
-    entries: Vec<[RootAccumulatorEntry; MAX_BATCHED_NODES]>,
+    entries: NumaBuffer<[RootAccumulatorEntry; MAX_BATCHED_NODES]>,
 }
 
 impl RootAccumulator {
     fn new(threads: usize) -> Self {
         let nodes = array::from_fn(|_| AtomicU64::new(NodePtr::NULL.inner()));
-        let mut entries = Vec::with_capacity(threads);
-        for _ in 0..threads {
-            entries.push(array::from_fn(|_| RootAccumulatorEntry::new()));
-        }
+        let entries = NumaBuffer::new(threads);
 
         Self { nodes, entries }
     }
@@ -130,7 +128,11 @@ impl RootAccumulator {
             return;
         }
 
-        if let Some(flush) = self.entries[thread_id][slot].add(delta) {
+        let thread_entries = self.entries.init_with(thread_id, || {
+            array::from_fn(|_| RootAccumulatorEntry::new())
+        });
+
+        if let Some(flush) = thread_entries[slot].add(delta) {
             node.apply_delta(flush);
         }
     }
@@ -165,8 +167,10 @@ impl RootAccumulator {
     }
 
     fn clear_slot(&self, slot: usize) {
-        for thread_entries in &self.entries {
-            thread_entries[slot].reset();
+        for idx in 0..self.entries.len() {
+            if let Some(entries) = self.entries.try_get(idx) {
+                entries[slot].reset();
+            }
         }
     }
 
@@ -178,8 +182,12 @@ impl RootAccumulator {
             return;
         }
 
+        let Some(thread_entries) = self.entries.try_get(thread_id) else {
+            return;
+        };
+
         for slot in 0..MAX_BATCHED_NODES {
-            let pending = self.entries[thread_id][slot].take();
+            let pending = thread_entries[slot].take();
 
             if pending.is_empty() {
                 continue;
@@ -214,9 +222,11 @@ impl RootAccumulator {
             slot.store(value, Ordering::Relaxed);
         }
 
-        for thread_entries in &self.entries {
-            for entry in thread_entries {
-                entry.reset();
+        for idx in 0..self.entries.len() {
+            if let Some(entries) = self.entries.try_get(idx) {
+                for entry in entries {
+                    entry.reset();
+                }
             }
         }
     }
