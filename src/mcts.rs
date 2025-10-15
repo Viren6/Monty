@@ -292,6 +292,7 @@ impl<'a> Searcher<'a> {
                     timer,
                     search_stats.total_nodes(),
                     search_stats.total_iters(),
+                    search_stats.main_iters(),
                 );
 
                 *timer_last_output = Instant::now();
@@ -306,6 +307,7 @@ impl<'a> Searcher<'a> {
                 timer,
                 search_stats.total_nodes(),
                 search_stats.total_iters(),
+                search_stats.main_iters(),
             );
 
             *timer_last_output = Instant::now();
@@ -425,6 +427,7 @@ impl<'a> Searcher<'a> {
                 &timer,
                 search_stats.total_nodes(),
                 search_stats.total_iters(),
+                search_stats.main_iters(),
             );
         }
 
@@ -450,6 +453,7 @@ impl<'a> Searcher<'a> {
         timer: &Instant,
         nodes: usize,
         iters: usize,
+        main_iters: usize,
     ) {
         print!("info depth {depth} seldepth {seldepth} ");
         let (pv_line, score) = self.get_pv(depth);
@@ -472,7 +476,7 @@ impl<'a> Searcher<'a> {
         let nps = nodes as f32 / elapsed.as_secs_f32();
         let ms = elapsed.as_millis();
 
-        print!("time {ms} nodes {nodes} nps {nps:.0} pv");
+        print!("time {ms} nodes {nodes} main_iters {main_iters} nps {nps:.0} pv");
 
         for mov in pv_line {
             print!(" {}", self.tree.root_position().conv_mov_to_str(mov));
