@@ -163,6 +163,11 @@ impl<'a> Searcher<'a> {
         let iters = search_stats.main_iters();
 
         if search_stats.total_iters() >= limits.max_nodes {
+            println!(
+                "info string tm limit stop reason=max_nodes total_iters={} limit={}",
+                search_stats.total_iters(),
+                limits.max_nodes
+            );
             return true;
         }
 
@@ -193,7 +198,16 @@ impl<'a> Searcher<'a> {
 
         if iters.is_multiple_of(128) {
             if let Some(time) = limits.max_time {
-                if timer.elapsed().as_millis() >= time {
+                let elapsed = timer.elapsed().as_millis();
+                println!(
+                    "info string tm limit check hard elapsed={} limit={} iters={}",
+                    elapsed, time, iters
+                );
+                if elapsed >= time {
+                    println!(
+                        "info string tm limit stop reason=hard_time elapsed={} limit={}",
+                        elapsed, time
+                    );
                     return true;
                 }
             }
@@ -202,6 +216,10 @@ impl<'a> Searcher<'a> {
             if new_best_move != *best_move {
                 *best_move = new_best_move;
                 *best_move_changes += 1;
+                println!(
+                    "info string tm best move changed count={} iters={}",
+                    *best_move_changes, iters
+                );
             }
         }
 
@@ -216,12 +234,28 @@ impl<'a> Searcher<'a> {
                     time,
                 );
 
+                println!(
+                    "info string tm soft cutoff check should_stop={} score={:.3} prev_score={:.3} iters={} opt_time={}",
+                    should_stop,
+                    score,
+                    *previous_score,
+                    iters,
+                    time
+                );
+
                 if should_stop {
+                    println!(
+                        "info string tm limit stop reason=soft_time elapsed={} opt_time={} iters={}",
+                        timer.elapsed().as_millis(),
+                        time,
+                        iters
+                    );
                     return true;
                 }
 
                 if iters.is_multiple_of(16384) {
                     *best_move_changes = 0;
+                    println!("info string tm reset best move changes at iters={}", iters);
                 }
 
                 *previous_score = if *previous_score == f32::NEG_INFINITY {
@@ -229,6 +263,11 @@ impl<'a> Searcher<'a> {
                 } else {
                     (score + 2.0 * *previous_score) / 3.0
                 };
+
+                println!(
+                    "info string tm updated previous_score={:.3} iters={}",
+                    *previous_score, iters
+                );
             }
         }
 
@@ -238,6 +277,10 @@ impl<'a> Searcher<'a> {
         if new_depth > search_stats.avg_depth.load(Ordering::Relaxed) {
             search_stats.avg_depth.store(new_depth, Ordering::Relaxed);
             if new_depth >= limits.max_depth {
+                println!(
+                    "info string tm limit stop reason=depth new_depth={} limit={}",
+                    new_depth, limits.max_depth
+                );
                 return true;
             }
 

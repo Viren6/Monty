@@ -376,22 +376,47 @@ fn go(
         }
     }
 
+    println!(
+        "info string tm go parsed max_nodes={} max_time={:?} max_depth={} times={:?} incs={:?} movestogo={:?}",
+        max_nodes, max_time, max_depth, times, incs, movestogo
+    );   
+
     // `go wtime <wtime> btime <btime> winc <winc> binc <binc>``
     if let Some(mut remaining) = times[pos.stm()] {
         // apply move overhead
         remaining = remaining.saturating_sub(move_overhead as u64).max(10);
+
+        println!(
+            "info string tm go remaining after overhead side={} remaining={} overhead={}",
+            pos.stm(),
+            remaining,
+            move_overhead
+        );
 
         let timeman =
             SearchHelpers::get_time(remaining, incs[pos.stm()], root_game_ply, movestogo, params);
 
         opt_time = Some(timeman.0);
         max_time = Some(timeman.1);
+
+        println!(
+            "info string tm go computed opt_time={} max_time={} root_ply={} increment={:?}",
+            timeman.0,
+            timeman.1,
+            root_game_ply,
+            incs[pos.stm()]
+        );
     }
 
     // `go movetime <time>`
     if let Some(max) = max_time {
         // if both movetime and increment time controls given, use
         max_time = Some(max_time.unwrap_or(u128::MAX).min(max));
+
+        println!(
+            "info string tm go hard max_time set to {}",
+            max_time.unwrap_or(u128::MAX)
+        );
     }
 
     let abort = AtomicBool::new(false);
@@ -406,6 +431,11 @@ fn go(
         #[cfg(feature = "datagen")]
         kld_min_gain: None,
     };
+
+    println!(
+        "info string tm go final limits opt_time={:?} max_time={:?} max_nodes={} max_depth={}",
+        limits.opt_time, limits.max_time, limits.max_nodes, limits.max_depth
+    );
 
     std::thread::scope(|s| {
         s.spawn(|| {

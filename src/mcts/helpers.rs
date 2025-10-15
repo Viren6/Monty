@@ -102,9 +102,17 @@ impl SearchHelpers {
         movestogo: Option<u64>,
         params: &MctsParams,
     ) -> (u128, u128) {
+        println!(
+            "info string tm get_time start remaining={} increment={:?} ply={} movestogo={:?}",
+            time, increment, ply, movestogo
+        );
         if let Some(mtg) = movestogo {
             // Cyclic time control (x moves in y seconds)
             let max_time = (time as f64 / (mtg as f64).clamp(1.0, 30.0)) as u128;
+            println!(
+                "info string tm get_time cyclic-control max_time={} moves_to_go={}",
+                max_time, mtg
+            );
             (max_time, max_time)
         } else {
             // Increment time control (x seconds + y increment)
@@ -113,6 +121,11 @@ impl SearchHelpers {
 
             let time_left = (time + inc * (mtg - 1) - 10 * (2 + mtg)).max(1) as f64;
             let log_time = (time_left / 1000.0).log10();
+
+            println!(
+                "info string tm get_time increment-control inc={} virtual_mtg={} time_left={:.3} log_time={:.5}",
+                inc, mtg, time_left, log_time
+            );
 
             let opt_constant = (params.tm_opt_value1() / 100.0
                 + params.tm_opt_value2() / 1000.0 * log_time)
@@ -127,6 +140,11 @@ impl SearchHelpers {
             let max_scale = (max_constant + ply as f64 / params.tm_maxscale_value1())
                 .min(params.tm_maxscale_value2());
 
+            println!(
+                "info string tm get_time scales opt_constant={:.5} opt_scale={:.5} max_constant={:.5} max_scale={:.5}",
+                opt_constant, opt_scale, max_constant, max_scale
+            );
+
             // More time at the start of the game
             let bonus_ply = params.tm_bonus_ply();
             let bonus = if ply < bonus_ply as u32 {
@@ -135,9 +153,21 @@ impl SearchHelpers {
                 1.0
             };
 
+            println!(
+                "info string tm get_time bonus bonus_ply={:.3} ply={} bonus_scale={:.5}",
+                bonus_ply, ply, bonus
+            );
+
             let opt_time = (opt_scale * bonus * time_left) as u128;
             let max_time =
                 (max_scale * opt_time as f64).min(time as f64 * params.tm_max_time()) as u128;
+
+            println!(
+                "info string tm get_time result opt_time={} max_time={} hard_cap={}",
+                opt_time,
+                max_time,
+                (time as f64 * params.tm_max_time()) as u128
+            );
 
             (opt_time, max_time)
         }
@@ -152,6 +182,11 @@ impl SearchHelpers {
         time: u128,
     ) -> (bool, f32) {
         let elapsed = timer.elapsed().as_millis();
+
+        println!(
+            "info string tm soft_cutoff start elapsed={} prev_score={:.3} best_move_changes={} nodes={} alloc_time={}",
+            elapsed, previous_score, best_move_changes, nodes, time
+        );
 
         // Use more time if our eval is falling, and vice versa
         let (_, mut score) = searcher.get_pv(0);
@@ -182,6 +217,20 @@ impl SearchHelpers {
         let total_time =
             (time as f32 * falling_eval * best_move_instability * best_move_visits) as u128;
 
-        (elapsed >= total_time, score)
+        let should_stop = elapsed >= total_time;
+
+        println!(
+            "info string tm soft_cutoff eval_diff={:.3} falling_eval={:.5} instability={:.5} nodes_effort={:.5} visits_scale={:.5} total_time={} stop={} new_score={:.3}",
+            eval_diff,
+            falling_eval,
+            best_move_instability,
+            nodes_effort,
+            best_move_visits,
+            total_time,
+            should_stop,
+            score
+        );
+
+        (should_stop, score)
     }
 }
