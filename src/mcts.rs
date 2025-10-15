@@ -191,7 +191,7 @@ impl<'a> Searcher<'a> {
             }
         }
 
-        if iters.is_multiple_of(128) {
+        if search_stats.should_check_main_time(iters) {
             if let Some(time) = limits.max_time {
                 if timer.elapsed().as_millis() >= time {
                     return true;
@@ -205,8 +205,8 @@ impl<'a> Searcher<'a> {
             }
         }
 
-        if iters.is_multiple_of(4096) {
-            if let Some(time) = limits.opt_time {
+        if let Some(time) = limits.opt_time {
+            if search_stats.should_check_opt_time(iters) {
                 let (should_stop, score) = SearchHelpers::soft_time_cutoff(
                     self,
                     timer,
@@ -220,7 +220,7 @@ impl<'a> Searcher<'a> {
                     return true;
                 }
 
-                if iters.is_multiple_of(16384) {
+                if search_stats.should_reset_best_move(iters) {
                     *best_move_changes = 0;
                 }
 
@@ -256,7 +256,10 @@ impl<'a> Searcher<'a> {
         }
 
         #[cfg(not(feature = "uci-minimal"))]
-        if uci_output && iters.is_multiple_of(8192) && timer_last_output.elapsed().as_secs() >= 15 {
+        if uci_output
+            && search_stats.should_emit_uci_report(iters)
+            && timer_last_output.elapsed().as_secs() >= 15
+        {
             self.search_report(
                 search_stats.avg_depth.load(Ordering::Relaxed),
                 search_stats.seldepth(),

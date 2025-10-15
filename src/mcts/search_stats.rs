@@ -12,6 +12,11 @@ pub struct ThreadStats {
 pub struct SearchStats {
     per_thread: Vec<ThreadStats>, // accessed only by corresponding thread
     pub avg_depth: AtomicUsize,
+    next_main_time_check: AtomicUsize,
+    next_opt_time_check: AtomicUsize,
+    next_best_move_reset: AtomicUsize,
+    #[cfg(not(feature = "uci-minimal"))]
+    next_uci_report: AtomicUsize,
 }
 
 impl SearchStats {
@@ -19,7 +24,48 @@ impl SearchStats {
         Self {
             per_thread: (0..threads).map(|_| ThreadStats::default()).collect(),
             avg_depth: AtomicUsize::new(0),
+            next_main_time_check: AtomicUsize::new(128),
+            next_opt_time_check: AtomicUsize::new(4096),
+            next_best_move_reset: AtomicUsize::new(16384),
+            #[cfg(not(feature = "uci-minimal"))]
+            next_uci_report: AtomicUsize::new(8192),
         }
+    }
+
+    fn advance_threshold(threshold: &AtomicUsize, step: usize, iters: usize) -> bool {
+        let mut current = threshold.load(Ordering::Relaxed);
+        loop {
+            if iters < current {
+                return false;
+            }
+
+            match threshold.compare_exchange(
+                current,
+                current + step,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
+    pub fn should_check_main_time(&self, iters: usize) -> bool {
+        Self::advance_threshold(&self.next_main_time_check, 128, iters)
+    }
+
+    pub fn should_check_opt_time(&self, iters: usize) -> bool {
+        Self::advance_threshold(&self.next_opt_time_check, 4096, iters)
+    }
+
+    pub fn should_reset_best_move(&self, iters: usize) -> bool {
+        Self::advance_threshold(&self.next_best_move_reset, 16384, iters)
+    }
+
+    #[cfg(not(feature = "uci-minimal"))]
+    pub fn should_emit_uci_report(&self, iters: usize) -> bool {
+        Self::advance_threshold(&self.next_uci_report, 8192, iters)
     }
 
     #[inline]
