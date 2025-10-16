@@ -109,4 +109,8 @@ impl TreeHalf {
     pub fn is_full(&self) -> bool {
         self.used() >= self.nodes.len()
     }
+
+    pub fn capacity(&self) -> usize {
+        self.nodes.len()
+    }
 }

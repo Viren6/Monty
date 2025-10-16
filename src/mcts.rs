@@ -65,6 +65,56 @@ impl<'a> Searcher<'a> {
         }
     }
 
+    #[cfg(not(feature = "uci-minimal"))]
+    fn fullness_ratio(used: usize, capacity: usize) -> f64 {
+        if capacity == 0 {
+            0.0
+        } else {
+            used as f64 / capacity as f64
+        }
+    }
+
+    #[cfg(not(feature = "uci-minimal"))]
+    fn log_tree_status(&self, event: &str) {
+        let active_half = self.tree.half();
+        let standby_half = active_half ^ 1;
+        let active_used = self.tree.used_in_half(active_half);
+        let active_capacity = self.tree.capacity_in_half(active_half);
+        let standby_used = self.tree.used_in_half(standby_half);
+        let standby_capacity = self.tree.capacity_in_half(standby_half);
+
+        println!(
+            "info string tree event={} active_half={} active_used={} active_capacity={} active_fullness={:.5} standby_half={} standby_used={} standby_capacity={} standby_fullness={:.5}",
+            event,
+            active_half,
+            active_used,
+            active_capacity,
+            Self::fullness_ratio(active_used, active_capacity),
+            standby_half,
+            standby_used,
+            standby_capacity,
+            Self::fullness_ratio(standby_used, standby_capacity),
+        );
+    }
+
+    #[cfg(not(feature = "uci-minimal"))]
+    fn capture_tree_flip_context(&self) -> (usize, usize, usize, usize, usize) {
+        let active_half = self.tree.half();
+        let standby_half = active_half ^ 1;
+        let active_used = self.tree.used_in_half(active_half);
+        let active_capacity = self.tree.capacity_in_half(active_half);
+        let standby_used = self.tree.used_in_half(standby_half);
+        let standby_capacity = self.tree.capacity_in_half(standby_half);
+
+        (
+            active_half,
+            active_used,
+            active_capacity,
+            standby_used,
+            standby_capacity,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn playout_until_full_main(
         &self,
@@ -79,28 +129,42 @@ impl<'a> Searcher<'a> {
         #[cfg(not(feature = "uci-minimal"))] uci_output: bool,
         thread_id: usize,
     ) {
-        if self.playout_until_full_internal(search_stats, true, thread_id, || {
-            self.check_limits(
-                limits,
-                timer,
-                #[cfg(not(feature = "uci-minimal"))]
-                timer_last_output,
-                search_stats,
-                best_move,
-                best_move_changes,
-                previous_score,
-                #[cfg(feature = "datagen")]
-                previous_kld,
-                #[cfg(not(feature = "uci-minimal"))]
-                uci_output,
-            )
-        }) {
+        if self.playout_until_full_internal(
+            search_stats,
+            true,
+            thread_id,
+            #[cfg(not(feature = "uci-minimal"))]
+            uci_output,
+            || {
+                self.check_limits(
+                    limits,
+                    timer,
+                    #[cfg(not(feature = "uci-minimal"))]
+                    timer_last_output,
+                    search_stats,
+                    best_move,
+                    best_move_changes,
+                    previous_score,
+                    #[cfg(feature = "datagen")]
+                    previous_kld,
+                    #[cfg(not(feature = "uci-minimal"))]
+                    uci_output,
+                )
+            },
+        ) {
             self.abort.store(true, Ordering::Relaxed);
         }
     }
 
     fn playout_until_full_worker(&self, search_stats: &SearchStats, thread_id: usize) {
-        let _ = self.playout_until_full_internal(search_stats, false, thread_id, || false);
+        let _ = self.playout_until_full_internal(
+            search_stats,
+            false,
+            thread_id,
+            #[cfg(not(feature = "uci-minimal"))]
+            false,
+            || false,
+        );
     }
 
     fn playout_until_full_internal<F>(
@@ -108,6 +172,7 @@ impl<'a> Searcher<'a> {
         search_stats: &SearchStats,
         main_thread: bool,
         thread_id: usize,
+        #[cfg(not(feature = "uci-minimal"))] uci_output: bool,
         mut stop: F,
     ) -> bool
     where
@@ -126,6 +191,10 @@ impl<'a> Searcher<'a> {
             )
             .is_none()
             {
+                #[cfg(not(feature = "uci-minimal"))]
+                if main_thread && uci_output {
+                    self.log_tree_status("allocation_failure");
+                }
                 return false;
             }
 
@@ -411,8 +480,47 @@ impl<'a> Searcher<'a> {
                 }
             });
 
+            #[cfg(not(feature = "uci-minimal"))]
+            if uci_output && self.tree.is_full() {
+                self.log_tree_status("tree_full");
+            }
+
             if !self.abort.load(Ordering::Relaxed) {
+                #[cfg(not(feature = "uci-minimal"))]
+                let flip_context = if uci_output {
+                    Some(self.capture_tree_flip_context())
+                } else {
+                    None
+                };
+
                 self.tree.flip(true);
+
+                #[cfg(not(feature = "uci-minimal"))]
+                if let Some((old_half, old_used, old_capacity, standby_used, standby_capacity)) =
+                    flip_context
+                {
+                    let new_half = self.tree.half();
+                    let new_used = self.tree.used_in_half(new_half);
+                    let new_capacity = self.tree.capacity_in_half(new_half);
+                    let standby_half = old_half ^ 1;
+
+                    println!(
+                        "info string tree event=flip copy_across={} old_half={} old_used={} old_capacity={} old_fullness={:.5} standby_half={} standby_prev_used={} standby_capacity={} standby_prev_fullness={:.5} new_half={} new_used={} new_capacity={} new_fullness={:.5}",
+                        true,
+                        old_half,
+                        old_used,
+                        old_capacity,
+                        Self::fullness_ratio(old_used, old_capacity),
+                        standby_half,
+                        standby_used,
+                        standby_capacity,
+                        Self::fullness_ratio(standby_used, standby_capacity),
+                        new_half,
+                        new_used,
+                        new_capacity,
+                        Self::fullness_ratio(new_used, new_capacity),
+                    );
+                }
             }
         }
 

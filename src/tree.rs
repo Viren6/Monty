@@ -344,6 +344,24 @@ impl Tree {
         self.tree[self.half()].is_full()
     }
 
+    pub fn used(&self) -> usize {
+        self.tree[self.half()].used()
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.tree[self.half()].capacity()
+    }
+
+    pub fn used_in_half(&self, half: usize) -> usize {
+        debug_assert!(half < NUM_SIDES);
+        self.tree[half].used()
+    }
+
+    pub fn capacity_in_half(&self, half: usize) -> usize {
+        debug_assert!(half < NUM_SIDES);
+        self.tree[half].capacity()
+    }
+
     pub fn push_new_node(&self) -> Option<NodePtr> {
         self.tree[self.half()].reserve_nodes_thread(1, 0)
     }
