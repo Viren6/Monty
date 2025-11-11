@@ -270,8 +270,7 @@ fn setoption(
         if *x == "Threads" {
             *threads = y.parse().unwrap();
             let root = tree.root_position().clone();
-            *tree = Tree::new_mb(*hash_mb, *threads);
-            tree.set_root_position(&root);
+            tree.rebuild(*hash_mb, *threads, root);
             return;
         }
 
@@ -288,8 +287,7 @@ fn setoption(
     if name == "Hash" {
         *hash_mb = val as usize;
         let root = tree.root_position().clone();
-        *tree = Tree::new_mb(*hash_mb, *threads);
-        tree.set_root_position(&root);
+        tree.rebuild(*hash_mb, *threads, root);
     } else {
         params.set(name, val);
     }
