@@ -273,8 +273,8 @@ fn apply_contempt(raw: EvalWdl, contempt: f32) -> EvalWdl {
     let s = 2.0 / denom;
     let mu = (a - b) / denom;
 
-    // Damp contempt effect by 5x
-    let delta_mu = contempt * std::f32::consts::LN_10 / (400.0 * 5.0);
+    // Damp contempt effect by 16x
+    let delta_mu = contempt * std::f32::consts::LN_10 / (400.0 * 16.0);
     let mu_new = (mu + delta_mu).clamp(-8.0, 8.0);
     let s_new = s;
 
