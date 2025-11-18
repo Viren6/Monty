@@ -99,6 +99,7 @@ pub struct Node {
     sum_q: AtomicU64,
     sum_sq_q: AtomicU64,
     gini_impurity: AtomicU8,
+    forward: AtomicU64,
 }
 
 impl Node {
@@ -114,7 +115,16 @@ impl Node {
             sum_q: AtomicU64::new(0),
             sum_sq_q: AtomicU64::new(0),
             gini_impurity: AtomicU8::new(0),
+            forward: AtomicU64::new(NodePtr::NULL.inner()),
         }
+    }
+
+    pub fn forward(&self) -> NodePtr {
+        NodePtr::from_raw(self.forward.load(Ordering::Relaxed))
+    }
+
+    pub fn set_forward(&self, ptr: NodePtr) {
+        self.forward.store(ptr.inner(), Ordering::Relaxed);
     }
 
     pub fn set_new(&self, mov: Move, policy: f32) {
@@ -242,6 +252,7 @@ impl Node {
         self.visits.store(other.visits.load(Relaxed), Relaxed);
         self.sum_q.store(other.sum_q.load(Relaxed), Relaxed);
         self.sum_sq_q.store(other.sum_sq_q.load(Relaxed), Relaxed);
+        self.forward.store(other.forward.load(Relaxed), Relaxed);
     }
 
     pub fn clear(&self) {
@@ -252,6 +263,7 @@ impl Node {
         self.sum_q.store(0, Ordering::Relaxed);
         self.sum_sq_q.store(0, Ordering::Relaxed);
         self.threads.store(0, Ordering::Relaxed);
+        self.forward.store(NodePtr::NULL.inner(), Ordering::Relaxed);
     }
 
     pub fn update(&self, q: f32) {

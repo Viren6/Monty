@@ -8,15 +8,17 @@ use super::{SearchHelpers, Searcher};
 pub fn perform_one(
     searcher: &Searcher,
     pos: &mut ChessState,
-    ptr: NodePtr,
+    mut ptr: NodePtr,
     depth: &mut usize,
     thread_id: usize,
 ) -> Option<f32> {
+    let tree = searcher.tree;
+    ptr = tree.resolve(ptr);
+
     *depth += 1;
 
     let cur_hash = pos.hash();
     let mut child_hash: Option<u64> = None;
-    let tree = searcher.tree;
     let node = &tree[ptr];
 
     let mut u = if node.is_terminal() || node.visits() == 0 {
@@ -24,16 +26,25 @@ pub fn perform_one(
             node.set_state(pos.game_state());
         }
 
-        // probe hash table to use in place of network
-        if node.state() == GameState::Ongoing {
-            if let Some(entry) = tree.probe_hash(cur_hash) {
-                entry.q()
-            } else {
-                get_utility(searcher, ptr, pos)
+    // probe hash table to use in place of network
+    if node.state() == GameState::Ongoing {
+        if let Some(entry) = tree.probe_hash(cur_hash) {
+            if !entry.node.is_null() {
+                let target = tree.resolve(entry.node);
+                if !target.is_null() && tree[target].visits() > 0 {
+                     node.set_forward(target);
+                    *depth -= 1;
+                    return perform_one(searcher, pos, target, depth, thread_id);
+                }
             }
+            
+            entry.q()
         } else {
             get_utility(searcher, ptr, pos)
         }
+    } else {
+        get_utility(searcher, ptr, pos)
+    }
     } else {
         // expand node on the second visit
         if node.is_not_expanded() {
@@ -95,9 +106,9 @@ pub fn perform_one(
     // store value for the side to move at the visited node in TT
     if let Some(h) = child_hash {
         // `u` here is from the current node's perspective, so flip for the child
-        tree.push_hash(h, 1.0 - u);
+        tree.push_hash(h, 1.0 - u, NodePtr::NULL);
     } else {
-        tree.push_hash(cur_hash, u);
+        tree.push_hash(cur_hash, u, ptr);
     }
 
     // flip perspective and backpropagate

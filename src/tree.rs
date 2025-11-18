@@ -442,12 +442,26 @@ impl Tree {
         NodePtr::new(self.half.load(Ordering::Relaxed), 0)
     }
 
+    pub fn resolve(&self, mut ptr: NodePtr) -> NodePtr {
+        for _ in 0..128 {
+            if ptr.is_null() {
+                return NodePtr::NULL;
+            }
+            let forward = self[ptr].forward();
+            if forward.is_null() {
+                return ptr;
+            }
+            ptr = forward;
+        }
+        ptr
+    }
+
     pub fn probe_hash(&self, hash: u64) -> Option<HashEntry> {
         self.hash.get(hash)
     }
 
-    pub fn push_hash(&self, hash: u64, wins: f32) {
-        self.hash.push(hash, wins);
+    pub fn push_hash(&self, hash: u64, wins: f32, node: NodePtr) {
+        self.hash.push(hash, wins, node);
     }
 
     pub fn update_node_stats(&self, ptr: NodePtr, value: f32, thread_id: usize) {
@@ -732,7 +746,9 @@ impl Tree {
         let first_child_ptr = self[ptr].actions();
 
         for action in 0..limit.min(self[ptr].num_actions()) {
-            let score = key(&self[first_child_ptr + action]);
+            let child_ptr = first_child_ptr + action;
+            let resolved = self.resolve(child_ptr);
+            let score = key(&self[resolved]);
 
             if score > best_score {
                 best_score = score;
