@@ -9,7 +9,7 @@ pub use search_stats::SearchStats;
 
 use crate::{
     chess::{GameState, Move},
-    networks::{PolicyNetwork, ValueNetwork},
+    networks::{value, PolicyNetwork, ValueNetwork},
     tree::{NodePtr, Tree},
 };
 
@@ -280,6 +280,8 @@ impl<'a> Searcher<'a> {
         #[cfg(feature = "datagen")] use_dirichlet_noise: bool,
         #[cfg(feature = "datagen")] temp: f32,
     ) -> SearchRet {
+        value::begin_search_logging();
+
         let timer = Instant::now();
         #[cfg(not(feature = "uci-minimal"))]
         let mut timer_last_output = Instant::now();
@@ -387,6 +389,8 @@ impl<'a> Searcher<'a> {
         }
 
         let (_, _mov, q) = self.get_best_action(self.tree.root_node());
+
+        value::finalize_logging_request();
 
         #[cfg(not(feature = "datagen"))]
         {

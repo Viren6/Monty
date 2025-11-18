@@ -1,7 +1,7 @@
 use crate::{
     chess::{ChessState, Move},
     mcts::{Limits, MctsParams, SearchHelpers, Searcher, REPORT_ITERS},
-    networks::{PolicyNetwork, ValueNetwork},
+    networks::{value, PolicyNetwork, ValueNetwork},
     tree::Tree,
 };
 
@@ -607,6 +607,7 @@ fn handle_search_input(abort: &AtomicBool) -> Option<String> {
             "quit" => std::process::exit(0),
             "stop" => {
                 abort.store(true, Ordering::Relaxed);
+                value::request_feature_log();
                 return None;
             }
             _ => return Some(input),

@@ -1,4 +1,5 @@
 pub mod attacks;
+mod feature_logger;
 pub mod threats;
 
 use montyformat::chess::Position;
@@ -38,6 +39,8 @@ impl ValueNetwork {
             pst.add(&self.pst[feat]);
             count += 1;
         });
+
+        feature_logger::record_features(&feats[..count]);
 
         let mut l2 = Accumulator([0; L1]);
 
@@ -91,3 +94,5 @@ impl ValueNetwork {
         (win / sum, draw / sum, loss / sum)
     }
 }
+
+pub use feature_logger::{begin_search_logging, finalize_logging_request, request_feature_log};
