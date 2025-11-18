@@ -19,18 +19,20 @@ pub fn perform_one(
     let tree = searcher.tree;
     let node = &tree[ptr];
 
-    let mut u = if node.is_terminal() || node.visits() == 0 {
-        if node.visits() == 0 {
-            node.set_state(pos.game_state());
-        }
+    let was_empty = node.visits() == 0;
+    if was_empty {
+        node.set_state(pos.game_state());
+    }
 
-        // probe hash table to use in place of network
+    let tt_value = if was_empty && node.state() == GameState::Ongoing {
+        tree.prime_node_from_hash(ptr, cur_hash)
+    } else {
+        None
+    };
+
+    let mut u = if node.is_terminal() || was_empty {
         if node.state() == GameState::Ongoing {
-            if let Some(entry) = tree.probe_hash(cur_hash) {
-                entry.q()
-            } else {
-                get_utility(searcher, ptr, pos)
-            }
+            tt_value.unwrap_or_else(|| get_utility(searcher, ptr, pos))
         } else {
             get_utility(searcher, ptr, pos)
         }

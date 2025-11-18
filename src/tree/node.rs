@@ -6,7 +6,10 @@ use std::{
 
 use crate::chess::{GameState, Move};
 
-use super::lock::{CustomLock, WriteGuard};
+use super::{
+    hash::HashEntry,
+    lock::{CustomLock, WriteGuard},
+};
 
 const QUANT: i32 = 16384 * 4;
 
@@ -252,6 +255,32 @@ impl Node {
         self.sum_q.store(0, Ordering::Relaxed);
         self.sum_sq_q.store(0, Ordering::Relaxed);
         self.threads.store(0, Ordering::Relaxed);
+    }
+
+    pub fn try_import_hash_entry(&self, entry: HashEntry, max_visits: u16) -> bool {
+        let visits = entry.visits().min(max_visits) as u64;
+
+        if visits == 0 {
+            return false;
+        }
+
+        let q = entry.q().clamp(0.0, 1.0);
+        let quant_q = (f64::from(q) * f64::from(QUANT)).round().max(0.0);
+        let visits_f = visits as f64;
+        let sum_q = (quant_q * visits_f).round() as u64;
+        let sum_sq_q = (quant_q * quant_q * visits_f).round() as u64;
+
+        if self
+            .visits
+            .compare_exchange(0, visits, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
+        {
+            return false;
+        }
+
+        self.sum_q.store(sum_q, Ordering::Relaxed);
+        self.sum_sq_q.store(sum_sq_q, Ordering::Relaxed);
+        true
     }
 
     pub fn update(&self, q: f32) {

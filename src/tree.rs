@@ -29,6 +29,7 @@ const ROOT_ACCUM_EAGER_LIMIT: u64 = 256;
 const NODE_BATCH_THRESHOLD: u64 = 16384;
 const MAX_BATCHED_NODES: usize = 32;
 const BATCH_SLOT_RESERVED: u64 = u64::MAX - 1;
+const TT_IMPORT_MAX_VISITS: u16 = 32;
 
 #[repr(align(64))]
 struct RootAccumulatorEntry {
@@ -448,6 +449,12 @@ impl Tree {
 
     pub fn push_hash(&self, hash: u64, wins: f32) {
         self.hash.push(hash, wins);
+    }
+
+    pub fn prime_node_from_hash(&self, ptr: NodePtr, hash: u64) -> Option<f32> {
+        let entry = self.hash.get(hash)?;
+        self[ptr].try_import_hash_entry(entry, TT_IMPORT_MAX_VISITS);
+        Some(entry.q())
     }
 
     pub fn update_node_stats(&self, ptr: NodePtr, value: f32, thread_id: usize) {
