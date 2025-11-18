@@ -122,7 +122,7 @@ fn get_utility(searcher: &Searcher, ptr: NodePtr, pos: &ChessState) -> f32 {
 fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
     let is_root = ptr == searcher.tree.root_node();
 
-    let cpuct = SearchHelpers::get_cpuct(searcher.params, node, is_root);
+    let cpuct = SearchHelpers::get_cpuct(searcher, node, is_root);
     let fpu = SearchHelpers::get_fpu(node);
     let expl_scale = SearchHelpers::get_explore_scaling(searcher.params, node);
 

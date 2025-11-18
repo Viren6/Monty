@@ -137,6 +137,7 @@ make_mcts_params! {
     base_pst_adjustment: f32 = 0.1, 0.01, 1.0, 0.01, 0.002;
     root_cpuct: f32 = if cfg!(feature = "datagen") { 1.0 } else { 0.422 }, 0.1, 5.0, 0.065, 0.002;
     cpuct:      f32 = if cfg!(feature = "datagen") { 0.157 } else { 0.269 }, 0.1, 5.0, 0.065, 0.002;
+    cpuct_trend_adjustment: f32 = 0.15, 0.0, 1.0, 0.01, 0.002;
     cpuct_var_weight: f32 = 0.808, 0.0, 2.0, 0.085, 0.002;
     cpuct_var_scale: f32 = 0.278, 0.0, 2.0, 0.02, 0.002;
     cpuct_var_warmup: f32 = 0.5, 0.0, 1.0, 0.01, 0.002;

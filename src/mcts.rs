@@ -17,7 +17,7 @@ use crate::{
 use crate::tree::Node;
 
 use std::{
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
     thread,
     time::Instant,
 };
@@ -46,6 +46,9 @@ pub struct Searcher<'a> {
     policy: &'a PolicyNetwork,
     value: &'a ValueNetwork,
     abort: &'a AtomicBool,
+    winning_trend: AtomicBool,
+    trend_ready: AtomicBool,
+    last_root_score: AtomicU32,
 }
 
 impl<'a> Searcher<'a> {
@@ -62,6 +65,9 @@ impl<'a> Searcher<'a> {
             policy,
             value,
             abort,
+            winning_trend: AtomicBool::new(false),
+            trend_ready: AtomicBool::new(false),
+            last_root_score: AtomicU32::new(f32::NAN.to_bits()),
         }
     }
 
@@ -198,7 +204,8 @@ impl<'a> Searcher<'a> {
                 }
             }
 
-            let (_, new_best_move, _) = self.get_best_action(self.tree.root_node());
+            let (_, new_best_move, score) = self.get_best_action(self.tree.root_node());
+            self.update_root_trend(score);
             if new_best_move != *best_move {
                 *best_move = new_best_move;
                 *best_move_changes += 1;
@@ -269,6 +276,39 @@ impl<'a> Searcher<'a> {
         }
 
         false
+    }
+
+    fn update_root_trend(&self, score: f32) {
+        let prev_bits = self
+            .last_root_score
+            .swap(score.to_bits(), Ordering::Relaxed);
+        let prev = f32::from_bits(prev_bits);
+
+        if prev.is_nan() {
+            return;
+        }
+
+        self.trend_ready.store(true, Ordering::Relaxed);
+        self.winning_trend.store(score > prev, Ordering::Relaxed);
+    }
+
+    fn cpuct_trend_factor(&self) -> f32 {
+        if !self.trend_ready.load(Ordering::Relaxed) {
+            return 1.0;
+        }
+
+        let adjustment = self.params.cpuct_trend_adjustment();
+        if adjustment == 0.0 {
+            return 1.0;
+        }
+
+        let sign = if self.winning_trend.load(Ordering::Relaxed) {
+            1.0
+        } else {
+            -1.0
+        };
+
+        (1.0 + sign * adjustment).max(0.05)
     }
 
     pub fn search(
