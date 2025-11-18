@@ -19,6 +19,7 @@ pub fn perform_one(
 
     let cur_hash = pos.hash();
     let mut child_hash: Option<u64> = None;
+    let mut best_child_ptr = NodePtr::NULL;
     let node = &tree[ptr];
 
     let mut u = if node.is_terminal() || node.visits() == 0 {
@@ -67,6 +68,7 @@ pub fn perform_one(
         let action = pick_action(searcher, ptr, node);
 
         let child_ptr = node.actions() + action;
+        best_child_ptr = child_ptr;
 
         let mov = tree[child_ptr].parent_move();
 
@@ -97,6 +99,9 @@ pub fn perform_one(
         if tree[child_ptr].state() == GameState::Ongoing {
             tree.update_butterfly(stm, mov, u, searcher.params);
         }
+        
+        // Try to resolve child ptr to potentially better DAG node for TT storage
+        best_child_ptr = tree.resolve(best_child_ptr);
 
         tree.propogate_proven_mates(ptr, tree[child_ptr].state());
 
@@ -106,7 +111,7 @@ pub fn perform_one(
     // store value for the side to move at the visited node in TT
     if let Some(h) = child_hash {
         // `u` here is from the current node's perspective, so flip for the child
-        tree.push_hash(h, 1.0 - u, NodePtr::NULL);
+        tree.push_hash(h, 1.0 - u, best_child_ptr);
     } else {
         tree.push_hash(cur_hash, u, ptr);
     }
