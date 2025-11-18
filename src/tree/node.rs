@@ -230,6 +230,10 @@ impl Node {
         Move::from(self.mov.load(Ordering::Relaxed))
     }
 
+    pub fn set_parent_move(&self, mov: Move) {
+        self.mov.store(u16::from(mov), Ordering::Relaxed);
+    }
+
     pub fn copy_from(&self, other: &Self) {
         use std::sync::atomic::Ordering::Relaxed;
 

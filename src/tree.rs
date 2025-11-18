@@ -223,6 +223,89 @@ impl RootAccumulator {
     }
 }
 
+struct TranspositionEntry {
+    hash: AtomicU64,
+    ptr: AtomicU64,
+}
+
+impl TranspositionEntry {
+    fn new() -> Self {
+        Self {
+            hash: AtomicU64::new(0),
+            ptr: AtomicU64::new(NodePtr::NULL.inner()),
+        }
+    }
+
+    fn clear(&self) {
+        self.ptr.store(NodePtr::NULL.inner(), Ordering::Relaxed);
+        self.hash.store(0, Ordering::Relaxed);
+    }
+}
+
+struct TranspositionIndex {
+    entries: Vec<TranspositionEntry>,
+    mask: usize,
+}
+
+impl TranspositionIndex {
+    fn new(size: usize) -> Self {
+        let capacity = if size <= 1 {
+            1
+        } else {
+            size.next_power_of_two()
+        };
+        let mut entries = Vec::with_capacity(capacity);
+        entries.extend((0..capacity).map(|_| TranspositionEntry::new()));
+
+        Self {
+            entries,
+            mask: capacity - 1,
+        }
+    }
+
+    fn lookup(&self, hash: u64) -> Option<NodePtr> {
+        if self.entries.is_empty() {
+            return None;
+        }
+
+        let idx = self.index(hash);
+        let entry = &self.entries[idx];
+
+        if entry.hash.load(Ordering::Acquire) != hash {
+            return None;
+        }
+
+        let ptr = NodePtr::from_raw(entry.ptr.load(Ordering::Acquire));
+
+        if ptr.is_null() {
+            None
+        } else {
+            Some(ptr)
+        }
+    }
+
+    fn insert(&self, hash: u64, ptr: NodePtr) {
+        if self.entries.is_empty() || ptr.is_null() {
+            return;
+        }
+
+        let idx = self.index(hash);
+        let entry = &self.entries[idx];
+        entry.ptr.store(ptr.inner(), Ordering::Release);
+        entry.hash.store(hash, Ordering::Release);
+    }
+
+    fn clear(&self) {
+        for entry in &self.entries {
+            entry.clear();
+        }
+    }
+
+    fn index(&self, hash: u64) -> usize {
+        (hash as usize) & self.mask
+    }
+}
+
 struct ButterflyTable {
     data: Vec<AtomicI16>,
 }
@@ -289,6 +372,7 @@ pub struct Tree {
     tree: [TreeHalf; 2],
     half: AtomicBool,
     hash: HashTable,
+    transpositions: TranspositionIndex,
     butterfly: ButterflyTable,
     root_accumulator: RootAccumulator,
 }
@@ -324,6 +408,7 @@ impl Tree {
             ],
             half: AtomicBool::new(false),
             hash: HashTable::new(hash_cap / 4, threads),
+            transpositions: TranspositionIndex::new(tree_cap / 4),
             butterfly: ButterflyTable::new(),
             root_accumulator: RootAccumulator::new(threads),
         };
@@ -402,6 +487,7 @@ impl Tree {
         let old = usize::from(self.half.fetch_xor(true, Ordering::Relaxed));
         self.tree[old ^ 1].clear();
         self.tree[old].clear_cross_links(self.half.load(Ordering::Relaxed));
+        self.transpositions.clear();
 
         if copy_across {
             let new_root_ptr = self.tree[self.half()].reserve_nodes_thread(1, 0).unwrap();
@@ -467,6 +553,7 @@ impl Tree {
     fn clear_halves(&self) {
         self.tree[0].clear();
         self.tree[1].clear();
+        self.transpositions.clear();
     }
 
     pub fn clear(&mut self, threads: usize) {
@@ -492,14 +579,28 @@ impl Tree {
     ) -> Option<()> {
         let node = &self[node_ptr];
 
-        let actions_ptr = node.actions_mut();
-
         // when running with >1 threads, this function may
         // be called twice, and this acts as a safeguard in
         // that case
         if !node.is_not_expanded() {
             return Some(());
         }
+
+        let position_hash = pos.hash();
+
+        if let Some(existing_ptr) = self.transpositions.lookup(position_hash) {
+            if existing_ptr != node_ptr && self[existing_ptr].has_children() {
+                let mov = node.parent_move();
+                let policy = node.policy();
+                self.copy_node_across(existing_ptr, node_ptr, false);
+                node.set_parent_move(mov);
+                node.set_policy(policy);
+                self.transpositions.insert(position_hash, node_ptr);
+                return Some(());
+            }
+        }
+
+        let actions_ptr = node.actions_mut();
 
         let mut max = f32::NEG_INFINITY;
         let mut moves = [const { MaybeUninit::uninit() }; 256];
@@ -508,7 +609,10 @@ impl Tree {
 
         pos.map_moves_with_policies(policy, |mov, policy| {
             let adjusted = policy + self.butterfly.policy_bonus(stm, mov, params);
-            moves[count].write((mov, adjusted));
+            let mut child_board = pos.clone();
+            child_board.make_move(mov);
+            let hash = child_board.hash();
+            moves[count].write((mov, adjusted, hash));
             count += 1;
             max = max.max(adjusted);
         });
@@ -518,11 +622,11 @@ impl Tree {
         let pst = SearchHelpers::get_pst(depth, self[node_ptr].q(), params);
 
         let slice = unsafe {
-            std::slice::from_raw_parts_mut(moves.as_mut_ptr() as *mut (Move, f32), count)
+            std::slice::from_raw_parts_mut(moves.as_mut_ptr() as *mut (Move, f32, u64), count)
         };
 
         let mut total = 0.0;
-        for (_, policy) in slice.iter_mut() {
+        for (_, policy, _) in slice.iter_mut() {
             *policy = ((*policy - max) / pst).exp();
             total += *policy;
         }
@@ -531,11 +635,19 @@ impl Tree {
 
         let mut sum_of_squares = 0.0;
 
-        for (action, (mov, policy)) in slice.iter().enumerate() {
+        for (action, (mov, policy, hash)) in slice.iter().enumerate() {
             let ptr = new_ptr + action;
             let policy = policy / total;
 
             self[ptr].set_new(*mov, policy);
+            if let Some(existing_ptr) = self.transpositions.lookup(*hash) {
+                if existing_ptr != ptr && self[existing_ptr].has_children() {
+                    self.copy_node_across(existing_ptr, ptr, false);
+                    self[ptr].set_parent_move(*mov);
+                    self[ptr].set_policy(policy);
+                }
+            }
+            self.transpositions.insert(*hash, ptr);
             sum_of_squares += policy * policy;
         }
 
@@ -545,6 +657,7 @@ impl Tree {
         actions_ptr.store(new_ptr);
         node.set_num_actions(count);
         self.tree[self.half()].register_cross_link(node_ptr, new_ptr);
+        self.transpositions.insert(position_hash, node_ptr);
 
         Some(())
     }
