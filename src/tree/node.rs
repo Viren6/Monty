@@ -73,6 +73,19 @@ impl NodeStatsDelta {
         }
     }
 
+    pub fn from_average(visits: u64, q: f32) -> Self {
+        if visits == 0 {
+            return Self::default();
+        }
+
+        let q = (f64::from(q.clamp(0.0, 1.0)) * f64::from(QUANT)) as u64;
+        Self {
+            visits,
+            sum_q: q.saturating_mul(visits),
+            sum_sq_q: q.saturating_mul(q).saturating_mul(visits),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.visits == 0 && self.sum_q == 0 && self.sum_sq_q == 0
     }
@@ -265,6 +278,28 @@ impl Node {
 
         if delta.visits > 0 {
             self.visits.fetch_add(delta.visits, Ordering::Relaxed);
+        }
+
+        if delta.sum_q > 0 {
+            self.sum_q.fetch_add(delta.sum_q, Ordering::Relaxed);
+        }
+
+        if delta.sum_sq_q > 0 {
+            self.sum_sq_q.fetch_add(delta.sum_sq_q, Ordering::Relaxed);
+        }
+    }
+
+    pub fn try_warm_start(&self, delta: NodeStatsDelta) {
+        if delta.is_empty() {
+            return;
+        }
+
+        if self
+            .visits
+            .compare_exchange(0, delta.visits, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
         }
 
         if delta.sum_q > 0 {

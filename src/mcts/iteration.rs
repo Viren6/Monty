@@ -27,6 +27,7 @@ pub fn perform_one(
         // probe hash table to use in place of network
         if node.state() == GameState::Ongoing {
             if let Some(entry) = tree.probe_hash(cur_hash) {
+                tree.apply_transposition_entry(ptr, entry);
                 entry.q()
             } else {
                 get_utility(searcher, ptr, pos)
@@ -62,13 +63,16 @@ pub fn perform_one(
         pos.make_move(mov);
 
         // capture child hash (value is stored from the side to move at this child)
-        child_hash = Some(pos.hash());
+        let child_hash_value = pos.hash();
+        child_hash = Some(child_hash_value);
 
         tree[child_ptr].inc_threads();
 
+        let child_unvisited = tree[child_ptr].visits() == 0;
+
         // acquire lock to avoid issues with desynced setting of
         // game state between threads when threads > 1
-        let lock = if tree[child_ptr].visits() == 0 {
+        let lock = if child_unvisited {
             Some(node.actions_mut())
         } else {
             None

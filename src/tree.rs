@@ -450,6 +450,15 @@ impl Tree {
         self.hash.push(hash, wins);
     }
 
+    pub fn apply_transposition_entry(&self, ptr: NodePtr, entry: HashEntry) {
+        if entry.visits() == 0 {
+            return;
+        }
+
+        let delta = NodeStatsDelta::from_average(u64::from(entry.visits()), entry.q());
+        self[ptr].try_warm_start(delta);
+    }
+
     pub fn update_node_stats(&self, ptr: NodePtr, value: f32, thread_id: usize) {
         let delta = NodeStatsDelta::from_value(value);
         self.root_accumulator.add(ptr, &self[ptr], delta, thread_id);
