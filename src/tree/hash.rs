@@ -92,16 +92,27 @@ impl HashTable {
 
     #[inline(always)]
     pub fn get(&self, hash: u64) -> Option<HashEntry> {
-        // Fast index using AND mask (since size is power of 2)
         let idx = (hash & self.mask) as usize;
-        // Unsafe get check removal could be faster but Vec bounds check is cheap enough usually.
-        // To be safe and fast, use get_unchecked if we trust logic, but standard index is fine.
-        let entry = unsafe { self.table.get_unchecked(idx) };
+        // Check Primary Slot
+        let entry0 = unsafe { self.table.get_unchecked(idx) };
+        if let Some(e) = self.read_entry(entry0, hash) {
+            return Some(e);
+        }
 
+        // Check Secondary Slot (XOR pair)
+        let entry1 = unsafe { self.table.get_unchecked(idx ^ 1) };
+        if let Some(e) = self.read_entry(entry1, hash) {
+            return Some(e);
+        }
+
+        None
+    }
+
+    #[inline(always)]
+    fn read_entry(&self, entry: &HashEntryInternal, hash: u64) -> Option<HashEntry> {
         let key = entry.key.load(Ordering::Relaxed);
         if key == hash {
             let data = entry.data.load(Ordering::Relaxed);
-            // Verify key again to reduce tearing probability
             if entry.key.load(Ordering::Relaxed) == hash {
                 let (visits, q) = HashEntryInternal::unpack_data(data);
                 return Some(HashEntry { q: q as f32, visits });
@@ -111,53 +122,92 @@ impl HashTable {
     }
 
     #[inline(always)]
+    fn update_entry(&self, entry: &HashEntryInternal, val: f64) {
+        let current_data = entry.data.load(Ordering::Relaxed);
+        let (visits, q) = HashEntryInternal::unpack_data(current_data);
+        
+        let new_visits = visits.saturating_add(1);
+        // Moving average
+        let new_q = q + (val - q) / (new_visits as f64);
+        
+        let new_data = HashEntryInternal::pack_data(new_visits, new_q);
+        entry.data.store(new_data, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    fn overwrite_entry(&self, entry: &HashEntryInternal, hash: u64, val: f64) {
+        // Determine order: Data then Key is safer for readers (prevents reading garbage data with new key)
+        // But readers check Key twice, so we want to ensure Key matches Data.
+        // 1. Write Data (visits=1, q=val)
+        let new_data = HashEntryInternal::pack_data(1, val);
+        entry.data.store(new_data, Ordering::Relaxed);
+        // 2. Write Key
+        entry.key.store(hash, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
     pub fn push(&self, hash: u64, val: f32) {
         let idx = (hash & self.mask) as usize;
-        let entry = unsafe { self.table.get_unchecked(idx) };
+        // Define slots as `idx` and `idx ^ 1`
+        let idx0 = idx;
+        let idx1 = idx ^ 1;
+        
+        let entry0 = unsafe { self.table.get_unchecked(idx0) };
+        let entry1 = unsafe { self.table.get_unchecked(idx1) };
+        
         let val_f64 = val as f64;
 
-        let key = entry.key.load(Ordering::Relaxed);
+        // 1. Try to Update Existing
+        if entry0.key.load(Ordering::Relaxed) == hash {
+            self.update_entry(entry0, val_f64);
+            return;
+        }
+        if entry1.key.load(Ordering::Relaxed) == hash {
+            self.update_entry(entry1, val_f64);
+            return;
+        }
 
-        if key == hash {
-            // Update existing entry
-            // We use a "lazy" update without CAS loop to avoid contention.
-            // This is lossy but much faster.
-            let current_data = entry.data.load(Ordering::Relaxed);
-            let (visits, q) = HashEntryInternal::unpack_data(current_data);
-            
-            let new_visits = visits.saturating_add(1);
-            // Incremental average: Q_new = Q_old + (Val - Q_old) / N
-            let new_q = q + (val_f64 - q) / (new_visits as f64);
-            
-            let new_data = HashEntryInternal::pack_data(new_visits, new_q);
-            entry.data.store(new_data, Ordering::Relaxed);
+        // 2. Insert New
+        // Load metadata to decide where to put it
+        let d0 = entry0.data.load(Ordering::Relaxed);
+        let (v0, _) = HashEntryInternal::unpack_data(d0);
+        let k0 = entry0.key.load(Ordering::Relaxed);
+
+        if k0 == 0 { // Empty slot 0
+            self.overwrite_entry(entry0, hash, val_f64);
+            return;
+        }
+
+        let d1 = entry1.data.load(Ordering::Relaxed);
+        let (v1, _) = HashEntryInternal::unpack_data(d1);
+        let k1 = entry1.key.load(Ordering::Relaxed);
+
+        if k1 == 0 { // Empty slot 1
+            self.overwrite_entry(entry1, hash, val_f64);
+            return;
+        }
+
+        // Both occupied. Replacement strategy.
+        // We want to preserve the entry with HIGHER visits in one of the slots (usually slot 0).
+        // And put the new entry in the other.
+        
+        // If Slot 1 is better than Slot 0, promote Slot 1 to Slot 0.
+        if v1 > v0 {
+             // Move 1 -> 0
+             // We just overwrite 0 with 1's content
+             // We need to read 1's Q again or use packed data
+             // Ideally copy atomic to atomic? No.
+             // Just overwrite 0 with what we read from 1.
+             // Since we are lock-free, data might be slightly stale, but that's fine.
+             entry0.data.store(d1, Ordering::Relaxed);
+             entry0.key.store(k1, Ordering::Relaxed);
+             
+             // Now overwrite Slot 1 with NEW
+             self.overwrite_entry(entry1, hash, val_f64);
         } else {
-            // Collision or Empty
-            // Replacement strategy:
-            // If empty (key == 0), always take.
-            // If collision, replace if existing entry has low visits (low confidence).
-            // This protects valuable high-visit nodes from being overwritten by new low-visit nodes.
-            
-            let replace = if key == 0 {
-                true
-            } else {
-                let current_data = entry.data.load(Ordering::Relaxed);
-                let (visits, _) = HashEntryInternal::unpack_data(current_data);
-                // Threshold: if visits are low, we can replace.
-                // Heuristic: 1 or 2 visits is "noise" or "new".
-                visits <= 2
-            };
-
-            if replace {
-                // We replace. 
-                // Store Data first, then Key? Or Key then Data?
-                // If Key first: Readers see new Key, old Data (garbage).
-                // If Data first: Readers see old Key, new Data (mismatch, ignored).
-                // So Data first is safer.
-                let new_data = HashEntryInternal::pack_data(1, val_f64);
-                entry.data.store(new_data, Ordering::Relaxed);
-                entry.key.store(hash, Ordering::Relaxed);
-            }
+            // Slot 0 is better (or equal).
+            // Overwrite Slot 1 with NEW (Victimizing Slot 1).
+            self.overwrite_entry(entry1, hash, val_f64);
         }
     }
 }
