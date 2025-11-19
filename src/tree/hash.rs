@@ -126,7 +126,10 @@ impl HashTable {
         let current_data = entry.data.load(Ordering::Relaxed);
         let (visits, q) = HashEntryInternal::unpack_data(current_data);
         
-        let new_visits = visits.saturating_add(1);
+        // Saturate at 64k to allow easier replacement/decay of very old nodes
+        // while keeping enough precision for Q average
+        let new_visits = visits.saturating_add(1).min(64000);
+        
         // Moving average
         let new_q = q + (val - q) / (new_visits as f64);
         
@@ -208,6 +211,19 @@ impl HashTable {
             // Slot 0 is better (or equal).
             // Overwrite Slot 1 with NEW (Victimizing Slot 1).
             self.overwrite_entry(entry1, hash, val_f64);
+
+            // KEY IMPROVEMENT: Decay Slot 0.
+            // Since we had a collision and Slot 0 was NOT the target (otherwise we would have updated it),
+            // Slot 0 is "blocking" this bucket. If it's stale, we should weaken it.
+            // We subtract a portion of visits or just 1.
+            // Subtracting 1 is safe and ensures eventual eviction of stale huge nodes.
+            if v0 > 0 {
+                let (_, q0) = HashEntryInternal::unpack_data(d0);
+                let decayed_v0 = v0.saturating_sub(1);
+                // We only update Data (visits), Key remains same.
+                let new_d0 = HashEntryInternal::pack_data(decayed_v0, q0);
+                entry0.data.store(new_d0, Ordering::Relaxed);
+            }
         }
     }
 }
