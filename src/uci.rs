@@ -2,6 +2,7 @@ use crate::{
     chess::{ChessState, Move},
     mcts::{Limits, MctsParams, SearchHelpers, Searcher, REPORT_ITERS},
     networks::{PolicyNetwork, ValueNetwork},
+    tablebases,
     tree::Tree,
 };
 
@@ -258,6 +259,8 @@ fn preamble(tcec_mode: bool) {
     println!("option name MoveOverhead type spin default 400 min 0 max 5000");
     println!("option name report_moves type button");
     println!("option name report_iters type button");
+    println!("option name SyzygyPath type string default /home/neural/syzygy");
+    //println!("option name SyzygyPath type string default");
     if tcec_mode {
         println!("option name UCI_Opponent type string default");
         println!("option name UCI_RatingAdv type spin default 0");
@@ -300,6 +303,14 @@ fn setoption(
                 *disable_tree_reuse = v.eq_ignore_ascii_case("true");
             }
         }
+        "SyzygyPath" => match tablebases::configure_syzygy(value.as_deref()) {
+            Ok(summary) if summary.is_enabled() => println!(
+                "info string Syzygy tablebases enabled ({} files in {} directories)",
+                summary.files, summary.directories
+            ),
+            Ok(_) => println!("info string Syzygy tablebases disabled"),
+            Err(err) => println!("info string failed to set SyzygyPath: {err}"),
+        },
         "Threads" => {
             if let Some(v) = value {
                 if let Ok(parsed) = v.parse::<usize>() {

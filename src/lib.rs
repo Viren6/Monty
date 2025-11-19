@@ -1,6 +1,7 @@
 pub mod chess;
 pub mod mcts;
 pub mod networks;
+pub mod tablebases;
 pub mod tree;
 pub mod uci;
 
