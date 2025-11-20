@@ -4,7 +4,7 @@ use super::{
     attacks::Attacks,
     consts::*,
     frc::Castling,
-    moves::{serialise, Move},
+    moves::{serialise_while, Move},
     GameState,
 };
 
@@ -222,10 +222,13 @@ impl Position {
             return GameState::Draw;
         }
 
-        let mut count = 0;
-        self.map_legal_moves(castling, |_| count += 1);
+        let mut has_legal_move = false;
+        self.map_legal_moves_while(castling, |_| {
+            has_legal_move = true;
+            false
+        });
 
-        if count > 0 {
+        if has_legal_move {
             return GameState::Ongoing;
         }
 
@@ -345,18 +348,34 @@ impl Position {
     }
 
     pub fn map_legal_moves<F: FnMut(Move)>(&self, castling: &Castling, mut f: F) {
-        self.map_legal_moves_internal::<true, F>(castling, &mut f);
+        let mut wrapper = |mov| {
+            f(mov);
+            true
+        };
+        let _ = self.map_legal_moves_internal::<true, _>(castling, &mut wrapper);
+    }
+
+    pub fn map_legal_moves_while<F: FnMut(Move) -> bool>(
+        &self,
+        castling: &Castling,
+        mut f: F,
+    ) -> bool {
+        self.map_legal_moves_internal::<true, F>(castling, &mut f)
     }
 
     pub fn map_legal_captures<F: FnMut(Move)>(&self, castling: &Castling, mut f: F) {
-        self.map_legal_moves_internal::<false, F>(castling, &mut f);
+        let mut wrapper = |mov| {
+            f(mov);
+            true
+        };
+        let _ = self.map_legal_moves_internal::<false, _>(castling, &mut wrapper);
     }
 
-    fn map_legal_moves_internal<const QUIETS: bool, F: FnMut(Move)>(
+    fn map_legal_moves_internal<const QUIETS: bool, F: FnMut(Move) -> bool>(
         &self,
         castling: &Castling,
         f: &mut F,
-    ) {
+    ) -> bool {
         let pinned = self.pinned();
         let king_sq = self.king_index();
         let threats = self.threats();
@@ -366,40 +385,60 @@ impl Position {
             0
         };
 
-        self.king_moves::<QUIETS, F>(f, threats);
+        if !self.king_moves::<QUIETS, F>(f, threats) {
+            return false;
+        }
 
         if checkers == 0 {
-            self.gen_pnbrq::<QUIETS, F>(f, u64::MAX, u64::MAX, pinned, castling);
+            if !self.gen_pnbrq::<QUIETS, F>(f, u64::MAX, u64::MAX, pinned, castling) {
+                return false;
+            }
             if QUIETS {
-                self.castles(f, self.occ(), threats, castling, pinned);
+                return self.castles(f, self.occ(), threats, castling, pinned);
             }
         } else if checkers & (checkers - 1) == 0 {
             let checker_sq = checkers.trailing_zeros() as usize;
             let free = IN_BETWEEN[king_sq][checker_sq];
-            self.gen_pnbrq::<QUIETS, F>(f, checkers, free, pinned, castling);
+            return self.gen_pnbrq::<QUIETS, F>(f, checkers, free, pinned, castling);
         }
+
+        true
     }
 
-    fn king_moves<const QUIETS: bool, F: FnMut(Move)>(&self, f: &mut F, threats: u64) {
+    fn king_moves<const QUIETS: bool, F: FnMut(Move) -> bool>(
+        &self,
+        f: &mut F,
+        threats: u64,
+    ) -> bool {
         let king_sq = self.king_index();
         let attacks = Attacks::king(king_sq) & !threats;
         let occ = self.occ();
 
-        bitloop!(|attacks & self.opps(), to | f(Move::new(king_sq as u16, to, Flag::CAP)));
+        if !for_each_bit(attacks & self.opps(), |to| {
+            f(Move::new(king_sq as u16, to, Flag::CAP))
+        }) {
+            return false;
+        }
 
         if QUIETS {
-            bitloop!(|attacks & !occ, to| f(Move::new(king_sq as u16, to, Flag::QUIET)));
+            if !for_each_bit(attacks & !occ, |to| {
+                f(Move::new(king_sq as u16, to, Flag::QUIET))
+            }) {
+                return false;
+            }
         }
+
+        true
     }
 
-    fn gen_pnbrq<const QUIETS: bool, F: FnMut(Move)>(
+    fn gen_pnbrq<const QUIETS: bool, F: FnMut(Move) -> bool>(
         &self,
         f: &mut F,
         checkers: u64,
         free: u64,
         pinned: u64,
         castling: &Castling,
-    ) {
+    ) -> bool {
         let boys = self.boys();
         let pawns = self.piece(Piece::PAWN) & boys;
         let side = self.stm();
@@ -409,35 +448,49 @@ impl Position {
 
         if QUIETS {
             if side == Side::WHITE {
-                self.pawn_pushes::<{ Side::WHITE }, false, F>(f, free_pawns, free);
-                self.pawn_pushes::<{ Side::WHITE }, true, F>(f, pinned_pawns, free);
+                if !self.pawn_pushes::<{ Side::WHITE }, false, F>(f, free_pawns, free) {
+                    return false;
+                }
+                if !self.pawn_pushes::<{ Side::WHITE }, true, F>(f, pinned_pawns, free) {
+                    return false;
+                }
             } else {
-                self.pawn_pushes::<{ Side::BLACK }, false, F>(f, free_pawns, free);
-                self.pawn_pushes::<{ Side::BLACK }, true, F>(f, pinned_pawns, free);
+                if !self.pawn_pushes::<{ Side::BLACK }, false, F>(f, free_pawns, free) {
+                    return false;
+                }
+                if !self.pawn_pushes::<{ Side::BLACK }, true, F>(f, pinned_pawns, free) {
+                    return false;
+                }
             }
         }
 
         if self.enp_sq() > 0 {
-            self.en_passants(f, pawns, castling);
+            if !self.en_passants(f, pawns, castling) {
+                return false;
+            }
         }
 
-        self.pawn_captures::<false, F>(f, free_pawns, checkers);
-        self.pawn_captures::<true, F>(f, pinned_pawns, checkers);
+        if !self.pawn_captures::<false, F>(f, free_pawns, checkers) {
+            return false;
+        }
+        if !self.pawn_captures::<true, F>(f, pinned_pawns, checkers) {
+            return false;
+        }
 
-        self.piece_moves::<QUIETS, { Piece::KNIGHT }, F>(f, check_mask, pinned);
-        self.piece_moves::<QUIETS, { Piece::BISHOP }, F>(f, check_mask, pinned);
-        self.piece_moves::<QUIETS, { Piece::ROOK }, F>(f, check_mask, pinned);
-        self.piece_moves::<QUIETS, { Piece::QUEEN }, F>(f, check_mask, pinned);
+        self.piece_moves::<QUIETS, { Piece::KNIGHT }, F>(f, check_mask, pinned)
+            && self.piece_moves::<QUIETS, { Piece::BISHOP }, F>(f, check_mask, pinned)
+            && self.piece_moves::<QUIETS, { Piece::ROOK }, F>(f, check_mask, pinned)
+            && self.piece_moves::<QUIETS, { Piece::QUEEN }, F>(f, check_mask, pinned)
     }
 
-    fn castles<F: FnMut(Move)>(
+    fn castles<F: FnMut(Move) -> bool>(
         &self,
         f: &mut F,
         occ: u64,
         threats: u64,
         castling: &Castling,
         pinned: u64,
-    ) {
+    ) -> bool {
         let kbb = self.bb[Piece::KING] & self.bb[self.stm()];
         let ksq = kbb.trailing_zeros() as u16;
 
@@ -455,19 +508,29 @@ impl Position {
 
         if self.stm() == Side::BLACK {
             if can_castle(Right::BQS, 1 << 58, 1 << 59) {
-                f(Move::new(ksq, 58, Flag::QS));
+                if !f(Move::new(ksq, 58, Flag::QS)) {
+                    return false;
+                }
             }
             if can_castle(Right::BKS, 1 << 62, 1 << 61) {
-                f(Move::new(ksq, 62, Flag::KS));
+                if !f(Move::new(ksq, 62, Flag::KS)) {
+                    return false;
+                }
             }
         } else {
             if can_castle(Right::WQS, 1 << 2, 1 << 3) {
-                f(Move::new(ksq, 2, Flag::QS));
+                if !f(Move::new(ksq, 2, Flag::QS)) {
+                    return false;
+                }
             }
             if can_castle(Right::WKS, 1 << 6, 1 << 5) {
-                f(Move::new(ksq, 6, Flag::KS));
+                if !f(Move::new(ksq, 6, Flag::KS)) {
+                    return false;
+                }
             }
         }
+
+        true
     }
 
     #[must_use]
@@ -495,32 +558,32 @@ impl Position {
         pinned
     }
 
-    fn piece_moves<const QUIETS: bool, const PC: usize, F: FnMut(Move)>(
+    fn piece_moves<const QUIETS: bool, const PC: usize, F: FnMut(Move) -> bool>(
         &self,
         f: &mut F,
         check_mask: u64,
         pinned: u64,
-    ) {
+    ) -> bool {
         let attackers = self.boys() & self.piece(PC);
-        self.piece_moves_internal::<QUIETS, PC, false, F>(f, check_mask, attackers & !pinned);
-        self.piece_moves_internal::<QUIETS, PC, true, F>(f, check_mask, attackers & pinned);
+        self.piece_moves_internal::<QUIETS, PC, false, F>(f, check_mask, attackers & !pinned)
+            && self.piece_moves_internal::<QUIETS, PC, true, F>(f, check_mask, attackers & pinned)
     }
 
     fn piece_moves_internal<
         const QUIETS: bool,
         const PC: usize,
         const PINNED: bool,
-        F: FnMut(Move),
+        F: FnMut(Move) -> bool,
     >(
         &self,
         f: &mut F,
         check_mask: u64,
         attackers: u64,
-    ) {
+    ) -> bool {
         let occ = self.occ();
         let king_sq = self.king_index();
 
-        bitloop!(|attackers, from| {
+        for_each_bit(attackers, |from| {
             let mut attacks = Attacks::of_piece::<PC>(usize::from(from), occ);
 
             attacks &= check_mask;
@@ -529,57 +592,63 @@ impl Position {
                 attacks &= LINE_THROUGH[king_sq][usize::from(from)];
             }
 
-            serialise(f, attacks & self.opps(), from, Flag::CAP);
-            if QUIETS {
-                serialise(f, attacks & !occ, from, Flag::QUIET);
+            if !serialise_while(f, attacks & self.opps(), from, Flag::CAP) {
+                return false;
             }
-        });
+            if QUIETS && !serialise_while(f, attacks & !occ, from, Flag::QUIET) {
+                return false;
+            }
+
+            true
+        })
     }
 
-    fn pawn_captures<const PINNED: bool, F: FnMut(Move)>(
+    fn pawn_captures<const PINNED: bool, F: FnMut(Move) -> bool>(
         &self,
         f: &mut F,
         mut attackers: u64,
         checkers: u64,
-    ) {
+    ) -> bool {
         let side = self.stm();
         let opps = self.opps();
         let king_sq = self.king_index();
         let promo_attackers = attackers & Rank::PEN[side];
         attackers &= !Rank::PEN[side];
 
-        bitloop!(|attackers, from| {
+        if !for_each_bit(attackers, |from| {
             let mut attacks = Attacks::pawn(usize::from(from), side) & opps & checkers;
 
             if PINNED {
                 attacks &= LINE_THROUGH[king_sq][usize::from(from)];
             }
 
-            serialise(f, attacks, from, Flag::CAP);
-        });
+            serialise_while(f, attacks, from, Flag::CAP)
+        }) {
+            return false;
+        }
 
-        bitloop!(|promo_attackers, from| {
+        for_each_bit(promo_attackers, |from| {
             let mut attacks = Attacks::pawn(usize::from(from), side) & opps & checkers;
 
             if PINNED {
                 attacks &= LINE_THROUGH[king_sq][usize::from(from)];
             }
 
-            bitloop!(|attacks, to| {
-                f(Move::new(from, to, Flag::QPC));
-                f(Move::new(from, to, Flag::NPC));
-                f(Move::new(from, to, Flag::BPC));
-                f(Move::new(from, to, Flag::RPC));
-            });
-        });
+            for_each_bit(attacks, |to| {
+                f(Move::new(from, to, Flag::QPC))
+                    && f(Move::new(from, to, Flag::NPC))
+                    && f(Move::new(from, to, Flag::BPC))
+                    && f(Move::new(from, to, Flag::RPC))
+            })
+        })
     }
 
-    fn pawn_pushes<const SIDE: usize, const PINNED: bool, F: FnMut(Move)>(
+    fn pawn_pushes<const SIDE: usize, const PINNED: bool, F: FnMut(Move) -> bool>(
         &self,
         f: &mut F,
         pawns: u64,
         check_mask: u64,
-    ) {
+    ) -> bool {
         let empty = !self.occ();
         let king_sq = self.king_index();
 
@@ -587,50 +656,63 @@ impl Position {
         let promotable_pawns = pushable_pawns & Rank::PEN[SIDE];
         pushable_pawns &= !Rank::PEN[SIDE];
 
-        bitloop!(|pushable_pawns, from| {
+        if !for_each_bit(pushable_pawns, |from| {
             let to = idx_shift::<SIDE, 8>(from);
 
             if !PINNED || (1 << to) & LINE_THROUGH[king_sq][usize::from(from)] > 0 {
-                f(Move::new(from, to, Flag::QUIET));
+                return f(Move::new(from, to, Flag::QUIET));
             }
-        });
+            true
+        }) {
+            return false;
+        }
 
-        bitloop!(|promotable_pawns, from| {
+        if !for_each_bit(promotable_pawns, |from| {
             let to = idx_shift::<SIDE, 8>(from);
 
             if !PINNED || (1 << to) & LINE_THROUGH[king_sq][usize::from(from)] > 0 {
-                f(Move::new(from, to, Flag::QPR));
-                f(Move::new(from, to, Flag::NPR));
-                f(Move::new(from, to, Flag::BPR));
-                f(Move::new(from, to, Flag::RPR));
+                return f(Move::new(from, to, Flag::QPR))
+                    && f(Move::new(from, to, Flag::NPR))
+                    && f(Move::new(from, to, Flag::BPR))
+                    && f(Move::new(from, to, Flag::RPR));
             }
-        });
+            true
+        }) {
+            return false;
+        }
 
         let dbl_pushable_pawns =
             shift::<SIDE>(shift::<SIDE>(empty & Rank::DBL[SIDE] & check_mask) & empty) & pawns;
 
-        bitloop!(|dbl_pushable_pawns, from| {
+        for_each_bit(dbl_pushable_pawns, |from| {
             let to = idx_shift::<SIDE, 16>(from);
 
             if !PINNED || (1 << to) & LINE_THROUGH[king_sq][usize::from(from)] > 0 {
-                f(Move::new(from, to, Flag::DBL));
+                return f(Move::new(from, to, Flag::DBL));
             }
-        });
+            true
+        })
     }
 
-    fn en_passants<F: FnMut(Move)>(&self, f: &mut F, pawns: u64, castling: &Castling) {
+    fn en_passants<F: FnMut(Move) -> bool>(
+        &self,
+        f: &mut F,
+        pawns: u64,
+        castling: &Castling,
+    ) -> bool {
         let attackers = Attacks::pawn(usize::from(self.enp_sq()), self.stm() ^ 1) & pawns;
 
-        bitloop!(|attackers, from| {
+        for_each_bit(attackers, |from| {
             let mut tmp = *self;
             let mov = Move::new(from, u16::from(self.enp_sq()), Flag::ENP);
             tmp.make(mov, castling);
 
             let king = (tmp.piece(Piece::KING) & tmp.opps()).trailing_zeros() as usize;
             if !tmp.is_square_attacked(king, self.stm(), tmp.occ()) {
-                f(mov);
+                return f(mov);
             }
-        });
+            true
+        })
     }
 
     pub fn as_fen(&self) -> String {
@@ -721,6 +803,20 @@ impl Position {
 
         string
     }
+}
+
+#[inline]
+fn for_each_bit(mut bb: u64, mut f: impl FnMut(u16) -> bool) -> bool {
+    while bb > 0 {
+        let sq = bb.trailing_zeros() as u16;
+        bb &= bb - 1;
+
+        if !f(sq) {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn shift<const SIDE: usize>(bb: u64) -> u64 {

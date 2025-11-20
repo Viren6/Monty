@@ -85,3 +85,22 @@ impl Move {
 pub fn serialise<F: FnMut(Move)>(f: &mut F, attacks: u64, from: u16, flag: u16) {
     bitloop!(|attacks, to| f(Move::new(from, to, flag)));
 }
+
+#[inline]
+pub fn serialise_while<F: FnMut(Move) -> bool>(
+    f: &mut F,
+    mut attacks: u64,
+    from: u16,
+    flag: u16,
+) -> bool {
+    while attacks > 0 {
+        let to = attacks.trailing_zeros() as u16;
+        attacks &= attacks - 1;
+
+        if !f(Move::new(from, to, flag)) {
+            return false;
+        }
+    }
+
+    true
+}
