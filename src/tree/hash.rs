@@ -3,17 +3,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::NodePtr;
 
 #[derive(Clone, Copy, Debug, Default)]
+#[repr(align(16))]
 pub struct HashEntry {
-    hash: u16,
-    q: u16,
-    gen: u8,
-    half: u8,
-    node_idx: u32,
+    pub hash: u16,
+    pub q: u64,
+    pub gen: u8,
+    pub half: u8,
+    pub node_idx: u32,
 }
 
 impl HashEntry {
     pub fn q(&self) -> f32 {
-        f32::from(self.q) / f32::from(u16::MAX)
+        // Use f64 for intermediate calculation to maintain precision before casting back to f32
+        (self.q as f64 / u64::MAX as f64) as f32
     }
 
     pub fn node_idx(&self) -> usize {
@@ -30,22 +32,40 @@ impl HashEntry {
 }
 
 #[derive(Default)]
-struct HashEntryInternal(AtomicU64);
+#[repr(align(16))]
+struct HashEntryInternal {
+    key: AtomicU64,
+    data: AtomicU64,
+}
 
-impl Clone for HashEntryInternal {
-    fn clone(&self) -> Self {
-        Self(AtomicU64::new(self.0.load(Ordering::Relaxed)))
+impl HashEntryInternal {
+    fn read(&self) -> (u64, u64) {
+        let k1 = self.key.load(Ordering::Relaxed);
+        let d = self.data.load(Ordering::Relaxed);
+        let k2 = self.key.load(Ordering::Relaxed);
+        if k1 == k2 {
+            (k1, d)
+        } else {
+            (0, 0) // Torn read detected, return invalid
+        }
+    }
+
+    fn write(&self, key: u64, data: u64) {
+        // Invalidate key first to prevent torn reads during update
+        self.key.store(0, Ordering::Relaxed);
+        self.data.store(data, Ordering::Relaxed);
+        self.key.store(key, Ordering::Relaxed);
     }
 }
 
 impl From<&HashEntryInternal> for HashEntry {
     fn from(value: &HashEntryInternal) -> Self {
-        let val = value.0.load(Ordering::Relaxed);
-        let hash = val as u16;
-        let q = (val >> 16) as u16;
-        let gen = ((val >> 32) & 0xF) as u8;
-        let half = ((val >> 36) & 1) as u8;
-        let node_idx = (val >> 37) as u32;
+        let (key, data) = value.read();
+        let q = data;
+        let hash = key as u16;
+        let gen = (key >> 16) as u8;
+        let half = (key >> 24) as u8;
+        let node_idx = (key >> 32) as u32;
         Self {
             hash,
             q,
@@ -53,17 +73,6 @@ impl From<&HashEntryInternal> for HashEntry {
             half,
             node_idx,
         }
-    }
-}
-
-impl From<HashEntry> for u64 {
-    fn from(value: HashEntry) -> Self {
-        let hash = u64::from(value.hash);
-        let q = u64::from(value.q) << 16;
-        let gen = u64::from(value.gen & 0xF) << 32;
-        let half = u64::from(value.half & 1) << 36;
-        let node_idx = u64::from(value.node_idx) << 37;
-        hash | q | gen | half | node_idx
     }
 }
 
@@ -105,7 +114,8 @@ impl HashTable {
             for chunk in self.table.chunks_mut(chunk_size) {
                 s.spawn(|| {
                     for entry in chunk.iter_mut() {
-                        *entry = HashEntryInternal::default();
+                        entry.key.store(0, Ordering::Relaxed);
+                        entry.data.store(0, Ordering::Relaxed);
                     }
                 });
             }
@@ -136,23 +146,20 @@ impl HashTable {
         let node_idx = node.idx();
         let half = if node.half() { 1 } else { 0 };
 
-        // 27 bits = 134,217,727
-        let (stored_idx, stored_gen, stored_half) = if node_idx < (1 << 27) {
+        // u32::MAX
+        let (stored_idx, stored_gen, stored_half) = if node_idx <= u32::MAX as usize {
             (node_idx as u32, gen, half)
         } else {
             (0, 0, 0) // Invalid/Root
         };
 
-        let entry = HashEntry {
-            hash: Self::key(hash),
-            q: (q * f32::from(u16::MAX)) as u16,
-            gen: stored_gen,
-            half: stored_half,
-            node_idx: stored_idx,
-        };
+        let key = (stored_idx as u64) << 32
+            | (stored_half as u64) << 24
+            | (stored_gen as u64) << 16
+            | Self::key(hash) as u64;
+        
+        let data = (q as f64 * u64::MAX as f64) as u64;
 
-        self.table[idx as usize]
-            .0
-            .store(u64::from(entry), Ordering::Relaxed)
+        self.table[idx as usize].write(key, data);
     }
 }
