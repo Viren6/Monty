@@ -498,8 +498,6 @@ impl Tree {
     ) -> Option<()> {
         let node = &self[node_ptr];
 
-        let actions_ptr = node.actions_mut();
-
         // when running with >1 threads, this function may
         // be called twice, and this acts as a safeguard in
         // that case
@@ -574,6 +572,11 @@ impl Tree {
 
         let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
         node.set_gini_impurity(gini_impurity);
+
+        let actions_ptr = node.actions_mut();
+        if !node.is_not_expanded() {
+            return Some(());
+        }
 
         actions_ptr.store(new_ptr);
         node.set_num_actions(count);
