@@ -553,15 +553,16 @@ impl Tree {
                     let existing_node_ptr = NodePtr::new(existing_half != 0, existing_node_idx);
                     let existing_node = &self[existing_node_ptr];
 
-                     // Link to the existing node's children
+                         // Link to the existing node's children
                      if existing_node.has_children() {
                          let existing_actions = existing_node.actions();
                          self[ptr].set_num_actions(existing_node.num_actions());
                          self[ptr].actions_mut().store(existing_actions);
                          self.tree[self.half()].register_cross_link(ptr, existing_actions);
 
-                         // Copy stats to warm start
-                         self[ptr].copy_from(existing_node);
+                         // Do NOT copy stats. Let the node be explored naturally.
+                         // The first visit will descend into the existing subtree and return a high-quality value,
+                         // effectively "warm starting" the node without artificially inflating visit counts.
                      }
                 }
             }
