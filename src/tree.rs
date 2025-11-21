@@ -442,12 +442,18 @@ impl Tree {
         NodePtr::new(self.half.load(Ordering::Relaxed), 0)
     }
 
+
+
+    pub fn generation(&self) -> u8 {
+        self.tree[self.half()].generation()
+    }
+
     pub fn probe_hash(&self, hash: u64) -> Option<HashEntry> {
         self.hash.get(hash)
     }
 
-    pub fn push_hash(&self, hash: u64, wins: f32) {
-        self.hash.push(hash, wins);
+    pub fn push_hash(&self, hash: u64, wins: f32, node: NodePtr, gen: u8) {
+        self.hash.push(hash, wins, node, gen);
     }
 
     pub fn update_node_stats(&self, ptr: NodePtr, value: f32, thread_id: usize) {
@@ -535,6 +541,33 @@ impl Tree {
             let ptr = new_ptr + action;
             let policy = policy / total;
 
+            let mut child_pos = pos.clone();
+            child_pos.make_move(*mov);
+            let hash = child_pos.hash();
+
+            if let Some(entry) = self.probe_hash(hash) {
+                let existing_node_idx = entry.node_idx();
+                let existing_half = entry.half() as usize;
+                let existing_gen = entry.gen();
+
+                // Check if the existing node is valid (generation matches the tree half's generation)
+                if existing_gen == self.tree[existing_half].generation() && existing_node_idx != 0 {
+                    let existing_node_ptr = NodePtr::new(existing_half != 0, existing_node_idx);
+                    let existing_node = &self[existing_node_ptr];
+
+                     // Link to the existing node's children
+                     if existing_node.has_children() {
+                         let existing_actions = existing_node.actions();
+                         self[ptr].set_num_actions(existing_node.num_actions());
+                         self[ptr].actions_mut().store(existing_actions);
+                         self.tree[self.half()].register_cross_link(ptr, existing_actions);
+
+                         // Copy stats to warm start
+                         self[ptr].copy_from(existing_node);
+                     }
+                }
+            }
+
             self[ptr].set_new(*mov, policy);
             sum_of_squares += policy * policy;
         }
@@ -545,6 +578,10 @@ impl Tree {
         actions_ptr.store(new_ptr);
         node.set_num_actions(count);
         self.tree[self.half()].register_cross_link(node_ptr, new_ptr);
+
+        // Push the expanded node to TT
+        let gen = self.tree[self.half()].generation();
+        self.push_hash(pos.hash(), self[node_ptr].q(), node_ptr, gen);
 
         Some(())
     }

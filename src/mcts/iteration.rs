@@ -16,6 +16,7 @@ pub fn perform_one(
 
     let cur_hash = pos.hash();
     let mut child_hash: Option<u64> = None;
+    let mut child_node_ptr = NodePtr::NULL;
     let tree = searcher.tree;
     let node = &tree[ptr];
 
@@ -56,6 +57,7 @@ pub fn perform_one(
         let action = pick_action(searcher, ptr, node);
 
         let child_ptr = node.actions() + action;
+        child_node_ptr = child_ptr;
 
         let mov = tree[child_ptr].parent_move();
 
@@ -93,11 +95,12 @@ pub fn perform_one(
     };
 
     // store value for the side to move at the visited node in TT
+    let gen = tree.generation();
     if let Some(h) = child_hash {
         // `u` here is from the current node's perspective, so flip for the child
-        tree.push_hash(h, 1.0 - u);
+        tree.push_hash(h, 1.0 - u, child_node_ptr, gen);
     } else {
-        tree.push_hash(cur_hash, u);
+        tree.push_hash(cur_hash, u, ptr, gen);
     }
 
     // flip perspective and backpropagate

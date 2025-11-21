@@ -1,35 +1,69 @@
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use super::NodePtr;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HashEntry {
     hash: u16,
     q: u16,
+    gen: u8,
+    half: u8,
+    node_idx: u32,
 }
 
 impl HashEntry {
     pub fn q(&self) -> f32 {
         f32::from(self.q) / f32::from(u16::MAX)
     }
+
+    pub fn node_idx(&self) -> usize {
+        self.node_idx as usize
+    }
+
+    pub fn gen(&self) -> u8 {
+        self.gen
+    }
+
+    pub fn half(&self) -> u8 {
+        self.half
+    }
 }
 
 #[derive(Default)]
-struct HashEntryInternal(AtomicU32);
+struct HashEntryInternal(AtomicU64);
 
 impl Clone for HashEntryInternal {
     fn clone(&self) -> Self {
-        Self(AtomicU32::new(self.0.load(Ordering::Relaxed)))
+        Self(AtomicU64::new(self.0.load(Ordering::Relaxed)))
     }
 }
 
 impl From<&HashEntryInternal> for HashEntry {
     fn from(value: &HashEntryInternal) -> Self {
-        unsafe { std::mem::transmute(value.0.load(Ordering::Relaxed)) }
+        let val = value.0.load(Ordering::Relaxed);
+        let hash = val as u16;
+        let q = (val >> 16) as u16;
+        let gen = ((val >> 32) & 0xF) as u8;
+        let half = ((val >> 36) & 1) as u8;
+        let node_idx = (val >> 37) as u32;
+        Self {
+            hash,
+            q,
+            gen,
+            half,
+            node_idx,
+        }
     }
 }
 
-impl From<HashEntry> for u32 {
+impl From<HashEntry> for u64 {
     fn from(value: HashEntry) -> Self {
-        unsafe { std::mem::transmute(value) }
+        let hash = u64::from(value.hash);
+        let q = u64::from(value.q) << 16;
+        let gen = u64::from(value.gen & 0xF) << 32;
+        let half = u64::from(value.half & 1) << 36;
+        let node_idx = u64::from(value.node_idx) << 37;
+        hash | q | gen | half | node_idx
     }
 }
 
@@ -97,16 +131,28 @@ impl HashTable {
         }
     }
 
-    pub fn push(&self, hash: u64, q: f32) {
+    pub fn push(&self, hash: u64, q: f32, node: NodePtr, gen: u8) {
         let idx = hash % (self.table.len() as u64);
+        let node_idx = node.idx();
+        let half = if node.half() { 1 } else { 0 };
+
+        // 27 bits = 134,217,727
+        let (stored_idx, stored_gen, stored_half) = if node_idx < (1 << 27) {
+            (node_idx as u32, gen, half)
+        } else {
+            (0, 0, 0) // Invalid/Root
+        };
 
         let entry = HashEntry {
             hash: Self::key(hash),
             q: (q * f32::from(u16::MAX)) as u16,
+            gen: stored_gen,
+            half: stored_half,
+            node_idx: stored_idx,
         };
 
         self.table[idx as usize]
             .0
-            .store(u32::from(entry), Ordering::Relaxed)
+            .store(u64::from(entry), Ordering::Relaxed)
     }
 }

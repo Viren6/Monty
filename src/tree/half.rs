@@ -163,4 +163,8 @@ impl TreeHalf {
             self.cross_links.lock().unwrap().push(node.idx());
         }
     }
+
+    pub fn generation(&self) -> u8 {
+        (self.cross_link_epoch.load(Ordering::Relaxed) & 0xF) as u8
+    }
 }
