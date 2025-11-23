@@ -179,8 +179,25 @@ impl SearchHelpers {
                 * searcher.params.tm_bmv4())
         .clamp(searcher.params.tm_bmv5(), searcher.params.tm_bmv6());
 
+        // Contested move time scaling
+        let mut contested_factor = 1.0;
+        let second_best_child = searcher.tree.get_best_child_by_key(searcher.tree.root_node(), |child| {
+            if child.visits() == 0 || child as *const _ == &searcher.tree[best_child_ptr] as *const _ {
+                f32::NEG_INFINITY
+            } else {
+                child.visits() as f32
+            }
+        });
+
+        if second_best_child != usize::MAX {
+            let root_ptr = searcher.tree.root_node();
+            let second_best_ptr = searcher.tree[root_ptr].actions() + second_best_child;
+            let ratio = searcher.tree[second_best_ptr].visits() as f32 / searcher.tree[best_child_ptr].visits() as f32;
+            contested_factor = 1.0 + searcher.params.tm_contested_scale() * ratio;
+        }
+
         let total_time =
-            (time as f32 * falling_eval * best_move_instability * best_move_visits) as u128;
+            (time as f32 * falling_eval * best_move_instability * best_move_visits * contested_factor) as u128;
 
         (elapsed >= total_time, score)
     }
