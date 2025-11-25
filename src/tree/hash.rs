@@ -11,6 +11,10 @@ impl HashEntry {
     pub fn q(&self) -> f32 {
         f32::from(self.q) / f32::from(u16::MAX)
     }
+
+    pub fn visits(&self) -> u32 {
+        self.visits
+    }
 }
 
 #[derive(Default)]

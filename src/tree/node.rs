@@ -73,6 +73,19 @@ impl NodeStatsDelta {
         }
     }
 
+    pub fn from_value_weighted(q: f32, visits: u64) -> Self {
+        if visits == 0 {
+            return Self::default();
+        }
+
+        let q = (f64::from(q) * f64::from(QUANT)) as u64;
+        Self {
+            visits,
+            sum_q: q.saturating_mul(visits),
+            sum_sq_q: q.saturating_mul(q).saturating_mul(visits),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.visits == 0 && self.sum_q == 0 && self.sum_sq_q == 0
     }

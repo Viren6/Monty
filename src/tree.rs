@@ -455,6 +455,20 @@ impl Tree {
         self.root_accumulator.add(ptr, &self[ptr], delta, thread_id);
     }
 
+    pub fn update_node_stats_weighted(
+        &self,
+        ptr: NodePtr,
+        value: f32,
+        visits: u64,
+        thread_id: usize,
+    ) {
+        let delta = NodeStatsDelta::from_value_weighted(value, visits);
+
+        if !delta.is_empty() {
+            self.root_accumulator.add(ptr, &self[ptr], delta, thread_id);
+        }
+    }
+
     pub fn flush_root_accumulator(&self) {
         self.root_accumulator
             .flush_all(|ptr, delta| self[ptr].apply_delta(delta));

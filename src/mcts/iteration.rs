@@ -28,6 +28,14 @@ pub fn perform_one(
         // probe hash table to use in place of network
         if node.state() == GameState::Ongoing {
             if let Some(entry) = tree.probe_hash(cur_hash) {
+                if node.visits() == 0 {
+                    let warm_visits = warm_start_weight(entry.visits(), *depth);
+
+                    if warm_visits > 0 {
+                        tree.update_node_stats_weighted(ptr, entry.q(), warm_visits, thread_id);
+                    }
+                }
+
                 entry.q()
             } else {
                 get_utility(searcher, ptr, pos)
@@ -163,4 +171,14 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
 
             q + u
         })
+}
+
+fn warm_start_weight(entry_visits: u32, depth: usize) -> u64 {
+    if entry_visits == 0 {
+        return 0;
+    }
+
+    let visits = entry_visits as f32;
+    let scaled = visits.sqrt() / (1.0 + (depth as f32).sqrt());
+    scaled.round() as u64
 }
