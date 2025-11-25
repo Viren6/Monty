@@ -507,7 +507,8 @@ impl Tree {
         let stm = pos.stm();
 
         pos.map_moves_with_policies(policy, |mov, policy| {
-            let adjusted = policy + self.butterfly.policy_bonus(stm, mov, params);
+            let bias = self.transposition_policy_bonus(pos, mov);
+            let adjusted = policy + self.butterfly.policy_bonus(stm, mov, params) + bias;
             moves[count].write((mov, adjusted));
             count += 1;
             max = max.max(adjusted);
@@ -568,8 +569,9 @@ impl Tree {
         let stm = pos.stm();
         for action in 0..num_actions {
             let mov = self[actions_ptr + action].parent_move();
-            let policy =
-                pos.get_policy(mov, &hl, policy) + self.butterfly.policy_bonus(stm, mov, params);
+            let policy = pos.get_policy(mov, &hl, policy)
+                + self.butterfly.policy_bonus(stm, mov, params)
+                + self.transposition_policy_bonus(pos, mov);
 
             policies.push(policy);
             max = max.max(policy);
@@ -594,6 +596,25 @@ impl Tree {
 
         let gini_impurity = (1.0 - sum_of_squares).clamp(0.0, 1.0);
         self[node_ptr].set_gini_impurity(gini_impurity);
+    }
+
+    fn transposition_policy_bonus(&self, pos: &ChessState, mov: Move) -> f32 {
+        let mut child = pos.clone();
+        child.make_move(mov);
+
+        let Some(entry) = self.probe_hash(child.hash()) else {
+            return 0.0;
+        };
+
+        if entry.visits() == 0 {
+            return 0.0;
+        }
+
+        let centered = (entry.q() - 0.5) * 2.0;
+        let visits = entry.visits() as f32;
+        let strength = (visits.ln_1p() / 4.0).min(0.75);
+
+        centered * strength
     }
 
     pub fn update_butterfly(&self, side: usize, mov: Move, score: f32, params: &MctsParams) {
