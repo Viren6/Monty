@@ -190,6 +190,17 @@ impl SearchHelpers {
             * best_move_visits
             * variance_factor) as u128;
 
+        let best_move_std_dev = searcher.tree[best_child_ptr].var().sqrt();
+        let best_move_variance_factor = (1.0
+            + (best_move_std_dev - searcher.params.tm_best_var_kt())
+                * searcher.params.tm_best_var_slope())
+        .clamp(
+            searcher.params.tm_best_var_min(),
+            searcher.params.tm_best_var_max(),
+        );
+
+        let total_time = (total_time as f32 * best_move_variance_factor) as u128;
+
         (elapsed >= total_time, score)
     }
 }
