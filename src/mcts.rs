@@ -72,9 +72,6 @@ impl<'a> Searcher<'a> {
         timer: &Instant,
         #[cfg(not(feature = "uci-minimal"))] timer_last_output: &mut Instant,
         search_stats: &SearchStats,
-        best_move: &mut Move,
-        best_move_changes: &mut i32,
-        previous_score: &mut f32,
         #[cfg(feature = "datagen")] previous_kld: &mut Vec<i32>,
         #[cfg(not(feature = "uci-minimal"))] uci_output: bool,
         thread_id: usize,
@@ -86,9 +83,6 @@ impl<'a> Searcher<'a> {
                 #[cfg(not(feature = "uci-minimal"))]
                 timer_last_output,
                 search_stats,
-                best_move,
-                best_move_changes,
-                previous_score,
                 #[cfg(feature = "datagen")]
                 previous_kld,
                 #[cfg(not(feature = "uci-minimal"))]
@@ -154,9 +148,6 @@ impl<'a> Searcher<'a> {
         timer: &Instant,
         #[cfg(not(feature = "uci-minimal"))] timer_last_output: &mut Instant,
         search_stats: &SearchStats,
-        best_move: &mut Move,
-        best_move_changes: &mut i32,
-        previous_score: &mut f32,
         #[cfg(feature = "datagen")] previous_kld_state: &mut Vec<i32>,
         #[cfg(not(feature = "uci-minimal"))] uci_output: bool,
     ) -> bool {
@@ -197,38 +188,13 @@ impl<'a> Searcher<'a> {
                     return true;
                 }
             }
-
-            let (_, new_best_move, _) = self.get_best_action(self.tree.root_node());
-            if new_best_move != *best_move {
-                *best_move = new_best_move;
-                *best_move_changes += 1;
-            }
         }
 
         if iters.is_multiple_of(4096) {
             if let Some(time) = limits.opt_time {
-                let (should_stop, score) = SearchHelpers::soft_time_cutoff(
-                    self,
-                    timer,
-                    *previous_score,
-                    *best_move_changes,
-                    iters,
-                    time,
-                );
-
-                if should_stop {
+                if SearchHelpers::soft_time_cutoff(timer, time) {
                     return true;
                 }
-
-                if iters.is_multiple_of(16384) {
-                    *best_move_changes = 0;
-                }
-
-                *previous_score = if *previous_score == f32::NEG_INFINITY {
-                    score
-                } else {
-                    (score + 2.0 * *previous_score) / 3.0
-                };
             }
         }
 
@@ -335,9 +301,6 @@ impl<'a> Searcher<'a> {
         let search_stats = SearchStats::new(threads);
         let stats_ref = &search_stats;
 
-        let mut best_move = Move::NULL;
-        let mut best_move_changes = 0;
-        let mut previous_score = f32::NEG_INFINITY;
         #[cfg(feature = "datagen")]
         let mut previous_kld = Vec::new();
 
@@ -351,9 +314,6 @@ impl<'a> Searcher<'a> {
                         #[cfg(not(feature = "uci-minimal"))]
                         &mut timer_last_output,
                         stats_ref,
-                        &mut best_move,
-                        &mut best_move_changes,
-                        &mut previous_score,
                         #[cfg(feature = "datagen")]
                         &mut previous_kld,
                         #[cfg(not(feature = "uci-minimal"))]
