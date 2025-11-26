@@ -471,7 +471,7 @@ fn go(
     commands: &[&str],
     tree: &mut Tree,
     pos: &ChessState,
-    _root_game_ply: u32,
+    root_game_ply: u32,
     params: &MctsParams,
     report_moves: bool,
     policy: &PolicyNetwork,
@@ -488,7 +488,7 @@ fn go(
 
     let mut times = [None; 2];
     let mut incs = [None; 2];
-    let mut _movestogo = None;
+    let mut movestogo = None;
     let mut opt_time = None;
 
     let mut mode = "";
@@ -513,7 +513,7 @@ fn go(
                 "btime" => times[1] = saturating_parse(cmd),
                 "winc" => incs[0] = saturating_parse(cmd),
                 "binc" => incs[1] = saturating_parse(cmd),
-                "movestogo" => _movestogo = saturating_parse(cmd),
+                "movestogo" => movestogo = saturating_parse(cmd),
                 _ => mode = "none",
             },
         }
@@ -524,7 +524,7 @@ fn go(
         // apply move overhead
         remaining = remaining.saturating_sub(move_overhead as u64).max(10);
 
-        let timeman = SearchHelpers::get_time(remaining, incs[pos.stm()]);
+        let timeman = SearchHelpers::get_time(remaining, incs[pos.stm()], root_game_ply, movestogo);
 
         opt_time = Some(timeman.0);
         max_time = Some(timeman.1);

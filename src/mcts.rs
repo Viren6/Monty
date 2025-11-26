@@ -192,7 +192,9 @@ impl<'a> Searcher<'a> {
 
         if iters.is_multiple_of(4096) {
             if let Some(time) = limits.opt_time {
-                if SearchHelpers::soft_time_cutoff(timer, time) {
+                let (best_ratio, q_gap) = self.root_consensus();
+
+                if SearchHelpers::soft_time_cutoff(timer, time, best_ratio, q_gap) {
                     return true;
                 }
             }
@@ -453,6 +455,49 @@ impl<'a> Searcher<'a> {
                 }
             }
         })
+    }
+
+    fn root_consensus(&self) -> (f32, f32) {
+        let node = &self.tree[self.tree.root_node()];
+
+        let mut total_visits = 0.0_f32;
+        let mut best_visits = 0.0_f32;
+
+        let mut best_q = f32::NEG_INFINITY;
+        let mut second_q = f32::NEG_INFINITY;
+
+        let child_ptr = node.actions();
+
+        for action in 0..node.num_actions() {
+            let child = &self.tree[child_ptr + action];
+            let visits = child.visits() as f32;
+
+            total_visits += visits;
+            best_visits = best_visits.max(visits);
+
+            let q = child.q();
+
+            if q > best_q {
+                second_q = best_q;
+                best_q = q;
+            } else if q > second_q {
+                second_q = q;
+            }
+        }
+
+        let best_ratio = if total_visits > 0.0 {
+            best_visits / total_visits
+        } else {
+            1.0
+        };
+
+        let q_gap = if second_q.is_finite() {
+            (best_q - second_q).abs()
+        } else {
+            1.0
+        };
+
+        (best_ratio, q_gap)
     }
 
     fn get_cp(score: f32) -> f32 {

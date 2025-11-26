@@ -92,14 +92,61 @@ impl SearchHelpers {
     /// This will be overriden by a `go movetime` command,
     /// and a move overhead will be applied to this, so no
     /// need for it here.
-    pub fn get_time(time: u64, increment: Option<u64>) -> (u128, u128) {
+    pub fn get_time(
+        time: u64,
+        increment: Option<u64>,
+        ply: u32,
+        movestogo: Option<u64>,
+    ) -> (u128, u128) {
         let inc = increment.unwrap_or(0) as u128;
-        let allocation = ((time as u128 + inc) * 5 / 100).max(1);
+        let moves_left = if let Some(mtg) = movestogo {
+            mtg.max(1) as u128
+        } else {
+            let moves_played = ply as u128 / 2;
+            let expected_game = 55_u128;
+            expected_game.saturating_sub(moves_played).max(12)
+        };
 
-        (allocation, allocation)
+        let time_left = time as u128;
+
+        // keep a small reserve to avoid losing on time in long searches
+        let reserve = (time_left / 60).max(inc / 2);
+        let usable_time = time_left.saturating_sub(reserve);
+
+        // spread the remaining time across the expected moves, with a floor to avoid
+        // spending too little in quiet positions
+        let share_from_clock = (usable_time / moves_left).max(time_left / 24);
+        let inc_share = inc.saturating_mul(7) / 10;
+
+        let opt_time = (share_from_clock + inc_share).max(10);
+        let mut max_time = (opt_time * 3 / 2 + inc / 2).min(time_left / 2 + inc);
+
+        if max_time <= opt_time {
+            max_time = opt_time + 1;
+        }
+
+        (opt_time, max_time)
     }
 
-    pub fn soft_time_cutoff(timer: &Instant, time: u128) -> bool {
-        timer.elapsed().as_millis() >= time
+    pub fn soft_time_cutoff(timer: &Instant, time: u128, best_ratio: f32, q_gap: f32) -> bool {
+        if timer.elapsed().as_millis() < time {
+            return false;
+        }
+
+        let mut extension = 0.0;
+
+        if best_ratio < 0.55 {
+            extension += 0.25;
+        } else if best_ratio < 0.7 {
+            extension += 0.15;
+        }
+
+        if q_gap < 0.015 {
+            extension += 0.1;
+        }
+
+        let budget = (time as f32 * (1.0 + extension)).round() as u128;
+
+        timer.elapsed().as_millis() >= budget
     }
 }
