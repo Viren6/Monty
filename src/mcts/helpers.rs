@@ -92,11 +92,35 @@ impl SearchHelpers {
     /// This will be overriden by a `go movetime` command,
     /// and a move overhead will be applied to this, so no
     /// need for it here.
-    pub fn get_time(time: u64, increment: Option<u64>) -> (u128, u128) {
+    pub fn get_time(
+        time: u64,
+        increment: Option<u64>,
+        movestogo: Option<u64>,
+        params: &MctsParams,
+    ) -> (u128, u128) {
         let inc = increment.unwrap_or(0) as u128;
-        let allocation = ((time as u128 + inc) * 5 / 100).max(1);
+        let time_left = time as u128;
 
-        (allocation, allocation)
+        // Estimate moves to go and clamp to a sane range so a very small or large
+        // `movestogo` does not make us spend too much time early on long TCs.
+        let mtg = movestogo.unwrap_or(params.tm_mtg() as u64).clamp(6, 90) as u128;
+
+        // Base allocation tries to spread time evenly over the remaining moves and
+        // leans on increment to avoid running out of time late in the game.
+        let base = time_left / (mtg + 2);
+        let inc_bonus = inc * 3 / 4; // keep a little safety buffer from the increment
+
+        let opt_time = (base + inc_bonus).max(10);
+
+        // Never allow a single move to consume almost all remaining time, even if the
+        // base estimate is large (e.g. in very long time controls).
+        let absolute_cap = (time_left as f64 * params.tm_max_time()) as u128;
+
+        // Give ourselves a bit of headroom over the optimal time when the position is
+        // complicated, but avoid blowing the entire bank in one move.
+        let max_time = (opt_time * 3 / 2).min(absolute_cap.max(opt_time));
+
+        (opt_time, max_time)
     }
 
     pub fn soft_time_cutoff(timer: &Instant, time: u128) -> bool {
