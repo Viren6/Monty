@@ -119,7 +119,7 @@ impl SearchHelpers {
         let inc_share = inc.saturating_mul(7) / 10;
 
         let opt_time = (share_from_clock + inc_share).max(10);
-        let mut max_time = (opt_time * 3 / 2 + inc / 2).min(time_left / 2 + inc);
+        let mut max_time = (opt_time * 7 / 4 + inc / 2).min(time_left * 2 / 3 + inc);
 
         if max_time <= opt_time {
             max_time = opt_time + 1;
@@ -135,14 +135,32 @@ impl SearchHelpers {
 
         let mut extension = 0.0;
 
-        if best_ratio < 0.55 {
-            extension += 0.25;
+        extension += if best_ratio < 0.5 {
+            0.9
+        } else if best_ratio < 0.6 {
+            0.6
         } else if best_ratio < 0.7 {
-            extension += 0.15;
-        }
+            0.35
+        } else if best_ratio < 0.8 {
+            0.15
+        } else {
+            0.0
+        };
 
-        if q_gap < 0.015 {
-            extension += 0.1;
+        extension += if q_gap < 0.01 {
+            0.25
+        } else if q_gap < 0.02 {
+            0.15
+        } else if q_gap < 0.03 {
+            0.05
+        } else {
+            0.0
+        };
+
+        let time_secs = time as f32 / 1000.0;
+        if time_secs > 1.0 {
+            let long_tc_boost = (time_secs.log2() * 0.05).min(0.25);
+            extension += long_tc_boost;
         }
 
         let budget = (time as f32 * (1.0 + extension)).round() as u128;
