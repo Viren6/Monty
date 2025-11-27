@@ -94,7 +94,19 @@ impl SearchHelpers {
     /// need for it here.
     pub fn get_time(time: u64, increment: Option<u64>) -> (u128, u128) {
         let inc = increment.unwrap_or(0) as u128;
-        let allocation = ((time as u128) / 32) + inc;
+        
+        // 1. Calculate the Ratio of Time to Increment (Safety Factor)
+        // We add 1 to inc to prevent division by zero if playing without increment.
+        let ratio = (time as u128) / (inc + 1); 
+
+        // 2. Dynamic Divisor
+        // If Ratio is high (100), Divisor -> 5 + 20 = 25. (Standard/Safe)
+        // If Ratio is low (10),  Divisor -> 5 + 2  = 7.  (Aggressive/Draining)
+        let divisor = 5 + (ratio / 5).min(20);
+
+        // 3. Allocation
+        // We add 'inc' EXPLICITLY to ensure we are always spending income + savings.
+        let allocation = ((time as u128) / divisor) + inc;
 
         (allocation, allocation)
     }
