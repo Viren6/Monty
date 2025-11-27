@@ -19,7 +19,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
     let mut tree = Tree::new_mb(hash_mb, 1);
     let mut report_moves = false;
     let mut threads = 1;
-    let mut move_overhead = 600;
+    let mut move_overhead = 1200;
     let mut uci_opponent_rating: Option<i32> = None;
     let mut uci_rating_adv: Option<i32> = None;
     let mut contempt_override: Option<i32> = None;
@@ -255,7 +255,7 @@ fn preamble(tcec_mode: bool) {
     println!("option name Threads type spin default 1 min 1 max 512");
     println!("option name UCI_Chess960 type check default false");
     println!("option name Contempt_Analysis type check default false");
-    println!("option name MoveOverhead type spin default 600 min 0 max 10000");
+    println!("option name MoveOverhead type spin default 1200 min 0 max 10000");
     println!("option name report_moves type button");
     println!("option name report_iters type button");
     if tcec_mode {
@@ -521,10 +521,10 @@ fn go(
 
     // `go wtime <wtime> btime <btime> winc <winc> binc <binc>``
     if let Some(mut remaining) = times[pos.stm()] {
-        // apply move overhead and an additional 1% of the effective time control
+        // apply move overhead and an additional 2% of the effective time control
         let inc = incs[pos.stm()].unwrap_or(0);
         let effective_time = remaining.saturating_add(inc.saturating_mul(100));
-        let percentage_overhead = effective_time / 100;
+        let percentage_overhead = effective_time / 50;
         let total_overhead = move_overhead as u64 + percentage_overhead;
 
         remaining = remaining.saturating_sub(total_overhead).max(10);
