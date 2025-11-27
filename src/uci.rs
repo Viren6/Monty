@@ -255,7 +255,7 @@ fn preamble(tcec_mode: bool) {
     println!("option name Threads type spin default 1 min 1 max 512");
     println!("option name UCI_Chess960 type check default false");
     println!("option name Contempt_Analysis type check default false");
-    println!("option name MoveOverhead type spin default 400 min 0 max 5000");
+    println!("option name MoveOverhead type spin default 800 min 0 max 5000");
     println!("option name report_moves type button");
     println!("option name report_iters type button");
     if tcec_mode {
