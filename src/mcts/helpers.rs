@@ -94,7 +94,7 @@ impl SearchHelpers {
     /// need for it here.
     pub fn get_time(time: u64, increment: Option<u64>) -> (u128, u128) {
         let inc = increment.unwrap_or(0) as u128;
-        let allocation = ((time as u128) / 20).max(inc);
+        let allocation = ((time as u128) / 32) + inc;
 
         (allocation, allocation)
     }
