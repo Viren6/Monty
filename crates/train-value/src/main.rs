@@ -7,9 +7,8 @@ use input::ThreatInputs;
 use bullet_lib::{
     game::inputs::SparseInputType,
     nn::{
-        graph::builder::Affine,
         optimiser::{AdamW, AdamWParams},
-        InitSettings, Shape,
+        Affine, InitSettings, NetworkBuilderNode, Shape,
     },
     trainer::{
         save::SavedFormat,
@@ -61,7 +60,9 @@ fn main() {
         .build_custom(|builder, inputs, targets| {
             let num_inputs = input_features.num_inputs();
 
-            let faux_quantise = |node, factor| node.faux_quantise(factor, true);
+            let faux_quantise = |node: NetworkBuilderNode<'_, _>, factor: f32| {
+                node.faux_quantise(factor, true)
+            };
 
             let pst = builder.new_weights("pst", Shape::new(3, num_inputs), InitSettings::Zeroed);
             let l0_affine = builder.new_affine("l0", num_inputs, l1);
