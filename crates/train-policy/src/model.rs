@@ -3,7 +3,10 @@ mod select_affine;
 
 use acyclib::{
     device::tensor::Shape,
-    graph::{builder::GraphBuilder, Graph, GraphNodeId, GraphNodeIdTy},
+    graph::{
+        builder::{Affine, GraphBuilder},
+        Graph, GraphNodeId, GraphNodeIdTy,
+    },
     trainer::dataloader::PreparedBatchDevice,
 };
 use bullet_cuda_backend::CudaDevice;
@@ -25,9 +28,26 @@ pub fn make(device: CudaDevice, hl: usize) -> (Graph<CudaDevice>, GraphNodeId) {
     let l0 = builder.new_affine("l0", INPUT_SIZE, hl);
     let l1 = builder.new_affine("l1", hl / 2, NUM_MOVES_INDICES);
 
-    let hl = l0.forward(inputs).crelu().pairwise_mul();
+    let faux_quantise = |node| node.faux_quantise(128.0, true);
 
-    let logits = builder.apply(select_affine::SelectAffine::new(l1, hl, moves));
+    let l0 = Affine {
+        weights: faux_quantise(l0.weights),
+        bias: faux_quantise(l0.bias),
+    };
+    let l1 = Affine {
+        weights: faux_quantise(l1.weights),
+        bias: faux_quantise(l1.bias),
+    };
+
+    let hl = l0
+        .forward(inputs)
+        .faux_quantise(128.0, true)
+        .crelu()
+        .pairwise_mul();
+
+    let logits = builder
+        .apply(select_affine::SelectAffine::new(l1, hl, moves))
+        .faux_quantise(128.0, true);
 
     let ones = builder.new_constant(Shape::new(1, MAX_MOVES), &[1.0; MAX_MOVES]);
     let loss = builder.apply(loss::OptimisedSoftmaxCrossEntropy::new(logits, targets));

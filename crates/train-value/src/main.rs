@@ -7,6 +7,7 @@ use input::ThreatInputs;
 use bullet_lib::{
     game::inputs::SparseInputType,
     nn::{
+        graph::builder::Affine,
         optimiser::{AdamW, AdamWParams},
         InitSettings, Shape,
     },
@@ -60,16 +61,31 @@ fn main() {
         .build_custom(|builder, inputs, targets| {
             let num_inputs = input_features.num_inputs();
 
+            let faux_quantise = |node, factor| node.faux_quantise(factor, true);
+
             let pst = builder.new_weights("pst", Shape::new(3, num_inputs), InitSettings::Zeroed);
-            let l0 = builder.new_affine("l0", num_inputs, l1);
-            let l1 = builder.new_affine("l1", l1 / 2, l2);
+            let l0_affine = builder.new_affine("l0", num_inputs, l1);
+            let l1_affine = builder.new_affine("l1", l1 / 2, l2);
             let l2 = builder.new_affine("l2", l2, l3);
             let l3 = builder.new_affine("l3", l3, 3);
 
-            l0.init_with_effective_input_size(input_features.max_active());
+            l0_affine.init_with_effective_input_size(input_features.max_active());
 
-            let l0 = l0.forward(inputs).crelu().pairwise_mul();
-            let l1 = l1.forward(l0).screlu();
+            let l0 = Affine {
+                weights: faux_quantise(l0_affine.weights, 128.0),
+                bias: faux_quantise(l0_affine.bias, 128.0),
+            };
+            let l1 = Affine {
+                weights: faux_quantise(l1_affine.weights, 1024.0),
+                bias: faux_quantise(l1_affine.bias, 1024.0),
+            };
+
+            let l0 = l0
+                .forward(inputs)
+                .faux_quantise(128.0, true)
+                .crelu()
+                .pairwise_mul();
+            let l1 = l1.forward(l0).faux_quantise(1024.0, true).screlu();
             let l2 = l2.forward(l1).screlu();
             let l3 = l3.forward(l2);
             let out = l3 + pst.matmul(inputs);

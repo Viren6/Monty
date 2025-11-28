@@ -9,7 +9,7 @@ repository = { workspace = true }
 default-run = "train-policy"
 
 [dependencies]
-acyclib = { package = "acyclib", git = 'https://github.com/jw1912/bullet', rev = "0891eca1fa3316db0d009df7146f85eab04407c2" }
-bullet_cuda_backend = { package = "bullet_cuda_backend", git = 'https://github.com/jw1912/bullet', rev = "0891eca1fa3316db0d009df7146f85eab04407c2" }
+acyclib = { package = "acyclib", git = 'https://github.com/jw1912/bullet', rev = "e5f65c43050f3c864d7f1e8af944bc5fbdebcbb6" }
+bullet_cuda_backend = { package = "bullet_cuda_backend", git = 'https://github.com/jw1912/bullet', rev = "e5f65c43050f3c864d7f1e8af944bc5fbdebcbb6" }
 montyformat = { workspace = true }
 monty = { workspace = true }
