@@ -60,10 +60,6 @@ fn main() {
         .build_custom(|builder, inputs, targets| {
             let num_inputs = input_features.num_inputs();
 
-            let faux_quantise = |node: NetworkBuilderNode<'_, _>, factor: f32| {
-                node.faux_quantise(factor, true)
-            };
-
             let pst = builder.new_weights("pst", Shape::new(3, num_inputs), InitSettings::Zeroed);
             let l0_affine = builder.new_affine("l0", num_inputs, l1);
             let l1_affine = builder.new_affine("l1", l1 / 2, l2);
@@ -73,12 +69,12 @@ fn main() {
             l0_affine.init_with_effective_input_size(input_features.max_active());
 
             let l0 = Affine {
-                weights: faux_quantise(l0_affine.weights, 128.0),
-                bias: faux_quantise(l0_affine.bias, 128.0),
+                weights: l0_affine.weights.faux_quantise(128.0, true),
+                bias: l0_affine.bias.faux_quantise(128.0, true),
             };
             let l1 = Affine {
-                weights: faux_quantise(l1_affine.weights, 1024.0),
-                bias: faux_quantise(l1_affine.bias, 1024.0),
+                weights: l1_affine.weights.faux_quantise(1024.0, true),
+                bias: l1_affine.bias.faux_quantise(1024.0, true),
             };
 
             let l0 = l0
