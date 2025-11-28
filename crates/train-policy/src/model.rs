@@ -28,15 +28,13 @@ pub fn make(device: CudaDevice, hl: usize) -> (Graph<CudaDevice>, GraphNodeId) {
     let l0 = builder.new_affine("l0", INPUT_SIZE, hl);
     let l1 = builder.new_affine("l1", hl / 2, NUM_MOVES_INDICES);
 
-    let faux_quantise = |node| node.faux_quantise(128.0, true);
-
     let l0 = Affine {
-        weights: faux_quantise(l0.weights),
-        bias: faux_quantise(l0.bias),
+        weights: l0.weights.faux_quantise(128.0, true),
+        bias: l0.bias.faux_quantise(128.0, true),
     };
     let l1 = Affine {
-        weights: faux_quantise(l1.weights),
-        bias: faux_quantise(l1.bias),
+        weights: l1.weights.faux_quantise(128.0, true),
+        bias: l1.bias.faux_quantise(128.0, true),
     };
 
     let hl = l0
