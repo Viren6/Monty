@@ -2,8 +2,41 @@ use crate::{
     mcts::MctsParams,
     networks::{Accumulator, PolicyNetwork, ValueNetwork, POLICY_L1},
 };
+use std::{
+    fs::{File, OpenOptions},
+    io::Write,
+    path::Path,
+    sync::{Mutex, OnceLock},
+};
 
 pub use montyformat::chess::{Attacks, Castling, GameState, Move, Position};
+
+static DELTA_MU_LOG: OnceLock<Mutex<Option<File>>> = OnceLock::new();
+
+fn delta_mu_log() -> &'static Mutex<Option<File>> {
+    DELTA_MU_LOG.get_or_init(|| Mutex::new(None))
+}
+
+pub fn configure_delta_mu_log<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(path)?;
+
+    let mut guard = delta_mu_log().lock().unwrap();
+    *guard = Some(file);
+
+    Ok(())
+}
+
+fn log_delta_mu_value(delta_mu: f32) {
+    if let Ok(mut guard) = delta_mu_log().lock() {
+        if let Some(file) = guard.as_mut() {
+            let _ = writeln!(file, "{delta_mu}");
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct EvalWdl {
@@ -84,6 +117,7 @@ impl EvalWdl {
         // Correction factor: 16x
         let delta_mu =
             (s * s * contempt * std::f32::consts::LN_10 / (400.0 * 16.0)).clamp(-8.0, 8.0);
+        log_delta_mu_value(delta_mu);
         let mu_new = mu + delta_mu;
 
         let logistic = |x: f32| 1.0 / (1.0 + (-x).exp());

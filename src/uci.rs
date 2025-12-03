@@ -1,5 +1,5 @@
 use crate::{
-    chess::{ChessState, Move},
+    chess::{configure_delta_mu_log, ChessState, Move},
     mcts::{Limits, MctsParams, SearchHelpers, Searcher, REPORT_ITERS},
     networks::{PolicyNetwork, ValueNetwork},
     tree::Tree,
@@ -157,6 +157,12 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
 }
 
 pub fn bench(depth: usize, policy: &PolicyNetwork, value: &ValueNetwork, params: &MctsParams) {
+    let mut bench_params = params.clone();
+    bench_params.set("contempt", 800);
+    if let Err(err) = configure_delta_mu_log("delta_mu.log") {
+        eprintln!("failed to configure delta_mu.log: {err}");
+    }
+
     let mut total_nodes = 0;
     let mut time = 0.0;
 
@@ -232,7 +238,7 @@ pub fn bench(depth: usize, policy: &PolicyNetwork, value: &ValueNetwork, params:
         let abort = AtomicBool::new(false);
         let pos = ChessState::from_fen(fen);
         tree.set_root_position(&pos);
-        let searcher = Searcher::new(&tree, params, policy, value, &abort);
+        let searcher = Searcher::new(&tree, &bench_params, policy, value, &abort);
         let timer = Instant::now();
         #[cfg(not(feature = "datagen"))]
         searcher.search(1, limits, false, &mut total_nodes);
