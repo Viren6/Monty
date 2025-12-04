@@ -600,6 +600,30 @@ impl Tree {
         self.butterfly.update(side, mov, score, params);
     }
 
+    pub fn update_root_gini(&self) {
+        let node_ptr = self.root_node();
+        let node = &self[node_ptr];
+        let total_visits = node.visits();
+
+        if total_visits == 0 {
+            return;
+        }
+
+        let first_child_ptr = node.actions();
+        let num_actions = node.num_actions();
+
+        let mut sum_squares = 0.0;
+
+        for action in 0..num_actions {
+            let child = &self[first_child_ptr + action];
+            let p = child.visits() as f32 / total_visits as f32;
+            sum_squares += p * p;
+        }
+
+        let gini = (1.0 - sum_squares).clamp(0.0, 1.0);
+        node.set_gini_impurity(gini);
+    }
+
     pub fn clear_butterfly_table(&self) {
         self.butterfly.clear();
     }

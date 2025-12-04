@@ -205,6 +205,10 @@ impl<'a> Searcher<'a> {
             }
         }
 
+        if iters.is_multiple_of(1024) {
+            self.tree.update_root_gini();
+        }
+
         if iters.is_multiple_of(4096) {
             if let Some(time) = limits.opt_time {
                 let (should_stop, score) = SearchHelpers::soft_time_cutoff(
