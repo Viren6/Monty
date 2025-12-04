@@ -245,7 +245,8 @@ impl ChessState {
         root_stm: usize,
     ) -> EvalBreakdown {
         let (raw, material, cp) = self.evaluate_material_wdl(value, params);
-        let contempt = params.contempt() as f32;
+        let mut contempt = params.contempt() as f32;
+        contempt += cp as f32 * params.dynamic_contempt_slope();
         let perspective = if self.stm() == root_stm { 1.0 } else { -1.0 };
         let contempt_scaled = material.apply_contempt(contempt * perspective);
 
