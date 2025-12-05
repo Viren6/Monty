@@ -205,6 +205,14 @@ impl<'a> Searcher<'a> {
             }
         }
 
+        if let Some(probability) =
+            self.predict_best_move_change_probability(limits, timer, search_stats)
+        {
+            if probability < 0.05 {
+                return true;
+            }
+        }
+
         if iters.is_multiple_of(4096) {
             if let Some(time) = limits.opt_time {
                 let (should_stop, score) = SearchHelpers::soft_time_cutoff(
@@ -269,6 +277,81 @@ impl<'a> Searcher<'a> {
         }
 
         false
+    }
+
+    fn predict_best_move_change_probability(
+        &self,
+        limits: &Limits,
+        timer: &Instant,
+        search_stats: &SearchStats,
+    ) -> Option<f32> {
+        let elapsed_ms = timer.elapsed().as_millis();
+        if elapsed_ms < 10 {
+            return None;
+        }
+
+        let Some(total_time) = limits.max_time.or(limits.opt_time) else {
+            return None;
+        };
+
+        if total_time <= elapsed_ms {
+            return Some(0.0);
+        }
+
+        let remaining_ms = total_time - elapsed_ms;
+        let future_window_ms = (remaining_ms as f32 * 0.10).max(0.0);
+        if future_window_ms <= 0.0 {
+            return Some(0.0);
+        }
+
+        let elapsed_secs = (elapsed_ms as f32).max(1.0) / 1000.0;
+        let nps = search_stats.total_nodes() as f32 / elapsed_secs;
+        let projected_nodes = nps * (future_window_ms / 1000.0);
+
+        let root_ptr = self.tree.root_node();
+        let root = &self.tree[root_ptr];
+        let num_actions = root.num_actions();
+        if num_actions < 2 {
+            return Some(0.0);
+        }
+
+        let first_child_ptr = root.actions();
+        let mut children: Vec<(f32, f32, f32)> = (0..num_actions)
+            .map(|idx| {
+                let child = &self.tree[first_child_ptr + idx];
+                (child.visits() as f32, child.q(), child.var())
+            })
+            .collect();
+
+        let mean_visits = children.iter().map(|c| c.0).sum::<f32>() / num_actions as f32;
+        let visit_variance = children
+            .iter()
+            .map(|(v, _, _)| {
+                let diff = *v - mean_visits;
+                diff * diff
+            })
+            .sum::<f32>()
+            / num_actions as f32;
+
+        children.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let (best_visits, best_q, best_var) = children[0];
+        let (second_visits, second_q, second_var) = children[1];
+
+        let q_gap = (best_q - second_q).abs();
+        let visit_gap = (best_visits - second_visits).max(0.0);
+
+        let visit_spread = ((visit_variance.sqrt() + 1.0) / (best_visits + 1.0)).min(2.0);
+        let stability_gap = (visit_gap + q_gap * (best_visits + second_visits + 1.0).sqrt())
+            / (visit_variance.sqrt() + 1.0);
+        let pressure = (projected_nodes / (stability_gap + 1.0)).tanh() * visit_spread;
+
+        let q_uncertainty =
+            ((best_var + second_var).sqrt() + (0.01_f32 / (q_gap + 0.001))).min(1.0);
+
+        let probability = (0.6 * pressure + 0.4 * q_uncertainty).clamp(0.0, 1.0);
+
+        Some(probability)
     }
 
     pub fn search(

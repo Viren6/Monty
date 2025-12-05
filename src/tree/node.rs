@@ -162,6 +162,9 @@ impl Node {
     pub fn sq_q(&self) -> f64 {
         let sum_sq_q = self.sum_sq_q.load(Ordering::Relaxed);
         let visits = self.visits.load(Ordering::Relaxed);
+        if visits == 0 {
+            return 0.0;
+        }
         (sum_sq_q / visits) as f64 / f64::from(QUANT).powi(2)
     }
 
