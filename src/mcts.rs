@@ -205,10 +205,8 @@ impl<'a> Searcher<'a> {
             }
         }
 
-        if let Some(probability) =
-            self.predict_best_move_change_probability(limits, timer, search_stats)
-        {
-            if probability < 0.05 {
+        if let Some(locked) = self.best_move_locked_in_forecast(limits, timer, search_stats) {
+            if locked {
                 return true;
             }
         }
@@ -279,12 +277,12 @@ impl<'a> Searcher<'a> {
         false
     }
 
-    fn predict_best_move_change_probability(
+    fn best_move_locked_in_forecast(
         &self,
         limits: &Limits,
         timer: &Instant,
         search_stats: &SearchStats,
-    ) -> Option<f32> {
+    ) -> Option<bool> {
         let elapsed_ms = timer.elapsed().as_millis();
         if elapsed_ms < 10 {
             return None;
@@ -295,24 +293,25 @@ impl<'a> Searcher<'a> {
         };
 
         if total_time <= elapsed_ms {
-            return Some(0.0);
+            return Some(true);
         }
 
         let remaining_ms = total_time - elapsed_ms;
         let future_window_ms = (remaining_ms as f32 * 0.10).max(0.0);
         if future_window_ms <= 0.0 {
-            return Some(0.0);
+            return Some(true);
         }
 
-        let elapsed_secs = (elapsed_ms as f32).max(1.0) / 1000.0;
-        let nps = search_stats.total_nodes() as f32 / elapsed_secs;
+        let elapsed_secs = elapsed_ms as f32 / 1000.0;
+        let nodes_since_move_start = search_stats.total_nodes() as f32;
+        let nps = nodes_since_move_start / elapsed_secs.max(0.01);
         let projected_nodes = nps * (future_window_ms / 1000.0);
 
         let root_ptr = self.tree.root_node();
         let root = &self.tree[root_ptr];
         let num_actions = root.num_actions();
         if num_actions < 2 {
-            return Some(0.0);
+            return Some(true);
         }
 
         let first_child_ptr = root.actions();
@@ -325,25 +324,12 @@ impl<'a> Searcher<'a> {
 
         children.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        let (best_visits, best_q, _) = children[0];
-        let (second_visits, second_q, _) = children[1];
+        let (best_visits, _, _) = children[0];
+        let (second_visits, _, _) = children[1];
 
-        // If the second-best move cannot catch up even if it receives every visit in the
-        // forecast window, the best move is effectively locked in.
-        let required_extra = (best_visits - second_visits).max(0.0) + 1.0;
-        if required_extra > projected_nodes {
-            return Some(0.0);
-        }
-
-        let q_gap = (best_q - second_q).abs();
-        let dominance_ratio = (second_visits + projected_nodes) / (best_visits + 1.0);
-
-        // Probability rises if the runner-up can plausibly catch up within the projected
-        // visits, and falls quickly when evaluation confidence is high.
-        let swing_chance = (dominance_ratio / (dominance_ratio + 1.0)).clamp(0.0, 1.0);
-        let eval_uncertainty = (0.05_f32 / (q_gap + 0.05)).clamp(0.0, 1.0);
-
-        Some((swing_chance * eval_uncertainty).clamp(0.0, 1.0))
+        // If the runner-up cannot overtake even when receiving every projected visit,
+        // the current best move is effectively locked in.
+        Some(second_visits + projected_nodes < best_visits)
     }
 
     pub fn search(
