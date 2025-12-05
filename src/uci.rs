@@ -11,6 +11,12 @@ use std::{
     time::Instant,
 };
 
+#[derive(Clone, Copy)]
+struct MoveIterationSpeed {
+    iters_per_sec: f32,
+    time_usage_fraction: f32,
+}
+
 pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
     let mut pos = ChessState::default();
     let mut root_game_ply = 0;
@@ -24,6 +30,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
     let mut uci_rating_adv: Option<i32> = None;
     let mut contempt_override: Option<i32> = None;
     let mut contempt_analysis = false;
+    let mut iteration_history = Vec::new();
 
     let mut stored_message: Option<String> = None;
 
@@ -78,6 +85,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
                     threads,
                     move_overhead,
                     contempt_analysis,
+                    &mut iteration_history,
                     &mut stored_message,
                     #[cfg(feature = "datagen")]
                     1.0,
@@ -222,6 +230,7 @@ pub fn bench(depth: usize, policy: &PolicyNetwork, value: &ValueNetwork, params:
         opt_time: None,
         max_depth: depth,
         max_nodes: 1_000_000,
+        predicted_iters_per_sec: None,
         #[cfg(feature = "datagen")]
         kld_min_gain: None,
     };
@@ -479,6 +488,7 @@ fn go(
     threads: usize,
     move_overhead: usize,
     disable_tree_reuse: bool,
+    iteration_history: &mut Vec<MoveIterationSpeed>,
     stored_message: &mut Option<String>,
     #[cfg(feature = "datagen")] temp: f32,
 ) {
@@ -490,6 +500,7 @@ fn go(
     let mut incs = [None; 2];
     let mut movestogo = None;
     let mut opt_time = None;
+    let mut remaining_for_history = None;
 
     let mut mode = "";
 
@@ -524,6 +535,8 @@ fn go(
         // apply move overhead
         remaining = remaining.saturating_sub(move_overhead as u64).max(10);
 
+        remaining_for_history = Some(remaining);
+
         let timeman =
             SearchHelpers::get_time(remaining, incs[pos.stm()], root_game_ply, movestogo, params);
 
@@ -545,11 +558,18 @@ fn go(
 
     tree.set_root_position(pos);
 
+    let predicted_iters_per_sec = iteration_history
+        .iter()
+        .rev()
+        .find(|entry| entry.time_usage_fraction > 0.005)
+        .map(|entry| entry.iters_per_sec);
+
     let limits = Limits {
         max_time,
         opt_time,
         max_depth,
         max_nodes,
+        predicted_iters_per_sec,
         #[cfg(feature = "datagen")]
         kld_min_gain: None,
     };
@@ -557,6 +577,7 @@ fn go(
     std::thread::scope(|s| {
         s.spawn(|| {
             let searcher = Searcher::new(tree, params, policy, value, &abort);
+            let search_start = Instant::now();
             let mov = searcher
                 .search(
                     threads,
@@ -569,6 +590,18 @@ fn go(
                     temp,
                 )
                 .0;
+
+            if let Some(remaining) = remaining_for_history {
+                let elapsed = search_start.elapsed();
+                let elapsed_secs = elapsed.as_secs_f32();
+                if elapsed_secs > 0.0 {
+                    let root_visits = tree[tree.root_node()].visits();
+                    iteration_history.push(MoveIterationSpeed {
+                        iters_per_sec: root_visits as f32 / elapsed_secs,
+                        time_usage_fraction: elapsed_secs / (remaining as f32 / 1000.0_f32),
+                    });
+                }
+            }
             println!("bestmove {}", pos.conv_mov_to_str(mov));
 
             if report_moves {

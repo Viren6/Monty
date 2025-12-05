@@ -67,6 +67,7 @@ impl<'a> DatagenThread<'a> {
             max_nodes: 100000,
             max_time: None,
             opt_time: None,
+            predicted_iters_per_sec: None,
             kld_min_gain: Some(0.000005),
         };
 

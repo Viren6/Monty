@@ -36,6 +36,7 @@ pub struct Limits {
     pub opt_time: Option<u128>,
     pub max_depth: usize,
     pub max_nodes: usize,
+    pub predicted_iters_per_sec: Option<f32>,
     #[cfg(feature = "datagen")]
     pub kld_min_gain: Option<f64>,
 }
@@ -198,6 +199,17 @@ impl<'a> Searcher<'a> {
                 }
             }
 
+            if let (Some(predicted_iters_per_sec), Some(time_limit)) =
+                (limits.predicted_iters_per_sec, limits.max_time)
+            {
+                if predicted_iters_per_sec > 0.0
+                    && iters.is_multiple_of(1024)
+                    && self.second_best_cannot_catch_up(predicted_iters_per_sec, time_limit, timer)
+                {
+                    return true;
+                }
+            }
+
             let (_, new_best_move, _) = self.get_best_action(self.tree.root_node());
             if new_best_move != *best_move {
                 *best_move = new_best_move;
@@ -269,6 +281,48 @@ impl<'a> Searcher<'a> {
         }
 
         false
+    }
+
+    fn second_best_cannot_catch_up(
+        &self,
+        predicted_iters_per_sec: f32,
+        time_limit: u128,
+        timer: &Instant,
+    ) -> bool {
+        let elapsed_ms = timer.elapsed().as_millis();
+        if elapsed_ms >= time_limit {
+            return true;
+        }
+
+        let remaining_ms = time_limit.saturating_sub(elapsed_ms);
+        let projected_iters =
+            predicted_iters_per_sec as f64 * (remaining_ms as f64 * 0.25 / 1000.0_f64);
+
+        if projected_iters <= 0.0 {
+            return false;
+        }
+
+        let node = &self.tree[self.tree.root_node()];
+        if node.num_actions() < 2 {
+            return false;
+        }
+
+        let first_child_ptr = node.actions();
+        let mut best_visits = 0.0_f64;
+        let mut second_best_visits = 0.0_f64;
+
+        for action in 0..node.num_actions() {
+            let visits = self.tree[first_child_ptr + action].visits() as f64;
+
+            if visits > best_visits {
+                second_best_visits = best_visits;
+                best_visits = visits;
+            } else if visits > second_best_visits {
+                second_best_visits = visits;
+            }
+        }
+
+        second_best_visits + projected_iters <= best_visits
     }
 
     pub fn search(
