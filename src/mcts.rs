@@ -323,35 +323,27 @@ impl<'a> Searcher<'a> {
             })
             .collect();
 
-        let mean_visits = children.iter().map(|c| c.0).sum::<f32>() / num_actions as f32;
-        let visit_variance = children
-            .iter()
-            .map(|(v, _, _)| {
-                let diff = *v - mean_visits;
-                diff * diff
-            })
-            .sum::<f32>()
-            / num_actions as f32;
-
         children.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        let (best_visits, best_q, best_var) = children[0];
-        let (second_visits, second_q, second_var) = children[1];
+        let (best_visits, best_q, _) = children[0];
+        let (second_visits, second_q, _) = children[1];
+
+        // If the second-best move cannot catch up even if it receives every visit in the
+        // forecast window, the best move is effectively locked in.
+        let required_extra = (best_visits - second_visits).max(0.0) + 1.0;
+        if required_extra > projected_nodes {
+            return Some(0.0);
+        }
 
         let q_gap = (best_q - second_q).abs();
-        let visit_gap = (best_visits - second_visits).max(0.0);
+        let dominance_ratio = (second_visits + projected_nodes) / (best_visits + 1.0);
 
-        let visit_spread = ((visit_variance.sqrt() + 1.0) / (best_visits + 1.0)).min(2.0);
-        let stability_gap = (visit_gap + q_gap * (best_visits + second_visits + 1.0).sqrt())
-            / (visit_variance.sqrt() + 1.0);
-        let pressure = (projected_nodes / (stability_gap + 1.0)).tanh() * visit_spread;
+        // Probability rises if the runner-up can plausibly catch up within the projected
+        // visits, and falls quickly when evaluation confidence is high.
+        let swing_chance = (dominance_ratio / (dominance_ratio + 1.0)).clamp(0.0, 1.0);
+        let eval_uncertainty = (0.05_f32 / (q_gap + 0.05)).clamp(0.0, 1.0);
 
-        let q_uncertainty =
-            ((best_var + second_var).sqrt() + (0.01_f32 / (q_gap + 0.001))).min(1.0);
-
-        let probability = (0.6 * pressure + 0.4 * q_uncertainty).clamp(0.0, 1.0);
-
-        Some(probability)
+        Some((swing_chance * eval_uncertainty).clamp(0.0, 1.0))
     }
 
     pub fn search(
