@@ -30,6 +30,19 @@ impl SearchHelpers {
             cpuct *= 1.0 + params.cpuct_var_weight() * (frac - 1.0);
         }
 
+        // When the policy already produces a very sharp distribution and the node
+        // is well visited, progressively damp exploration to consolidate the
+        // search into the stable mainline. This leverages the stored gini
+        // impurity (highly concentrated -> low gini) and visit count to fade the
+        // bonus in a smooth, bounded way without needing extra tuning knobs.
+        if node.visits() > 8 {
+            let stability = (1.0 - node.gini_impurity()).clamp(0.0, 1.0);
+            let visits_term = (node.visits() as f32).ln_1p();
+            let damp = (stability * visits_term / (params.cpuct_visits_scale() * 0.5)).tanh()
+                * 0.15;
+            cpuct *= 1.0 - damp;
+        }
+
         cpuct
     }
 
