@@ -124,13 +124,37 @@ fn get_utility(searcher: &Searcher, ptr: NodePtr, pos: &ChessState) -> f32 {
 fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
     let is_root = ptr == searcher.tree.root_node();
 
+    let actions_ptr = node.actions();
+    let mut unexplored_policy = 0.0;
+    let mut explored_policy = 0.0;
+    let mut zero_visit_moves = 0;
+
+    for action in 0..node.num_actions() {
+        let child = &searcher.tree[actions_ptr + action];
+
+        if child.visits() == 0 {
+            unexplored_policy += child.policy();
+            zero_visit_moves += 1;
+        } else {
+            explored_policy += child.policy();
+        }
+    }
+
     let cpuct = SearchHelpers::get_cpuct(searcher.params, node, is_root);
     let fpu = SearchHelpers::get_fpu(node);
     let expl_scale = SearchHelpers::get_explore_scaling(searcher.params, node);
 
-    let expl = cpuct * expl_scale;
+    // Encourage broader exploration by amplifying the exploration term
+    // when a meaningful portion of the policy mass has not yet been
+    // visited. The logarithmic width term keeps the boost modest as the
+    // branching factor rises so that it scales smoothly with position
+    // complexity.
+    let policy_mass = (unexplored_policy + explored_policy).max(f32::EPSILON);
+    let novelty_ratio = (unexplored_policy / policy_mass).clamp(0.0, 1.0);
+    let novelty_width = (zero_visit_moves as f32).ln_1p();
+    let novelty_boost = 1.0 + novelty_ratio * novelty_width;
 
-    let actions_ptr = node.actions();
+    let expl = cpuct * expl_scale * novelty_boost;
     let mut acc = 0.0;
     let mut k = 0;
     while k < node.num_actions() && acc < searcher.params.policy_top_p() {
@@ -144,6 +168,14 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
         thresh = thresh.checked_shl(1).unwrap_or(u64::MAX);
     }
     limit = limit.min(node.num_actions());
+
+    // When there is still a sizeable mass of unvisited policy, gently widen
+    // the candidate set up-front. This keeps early trajectories broader and
+    // delays convergence to a narrow set of continuations.
+    if zero_visit_moves > 0 {
+        let extra = (novelty_ratio * novelty_width * 2.0).round() as usize;
+        limit = (limit + extra).min(node.num_actions());
+    }
 
     searcher
         .tree
