@@ -145,6 +145,19 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
     }
     limit = limit.min(node.num_actions());
 
+    // Encourage wider exploration when the policy mass is spread out.
+    // The gini impurity already tracks how evenly the policy is distributed,
+    // so combine it with the remaining policy tail to opportunistically widen
+    // the candidate set. This keeps the search shallow for uncertain nodes,
+    // improving scalability at higher playout counts without overwhelming
+    // confident positions.
+    let tail_mass = (1.0 - acc).max(0.0);
+    let diversity = node.gini_impurity() * tail_mass;
+    if diversity > 0.0 && limit < node.num_actions() {
+        let bonus = (diversity * node.num_actions() as f32).sqrt().ceil() as usize;
+        limit = (limit + bonus.max(1)).min(node.num_actions());
+    }
+
     searcher
         .tree
         .get_best_child_by_key_lim(ptr, limit, |child| {
@@ -159,7 +172,13 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
                 q = q2 as f32;
             }
 
-            let u = expl * child.policy() / (1 + child.visits()) as f32;
+            // scale exploration with the same diversity-aware factor used to widen
+            // the candidate set so that low-prior moves get revisited sooner
+            // when the network is uncertain.
+            let u = expl
+                * (1.0 + diversity * 0.5)
+                * child.policy()
+                / (1 + child.visits()) as f32;
 
             q + u
         })
