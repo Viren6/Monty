@@ -142,6 +142,8 @@ make_mcts_params! {
     cpuct_var_warmup: f32 = 0.5, 0.0, 1.0, 0.01, 0.002;
     cpuct_visits_scale: f32 = 36.91, 1.0, 512.0, 3.2, 0.002;
     expl_tau: f32 = 0.676, 0.1, 1.0, 0.05, 0.002;
+    expl_reheat_strength: f32 = 0.21, 0.0, 1.5, 0.03, 0.002;
+    expl_reheat_cooling: f32 = 0.12, 0.01, 1.0, 0.02, 0.002;
     gini_base: f32 = 0.463, 0.2, 2.0, 0.0679, 0.002;
     gini_ln_multiplier: f32 = 1.567, 0.4, 3.0, 0.1634, 0.002;
     gini_min: f32 = 2.26, 0.5, 4.0, 0.21, 0.002;

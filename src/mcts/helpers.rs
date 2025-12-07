@@ -57,6 +57,16 @@ impl SearchHelpers {
         };
 
         scale *= factor;
+
+        // Reheat exploration when the visit distribution collapses too early.
+        // A low gini means the search has become focused; gently boost
+        // exploration while cooling as visits grow to avoid late noise.
+        let focus_gap = (1.0 - gini).max(0.0);
+        let visits = node.visits().max(1) as f32;
+        let cooling = (1.0 + visits * params.expl_reheat_cooling()).ln_1p();
+        let reheat = 1.0 + params.expl_reheat_strength() * focus_gap / cooling;
+
+        scale *= reheat;
         scale
     }
 
