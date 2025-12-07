@@ -74,7 +74,23 @@ impl SearchHelpers {
     /// #### Note
     /// Must return a value in [0, 1].
     pub fn get_fpu(node: &Node) -> f32 {
-        1.0 - node.q()
+        let base = 1.0 - node.q();
+
+        // Early in the search, pull the FPU toward a neutral value when the
+        // policy distribution is still chaotic or the value estimate is noisy.
+        // As visits accumulate, taper the dampening away to recover the
+        // original formulation.
+        if node.visits() == 0 {
+            return base;
+        }
+
+        let gini = node.gini_impurity().clamp(0.0, 1.0);
+        let var = node.var().clamp(0.0, 1.0).sqrt();
+
+        let smoothing = (0.7 * gini + 0.3 * var) / ((node.visits() as f32).ln_1p() + 1.0);
+        let blended = 0.5 + (base - 0.5) * (1.0 - smoothing.min(0.9));
+
+        blended.clamp(0.0, 1.0)
     }
 
     /// Get a predicted win probability for an action
