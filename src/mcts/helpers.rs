@@ -57,7 +57,21 @@ impl SearchHelpers {
         };
 
         scale *= factor;
-        scale
+
+        // Curiosity boost: when the policy is sharp (low gini) *and* the value
+        // distribution is volatile, increase the exploration temperature using a
+        // smooth, visit-aware ramp. This widens exploration specifically on
+        // positions where the network is confident yet the rollout variance is
+        // high, which encourages the search to verify alternative move families
+        // instead of tunnelling.
+        let visit_scale = (node.visits().max(1) as f32).ln_1p()
+            / (params.cpuct_visits_scale().ln_1p());
+        let volatility = node.var().sqrt();
+        let curiosity = 1.0
+            + (1.0 - gini)
+                * (0.35 + volatility)
+                * (0.5 + visit_scale.min(1.5));
+        scale * curiosity.min(params.gini_min())
     }
 
     /// Common depth PST

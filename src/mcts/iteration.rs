@@ -145,6 +145,15 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
     }
     limit = limit.min(node.num_actions());
 
+    // If the policy is peaky but the node has been visited a fair amount, open
+    // the move horizon faster to sample alternative ideas earlier. The widening
+    // grows with ln(visits) and vanishes when the policy is already diverse.
+    let entropy_push = ((1.0 - node.gini_impurity())
+        * (node.visits().max(1) as f32).ln_1p())
+        .sqrt()
+        .ceil() as usize;
+    limit = (limit + entropy_push).min(node.num_actions());
+
     searcher
         .tree
         .get_best_child_by_key_lim(ptr, limit, |child| {
