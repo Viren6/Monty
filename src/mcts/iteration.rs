@@ -127,8 +127,9 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
     let cpuct = SearchHelpers::get_cpuct(searcher.params, node, is_root);
     let fpu = SearchHelpers::get_fpu(node);
     let expl_scale = SearchHelpers::get_explore_scaling(searcher.params, node);
+    let impulse = SearchHelpers::exploration_impulse(node);
 
-    let expl = cpuct * expl_scale;
+    let expl = cpuct * expl_scale * impulse;
 
     let actions_ptr = node.actions();
     let mut acc = 0.0;
@@ -143,6 +144,15 @@ fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
         limit += 2;
         thresh = thresh.checked_shl(1).unwrap_or(u64::MAX);
     }
+
+    // When the visit distribution is sharply imbalanced, raise the action
+    // limit a little faster so the search keeps a wider frontier.
+    if impulse > 1.0 && limit < node.num_actions() {
+        let extra = ((impulse - 1.0) * (node.visits() as f32).sqrt()
+            / (searcher.params.visit_threshold_power() as f32 + 1.0)) as usize;
+        limit = (limit + extra).min(node.num_actions());
+    }
+
     limit = limit.min(node.num_actions());
 
     searcher

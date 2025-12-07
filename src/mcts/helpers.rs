@@ -60,6 +60,25 @@ impl SearchHelpers {
         scale
     }
 
+    /// Exploration impulse
+    ///
+    /// Uses visit imbalance to gently widen exploration when the search
+    /// has started to converge too sharply on a few moves.
+    pub fn exploration_impulse(node: &Node) -> f32 {
+        let visits = node.visits();
+
+        if visits < 4 {
+            return 1.0;
+        }
+
+        let imbalance = 1.0 - node.gini_impurity();
+        let breadth = (visits as f32).ln_1p() / (node.num_actions().max(2) as f32).ln_1p();
+
+        // Cap the multiplier to avoid runaway exploration while still
+        // incentivising moves that have been neglected.
+        (1.0 + 0.12 * imbalance * breadth).min(1.8)
+    }
+
     /// Common depth PST
     pub fn get_pst(depth: usize, q: f32, params: &MctsParams) -> f32 {
         let scalar = q - q.min(params.winning_pst_threshold());
