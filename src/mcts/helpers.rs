@@ -98,7 +98,7 @@ impl SearchHelpers {
     pub fn get_time(
         time: u64,
         increment: Option<u64>,
-        ply: u32,
+        _ply: u32,
         movestogo: Option<u64>,
         params: &MctsParams,
     ) -> (u128, u128) {
@@ -107,37 +107,14 @@ impl SearchHelpers {
             let max_time = (time as f64 / (mtg as f64).clamp(1.0, 30.0)) as u128;
             (max_time, max_time)
         } else {
-            // Increment time control (x seconds + y increment)
-            let inc = increment.unwrap_or(0);
-            let mtg = params.tm_mtg() as u64;
+            let mtg = params.tm_mtg() as f64;
+            let inc = increment.unwrap_or(0) as f64;
+            let time_val = time as f64;
 
-            let time_left = (time + inc * (mtg - 1) - 10 * (2 + mtg)).max(1) as f64;
-            let log_time = (time_left / 1000.0).log10();
+            let effective_time = (time_val + inc * (mtg - 1.0)).max(1.0);
 
-            let opt_constant = (params.tm_opt_value1() / 100.0
-                + params.tm_opt_value2() / 1000.0 * log_time)
-                .min(params.tm_opt_value3() / 100.0);
-            let opt_scale = (params.tm_optscale_value1() / 100.0
-                + (ply as f64 + params.tm_optscale_value2()).powf(params.tm_optscale_value3())
-                    * opt_constant)
-                .min(params.tm_optscale_value4() * time as f64 / time_left);
-
-            let max_constant = (params.tm_max_value1() + params.tm_max_value2() * log_time)
-                .max(params.tm_max_value3());
-            let max_scale = (max_constant + ply as f64 / params.tm_maxscale_value1())
-                .min(params.tm_maxscale_value2());
-
-            // More time at the start of the game
-            let bonus_ply = params.tm_bonus_ply();
-            let bonus = if ply < bonus_ply as u32 {
-                1.0 + (bonus_ply - ply as f64).log10() * params.tm_bonus_value1()
-            } else {
-                1.0
-            };
-
-            let opt_time = (opt_scale * bonus * time_left) as u128;
-            let max_time =
-                (max_scale * opt_time as f64).min(time as f64 * params.tm_max_time()) as u128;
+            let opt_time = (effective_time * params.tm_opt_base()) as u128;
+            let max_time = ((time_val * params.tm_hard_limit()).min(time_val)) as u128;
 
             (opt_time, max_time)
         }
@@ -161,26 +138,26 @@ impl SearchHelpers {
         } else {
             previous_score - score
         };
-        let falling_eval = (1.0 + eval_diff * searcher.params.tm_falling_eval1()).clamp(
-            searcher.params.tm_falling_eval2(),
-            searcher.params.tm_falling_eval3(),
-        );
+
+        let feval_scale = (1.0 + eval_diff.max(0.0) * searcher.params.tm_feval_scale())
+            .min(searcher.params.tm_feval_max());
 
         // Use more time if our best move is changing frequently
-        let best_move_instability = (1.0
-            + (best_move_changes as f32 * searcher.params.tm_bmi1()).ln_1p())
-        .clamp(searcher.params.tm_bmi2(), searcher.params.tm_bmi3());
+        let bmi_scale = (1.0 + best_move_changes as f32 * searcher.params.tm_bmi_scale())
+            .min(searcher.params.tm_bmi_max());
 
         // Use less time if our best move has a large percentage of visits, and vice versa
         let (best_child_ptr, _, _) = searcher.get_best_action(searcher.tree.root_node());
-        let nodes_effort = searcher.tree[best_child_ptr].visits() as f32 / nodes as f32;
-        let best_move_visits = (searcher.params.tm_bmv1()
-            - ((nodes_effort + searcher.params.tm_bmv2()) * searcher.params.tm_bmv3()).ln_1p()
-                * searcher.params.tm_bmv4())
-        .clamp(searcher.params.tm_bmv5(), searcher.params.tm_bmv6());
+        let ratio = if nodes > 0 {
+            searcher.tree[best_child_ptr].visits() as f32 / nodes as f32
+        } else {
+            0.0
+        };
 
-        let total_time =
-            (time as f32 * falling_eval * best_move_instability * best_move_visits) as u128;
+        let bmv_scale =
+            (1.0 + (1.0 - ratio) * searcher.params.tm_bmv_scale()).min(searcher.params.tm_bmv_max());
+
+        let total_time = (time as f32 * feval_scale * bmi_scale * bmv_scale) as u128;
 
         (elapsed >= total_time, score)
     }
