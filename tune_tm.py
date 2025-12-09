@@ -87,64 +87,36 @@ def objective(params):
                 orig_opt, orig_max = get_time_original(t, i, p)
                 simp_opt, simp_max = get_time_simple(params, t, i, p)
                 
-                # Log Error
-                error += (math.log(orig_opt + 1) - math.log(simp_opt + 1)) ** 2
-                error += (math.log(orig_max + 1) - math.log(simp_max + 1)) ** 2
+                # Log Error with penalty for under-usage
+                diff_opt = math.log(simp_opt + 1) - math.log(orig_opt + 1)
+                diff_max = math.log(simp_max + 1) - math.log(orig_max + 1)
+                
+                # Penalize under-usage more (factor of 50)
+                if diff_opt < 0:
+                    error += (diff_opt ** 2) * 50.0
+                else:
+                    error += diff_opt ** 2
+                    
+                if diff_max < 0:
+                    error += (diff_max ** 2) * 50.0
+                else:
+                    error += diff_max ** 2
+                    
                 count += 1
                 
     return error / count
 
-# Hill Climbing
+# Manual Params Test
 # c_base, c_ply_mult, c_ply_pow, bonus_val, bonus_ply, max_base, max_ply_mult
-current_params = [0.016, 0.007, 0.5, 0.04, 12.0, 5.0, 0.0]
-current_error = objective(current_params)
+manual_params = [0.022, 0.0065, 0.5, 0.06, 12.0, 5.2, 0.01]
+manual_error = objective(manual_params)
 
-print(f"Initial Error: {current_error}")
-
-bounds = [
-    (0.005, 0.05),  # c_base
-    (0.0, 0.02),    # c_ply_mult
-    (0.1, 1.0),     # c_ply_pow
-    (0.0, 0.2),     # bonus_val
-    (0.0, 30.0),    # bonus_ply
-    (1.0, 10.0),    # max_base
-    (0.0, 0.5),     # max_ply_mult
-]
-
-step_sizes = [
-    0.001, 0.0005, 0.05, 0.01, 1.0, 0.2, 0.01
-]
-
-for iter in range(10000):
-    new_params = list(current_params)
-    idx = random.randint(0, 6)
-    change = random.choice([-1, 1]) * step_sizes[idx]
-    
-    new_params[idx] += change
-    new_params[idx] = max(bounds[idx][0], min(bounds[idx][1], new_params[idx]))
-    
-    new_error = objective(new_params)
-    
-    if new_error < current_error:
-        current_error = new_error
-        current_params = new_params
-        if iter % 1000 == 0:
-            print(f"Iter {iter}: Error {current_error:.5f}")
-
-print("Optimization result:")
-print(f"Error: {current_error}")
-print("\nParams:")
-print(f"c_base = {current_params[0]:.5f}")
-print(f"c_ply_mult = {current_params[1]:.5f}")
-print(f"c_ply_pow = {current_params[2]:.5f}")
-print(f"bonus_val = {current_params[3]:.5f}")
-print(f"bonus_ply = {current_params[4]:.5f}")
-print(f"max_base = {current_params[5]:.5f}")
-print(f"max_ply_mult = {current_params[6]:.5f}")
+print(f"Manual Params Error: {manual_error}")
 
 print("\nVerification (Time=60s, Inc=0):")
-print(f"{'Ply':<5} {'Orig Opt':<10} {'Simp Opt':<10} {'Orig Max':<10} {'Simp Max':<10}")
+print(f"{'Ply':<5} {'Orig Opt':<10} {'Simp Opt':<10} {'Ratio':<10} {'Orig Max':<10} {'Simp Max':<10}")
 for p in [0, 10, 20, 40, 80, 120]:
     o_opt, o_max = get_time_original(60000, 0, p)
-    s_opt, s_max = get_time_simple(current_params, 60000, 0, p)
-    print(f"{p:<5} {o_opt:<10.1f} {s_opt:<10.1f} {o_max:<10.1f} {s_max:<10.1f}")
+    s_opt, s_max = get_time_simple(manual_params, 60000, 0, p)
+    ratio = s_opt / o_opt if o_opt > 0 else 0
+    print(f"{p:<5} {o_opt:<10.1f} {s_opt:<10.1f} {ratio:<10.2f} {o_max:<10.1f} {s_max:<10.1f}")
