@@ -94,20 +94,21 @@ pub fn perform_one(
         u
     };
 
-    let minmax_mix = searcher.params.minmax_mix();
-    if minmax_mix > 0.0 {
+    let minmax_scale = searcher.params.minmax_scale();
+    if minmax_scale > 0.0 {
         let actions = node.actions();
         let num = node.num_actions();
-        let mut max_q = f32::NEG_INFINITY;
+        let mut best_q = f32::INFINITY;
         for i in 0..num {
             let child = &tree[actions + i];
             if child.visits() > 0 {
-                max_q = max_q.max(child.q());
+                best_q = best_q.min(child.q());
             }
         }
 
-        if max_q > f32::NEG_INFINITY {
-            u = u * (1.0 - minmax_mix) + max_q * minmax_mix;
+        if best_q < f32::INFINITY {
+            let mix = (node.visits() as f32) / (node.visits() as f32 + minmax_scale);
+            u = u * (1.0 - mix) + best_q * mix;
         }
     }
 
