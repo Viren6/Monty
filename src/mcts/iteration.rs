@@ -107,7 +107,7 @@ pub fn perform_one(
         }
 
         if best_q < f32::INFINITY {
-            let mix = (node.visits() as f32) / (node.visits() as f32 + minmax_scale);
+            let mix = (node.visits() as f32) / (node.visits() as f32 + minmax_scale * 1000.0);
             u = u * (1.0 - mix) + best_q * mix;
         }
     }
