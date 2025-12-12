@@ -211,11 +211,17 @@ impl ChessState {
             let draw_adj = raw.draw * params.sharpness_scale()
                 + raw.draw * raw.draw * params.sharpness_quadratic();
 
-            let sum = raw.win + raw.draw + draw_adj + raw.loss;
+            let adjusted_draw = (raw.draw + draw_adj).max(0.0);
+            let pow = params.sharpness_exponent();
+
+            let win = raw.win.powf(pow);
+            let draw = adjusted_draw.powf(pow);
+            let loss = raw.loss.powf(pow);
+            let sum = win + draw + loss;
             let material = EvalWdl {
-                win: raw.win / sum,
-                draw: (raw.draw + draw_adj) / sum,
-                loss: raw.loss / sum,
+                win: win / sum,
+                draw: draw / sum,
+                loss: loss / sum,
             };
             (material, material.to_cp_i32())
         };

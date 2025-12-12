@@ -147,6 +147,7 @@ make_mcts_params! {
     gini_min: f32 = 2.26, 0.5, 4.0, 0.21, 0.002;
     sharpness_scale: f32 = 2.449, 0.0, 5.0, 0.1, 0.002;
     sharpness_quadratic: f32 = 0.872, -5.0, 5.0, 0.1, 0.002;
+    sharpness_exponent: f32 = 1.14, 0.5, 3.0, 0.05, 0.002;
     tm_opt_value1: f64 = 0.64, 0.1, 1.2, 0.072, 0.002;
     tm_opt_value2: f64 = 0.434, 0.1, 1.0, 0.045, 0.002;
     tm_opt_value3: f64 = 0.66, 0.1, 1.2, 0.08, 0.002;
