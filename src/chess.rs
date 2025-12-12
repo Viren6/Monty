@@ -208,12 +208,8 @@ impl ChessState {
 
         #[cfg(not(feature = "datagen"))]
         let (material, cp) = {
-            // Sharpen the raw evaluation by increasing the draw weight when the
-            // position is balanced (win/loss are close to each other). This makes
-            // small changes in evaluation more pronounced while avoiding distortion
-            // in clearly winning or losing positions.
             let imbalance = (raw.win - raw.loss).abs().min(1.0);
-            let balanced = 1.0 - imbalance;
+            let balanced = 1.1 - imbalance;
 
             let draw_adj = raw.draw * params.sharpness_scale() * balanced
                 + raw.draw * raw.draw * params.sharpness_quadratic() * balanced;
