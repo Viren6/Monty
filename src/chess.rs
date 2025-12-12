@@ -208,14 +208,20 @@ impl ChessState {
 
         #[cfg(not(feature = "datagen"))]
         let (material, cp) = {
-            let draw_adj = raw.draw * params.sharpness_scale()
-                + raw.draw * raw.draw * params.sharpness_quadratic();
+            let draw_scaling = 1.0
+                + params.sharpness_scale()
+                + raw.draw * params.sharpness_quadratic()
+                + raw.draw * raw.draw * params.sharpness_cubic();
 
-            let sum = raw.win + raw.draw + draw_adj + raw.loss;
+            let adjusted_win = raw.win.max(0.0);
+            let adjusted_loss = raw.loss.max(0.0);
+            let adjusted_draw = (raw.draw * draw_scaling).max(0.0);
+            let sum = (adjusted_win + adjusted_draw + adjusted_loss).max(1e-6);
+
             let material = EvalWdl {
-                win: raw.win / sum,
-                draw: (raw.draw + draw_adj) / sum,
-                loss: raw.loss / sum,
+                win: adjusted_win / sum,
+                draw: adjusted_draw / sum,
+                loss: adjusted_loss / sum,
             };
             (material, material.to_cp_i32())
         };
