@@ -1,6 +1,6 @@
 use crate::{
     chess::{ChessState, GameState},
-    tree::{Node, NodePtr},
+    tree::{value_history::ValueHistory, Node, NodePtr},
 };
 
 use super::{SearchHelpers, Searcher};
@@ -15,6 +15,8 @@ pub fn perform_one(
     *depth += 1;
 
     let cur_hash = pos.hash();
+    let cur_pawn_hash = pos.pawn_hash();
+    let cur_stm = pos.stm();
     let mut child_hash: Option<u64> = None;
     let mut child_visits = 0;
     let tree = searcher.tree;
@@ -30,10 +32,10 @@ pub fn perform_one(
             if let Some(entry) = tree.probe_hash(cur_hash) {
                 entry.q()
             } else {
-                get_utility(searcher, ptr, pos)
+                get_utility(searcher, ptr, pos, cur_pawn_hash, cur_stm)
             }
         } else {
-            get_utility(searcher, ptr, pos)
+            get_utility(searcher, ptr, pos, cur_pawn_hash, cur_stm)
         }
     } else {
         // expand node on the second visit
@@ -102,19 +104,38 @@ pub fn perform_one(
         tree.push_hash(cur_hash, u, 1);
     }
 
+    let prior_q = tree[ptr].q();
+    let prior_visits = tree[ptr].visits().min(u16::MAX as u64) as u16;
+
     // flip perspective and backpropagate
     u = 1.0 - u;
+
+    if tree[ptr].state() == GameState::Ongoing {
+        tree.update_value_history(cur_pawn_hash, cur_stm, prior_q, u, prior_visits);
+    }
+
     tree.update_node_stats(ptr, u, thread_id);
     Some(u)
 }
 
-fn get_utility(searcher: &Searcher, ptr: NodePtr, pos: &ChessState) -> f32 {
+fn get_utility(
+    searcher: &Searcher,
+    ptr: NodePtr,
+    pos: &ChessState,
+    pawn_hash: u64,
+    stm: usize,
+) -> f32 {
     match searcher.tree[ptr].state() {
-        GameState::Ongoing => pos.get_value_wdl(
-            searcher.value,
-            searcher.params,
-            searcher.tree.root_position().stm(),
-        ),
+        GameState::Ongoing => {
+            let score = pos.get_value_wdl(
+                searcher.value,
+                searcher.params,
+                searcher.tree.root_position().stm(),
+            );
+            let cp = ValueHistory::score_to_cp(score);
+            let corrected_cp = searcher.tree.correct_value_cp(pawn_hash, stm, cp);
+            ValueHistory::cp_to_score(corrected_cp)
+        }
         GameState::Draw => 0.5,
         GameState::Lost(_) => 0.0,
         GameState::Won(_) => 1.0,

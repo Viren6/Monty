@@ -2,11 +2,13 @@ mod half;
 mod hash;
 mod lock;
 mod node;
+pub mod value_history;
 
 use half::TreeHalf;
 use hash::{HashEntry, HashTable};
 use node::NodeStatsDelta;
 pub use node::{Node, NodePtr};
+use value_history::ValueHistory;
 
 use std::{
     array,
@@ -290,6 +292,7 @@ pub struct Tree {
     half: AtomicBool,
     hash: HashTable,
     butterfly: ButterflyTable,
+    value_history: ValueHistory,
     root_accumulator: RootAccumulator,
 }
 
@@ -325,6 +328,7 @@ impl Tree {
             half: AtomicBool::new(false),
             hash: HashTable::new(hash_cap / 4, threads),
             butterfly: ButterflyTable::new(),
+            value_history: ValueHistory::new(),
             root_accumulator: RootAccumulator::new(threads),
         };
 
@@ -474,6 +478,7 @@ impl Tree {
         self.clear_halves();
         self.hash.clear(threads);
         self.butterfly.clear();
+        self.value_history.clear();
         self.root_accumulator.reset(self.root_node());
     }
 
@@ -602,6 +607,22 @@ impl Tree {
 
     pub fn clear_butterfly_table(&self) {
         self.butterfly.clear();
+    }
+
+    pub fn correct_value_cp(&self, pawn_hash: u64, side: usize, score_cp: i32) -> i32 {
+        self.value_history.correct_cp(pawn_hash, side, score_cp)
+    }
+
+    pub fn update_value_history(
+        &self,
+        pawn_hash: u64,
+        side: usize,
+        q: f32,
+        score: f32,
+        num_visits: u16,
+    ) {
+        self.value_history
+            .update(pawn_hash, side, q, score, num_visits);
     }
 
     pub fn propogate_proven_mates(&self, ptr: NodePtr, child_state: GameState) {
