@@ -2,11 +2,13 @@ mod half;
 mod hash;
 mod lock;
 mod node;
+mod value_history;
 
 use half::TreeHalf;
 use hash::{HashEntry, HashTable};
 use node::NodeStatsDelta;
 pub use node::{Node, NodePtr};
+use value_history::ValueHistory;
 
 use std::{
     array,
@@ -291,6 +293,7 @@ pub struct Tree {
     hash: HashTable,
     butterfly: ButterflyTable,
     root_accumulator: RootAccumulator,
+    value_history: ValueHistory,
 }
 
 impl Index<NodePtr> for Tree {
@@ -326,6 +329,7 @@ impl Tree {
             hash: HashTable::new(hash_cap / 4, threads),
             butterfly: ButterflyTable::new(),
             root_accumulator: RootAccumulator::new(threads),
+            value_history: ValueHistory::new(),
         };
 
         tree.reset_root_accumulator();
@@ -450,6 +454,23 @@ impl Tree {
         self.hash.push(hash, wins, visits);
     }
 
+    #[must_use]
+    pub fn correct_value_cp(&self, pos: &ChessState, cp: i32) -> i32 {
+        self.value_history
+            .correct_cp(pos.pawn_hash(), pos.stm(), cp)
+    }
+
+    pub fn update_value_history(
+        &self,
+        pawn_hash: u64,
+        stm: usize,
+        q: f32,
+        score: f32,
+        visits: u16,
+    ) {
+        self.value_history.update(pawn_hash, stm, q, score, visits);
+    }
+
     pub fn update_node_stats(&self, ptr: NodePtr, value: f32, thread_id: usize) {
         let delta = NodeStatsDelta::from_value(value);
         self.root_accumulator.add(ptr, &self[ptr], delta, thread_id);
@@ -475,6 +496,7 @@ impl Tree {
         self.hash.clear(threads);
         self.butterfly.clear();
         self.root_accumulator.reset(self.root_node());
+        self.value_history.clear();
     }
 
     pub fn is_empty(&self) -> bool {

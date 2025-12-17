@@ -17,6 +17,7 @@ pub struct Position {
     halfm: u8,
     fullm: u16,
     hash: u64,
+    pawn_hash: u64,
 }
 
 impl Position {
@@ -37,6 +38,7 @@ impl Position {
             halfm,
             fullm,
             hash: 0,
+            pawn_hash: 0,
         }
     }
 
@@ -72,6 +74,11 @@ impl Position {
     #[must_use]
     pub fn fullm(&self) -> u16 {
         self.fullm
+    }
+
+    #[must_use]
+    pub fn pawn_hash(&self) -> u64 {
+        self.pawn_hash
     }
 
     #[must_use]
@@ -240,6 +247,9 @@ impl Position {
         self.bb[piece] ^= bit;
         self.bb[side] ^= bit;
         self.hash ^= ZVALS.pcs[side][piece][usize::from(sq)];
+        if piece == Piece::PAWN {
+            self.pawn_hash ^= ZVALS.pcs[side][piece][usize::from(sq)];
+        }
     }
 
     pub fn make(&mut self, mov: Move, castling: &Castling) {

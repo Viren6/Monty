@@ -19,6 +19,10 @@ pub fn perform_one(
     let mut child_visits = 0;
     let tree = searcher.tree;
     let node = &tree[ptr];
+    let pawn_hash = pos.pawn_hash();
+    let stm = pos.stm();
+    let prior_q = node.q();
+    let prior_visits = node.visits() as u16;
 
     let mut u = if node.is_terminal() || node.visits() == 0 {
         if node.visits() == 0 {
@@ -102,6 +106,8 @@ pub fn perform_one(
         tree.push_hash(cur_hash, u, 1);
     }
 
+    tree.update_value_history(pawn_hash, stm, prior_q, u, prior_visits);
+
     // flip perspective and backpropagate
     u = 1.0 - u;
     tree.update_node_stats(ptr, u, thread_id);
@@ -110,15 +116,27 @@ pub fn perform_one(
 
 fn get_utility(searcher: &Searcher, ptr: NodePtr, pos: &ChessState) -> f32 {
     match searcher.tree[ptr].state() {
-        GameState::Ongoing => pos.get_value_wdl(
-            searcher.value,
-            searcher.params,
-            searcher.tree.root_position().stm(),
-        ),
+        GameState::Ongoing => {
+            let eval = pos.eval_with_contempt(
+                searcher.value,
+                searcher.params,
+                searcher.tree.root_position().stm(),
+            );
+
+            let cp = eval.contempt.to_cp_i32();
+            let corrected = searcher.tree.correct_value_cp(pos, cp);
+            score_from_cp(corrected)
+        }
         GameState::Draw => 0.5,
         GameState::Lost(_) => 0.0,
         GameState::Won(_) => 1.0,
     }
+}
+
+fn score_from_cp(cp: i32) -> f32 {
+    const K: f32 = 400.0;
+    let cp = cp.clamp(i32::MIN + 1, i32::MAX - 1) as f32;
+    1.0 / (1.0 + (-cp / K).exp())
 }
 
 fn pick_action(searcher: &Searcher, ptr: NodePtr, node: &Node) -> usize {
