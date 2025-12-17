@@ -132,6 +132,10 @@ impl ChessState {
         self.board
     }
 
+    pub fn pawn_hash(&self) -> u64 {
+        self.board.pawn_hash()
+    }
+
     pub fn castling(&self) -> Castling {
         self.castling
     }

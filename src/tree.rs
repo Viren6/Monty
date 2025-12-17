@@ -29,6 +29,8 @@ const ROOT_ACCUM_EAGER_LIMIT: u64 = 256;
 const NODE_BATCH_THRESHOLD: u64 = 16384;
 const MAX_BATCHED_NODES: usize = 32;
 const BATCH_SLOT_RESERVED: u64 = u64::MAX - 1;
+const VALUE_HISTORY_BUCKETS: usize = 16384;
+const VALUE_HISTORY_DIVISOR: f32 = 400.0;
 
 #[repr(align(64))]
 struct RootAccumulatorEntry {
@@ -284,12 +286,85 @@ fn scale_bonus(score: i16, bonus: i32, reduction_factor: i32) -> i16 {
     adjusted.clamp(i16::MIN as i32, i16::MAX as i32) as i16
 }
 
+fn prob_to_cp(prob: f32) -> i32 {
+    let prob = prob.clamp(0.001, 0.999);
+    (-VALUE_HISTORY_DIVISOR * ((1.0 / prob) - 1.0).ln()).round() as i32
+}
+
+fn cp_to_prob(cp: i32) -> f32 {
+    1.0 / (1.0 + (-(cp as f32) / VALUE_HISTORY_DIVISOR).exp())
+}
+
+struct ValueHistory {
+    data: Vec<AtomicI16>,
+}
+
+impl ValueHistory {
+    fn new() -> Self {
+        let capacity = VALUE_HISTORY_BUCKETS * NUM_SIDES;
+        let mut data = Vec::with_capacity(capacity);
+        data.extend((0..capacity).map(|_| AtomicI16::new(0)));
+
+        Self { data }
+    }
+
+    fn index(pawn_hash: u64, side: usize) -> usize {
+        ((pawn_hash as usize) & (VALUE_HISTORY_BUCKETS - 1)) * NUM_SIDES + side
+    }
+
+    fn entry(&self, pawn_hash: u64, side: usize) -> &AtomicI16 {
+        &self.data[Self::index(pawn_hash, side)]
+    }
+
+    fn clear(&self) {
+        for entry in &self.data {
+            entry.store(0, Ordering::Relaxed);
+        }
+    }
+
+    fn correct_cp(&self, pawn_hash: u64, side: usize, cp: i32) -> i32 {
+        let bonus = self.entry(pawn_hash, side).load(Ordering::Relaxed) as i32;
+        cp + bonus / 16
+    }
+
+    fn update(&self, pawn_hash: u64, side: usize, q: f32, score: f32, num_visits: u16) {
+        let q = q.clamp(0.001, 0.999);
+        let score = score.clamp(0.001, 0.999);
+
+        let q_cp = prob_to_cp(q);
+        let score_cp = prob_to_cp(score);
+
+        const MIN_DIV: i32 = 1;
+        const MAX_DIV: i32 = 16;
+        const MAX_VISITS: u16 = 8192;
+
+        let divisor =
+            MIN_DIV + (MAX_DIV - MIN_DIV) * num_visits.min(MAX_VISITS) as i32 / MAX_VISITS as i32;
+
+        let bonus = ((q_cp - score_cp) / divisor).clamp(-256, 256);
+
+        let cell = self.entry(pawn_hash, side);
+        let mut current = cell.load(Ordering::Relaxed);
+
+        loop {
+            let delta = scale_bonus(current, bonus, 1024);
+            let new = current.saturating_add(delta);
+
+            match cell.compare_exchange(current, new, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+}
+
 pub struct Tree {
     root: ChessState,
     tree: [TreeHalf; 2],
     half: AtomicBool,
     hash: HashTable,
     butterfly: ButterflyTable,
+    value_history: ValueHistory,
     root_accumulator: RootAccumulator,
 }
 
@@ -325,6 +400,7 @@ impl Tree {
             half: AtomicBool::new(false),
             hash: HashTable::new(hash_cap / 4, threads),
             butterfly: ButterflyTable::new(),
+            value_history: ValueHistory::new(),
             root_accumulator: RootAccumulator::new(threads),
         };
 
@@ -474,6 +550,7 @@ impl Tree {
         self.clear_halves();
         self.hash.clear(threads);
         self.butterfly.clear();
+        self.value_history.clear();
         self.root_accumulator.reset(self.root_node());
     }
 
@@ -602,6 +679,24 @@ impl Tree {
 
     pub fn clear_butterfly_table(&self) {
         self.butterfly.clear();
+    }
+
+    pub fn correct_loss_probability(&self, pawn_hash: u64, side: usize, loss_prob: f32) -> f32 {
+        let cp = prob_to_cp(loss_prob);
+        let corrected = self.value_history.correct_cp(pawn_hash, side, cp);
+        cp_to_prob(corrected)
+    }
+
+    pub fn update_value_history(
+        &self,
+        pawn_hash: u64,
+        side: usize,
+        predicted_loss: f32,
+        actual_loss: f32,
+        visits: u16,
+    ) {
+        self.value_history
+            .update(pawn_hash, side, predicted_loss, actual_loss, visits);
     }
 
     pub fn propogate_proven_mates(&self, ptr: NodePtr, child_state: GameState) {

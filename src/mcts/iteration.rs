@@ -15,10 +15,14 @@ pub fn perform_one(
     *depth += 1;
 
     let cur_hash = pos.hash();
+    let pawn_hash = pos.pawn_hash();
     let mut child_hash: Option<u64> = None;
     let mut child_visits = 0;
     let tree = searcher.tree;
     let node = &tree[ptr];
+    let node_q = node.q();
+    let node_visits = node.visits().min(u64::from(u16::MAX)) as u16;
+    let node_stm = pos.stm();
 
     let mut u = if node.is_terminal() || node.visits() == 0 {
         if node.visits() == 0 {
@@ -104,17 +108,27 @@ pub fn perform_one(
 
     // flip perspective and backpropagate
     u = 1.0 - u;
+    if node.state() == GameState::Ongoing {
+        tree.update_value_history(pawn_hash, node_stm, node_q, u, node_visits);
+    }
     tree.update_node_stats(ptr, u, thread_id);
     Some(u)
 }
 
 fn get_utility(searcher: &Searcher, ptr: NodePtr, pos: &ChessState) -> f32 {
     match searcher.tree[ptr].state() {
-        GameState::Ongoing => pos.get_value_wdl(
-            searcher.value,
-            searcher.params,
-            searcher.tree.root_position().stm(),
-        ),
+        GameState::Ongoing => {
+            let win_prob = pos.get_value_wdl(
+                searcher.value,
+                searcher.params,
+                searcher.tree.root_position().stm(),
+            );
+            let loss_prob = 1.0 - win_prob;
+
+            1.0 - searcher
+                .tree
+                .correct_loss_probability(pos.pawn_hash(), pos.stm(), loss_prob)
+        }
         GameState::Draw => 0.5,
         GameState::Lost(_) => 0.0,
         GameState::Won(_) => 1.0,
