@@ -136,6 +136,10 @@ impl ChessState {
         self.castling
     }
 
+    pub fn pawn_hash(&self) -> u64 {
+        self.board.pawn_hash()
+    }
+
     pub fn conv_mov_to_str(&self, mov: Move) -> String {
         mov.to_uci(&self.castling)
     }

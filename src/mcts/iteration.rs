@@ -19,6 +19,10 @@ pub fn perform_one(
     let mut child_visits = 0;
     let tree = searcher.tree;
     let node = &tree[ptr];
+    let pawn_hash = pos.pawn_hash();
+    let stm = pos.stm();
+    let prev_q = node.q();
+    let prev_visits = node.visits();
 
     let mut u = if node.is_terminal() || node.visits() == 0 {
         if node.visits() == 0 {
@@ -105,15 +109,23 @@ pub fn perform_one(
     // flip perspective and backpropagate
     u = 1.0 - u;
     tree.update_node_stats(ptr, u, thread_id);
+
+    if node.state() == GameState::Ongoing {
+        tree.update_value_history(pawn_hash, stm, prev_q, u, prev_visits);
+    }
+
     Some(u)
 }
 
 fn get_utility(searcher: &Searcher, ptr: NodePtr, pos: &ChessState) -> f32 {
     match searcher.tree[ptr].state() {
-        GameState::Ongoing => pos.get_value_wdl(
-            searcher.value,
-            searcher.params,
-            searcher.tree.root_position().stm(),
+        GameState::Ongoing => searcher.tree.correct_value(
+            pos,
+            pos.get_value_wdl(
+                searcher.value,
+                searcher.params,
+                searcher.tree.root_position().stm(),
+            ),
         ),
         GameState::Draw => 0.5,
         GameState::Lost(_) => 0.0,
