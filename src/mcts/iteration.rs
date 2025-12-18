@@ -1,5 +1,5 @@
 use crate::{
-    chess::{ChessState, GameState},
+    chess::{cp_from_score, score_from_cp, ChessState, GameState},
     tree::{Node, NodePtr},
 };
 
@@ -94,6 +94,12 @@ pub fn perform_one(
         u
     };
 
+    if tree[ptr].state() == GameState::Ongoing && tree[ptr].visits() > 0 {
+        let predicted = 1.0 - tree[ptr].q();
+        let visits = tree[ptr].visits().min(u16::MAX as u64) as u16;
+        tree.update_value_history(pos, predicted, u, visits);
+    }
+
     // store value for the side to move at the visited node in TT
     if let Some(h) = child_hash {
         // `u` here is from the current node's perspective, so flip for the child
@@ -110,11 +116,13 @@ pub fn perform_one(
 
 fn get_utility(searcher: &Searcher, ptr: NodePtr, pos: &ChessState) -> f32 {
     match searcher.tree[ptr].state() {
-        GameState::Ongoing => pos.get_value_wdl(
-            searcher.value,
-            searcher.params,
-            searcher.tree.root_position().stm(),
-        ),
+        GameState::Ongoing => {
+            let root_stm = searcher.tree.root_position().stm();
+            let score = pos.get_value_wdl(searcher.value, searcher.params, root_stm);
+            let cp = cp_from_score(score);
+            let corrected = searcher.tree.correct_value_cp(pos, cp);
+            score_from_cp(corrected)
+        }
         GameState::Draw => 0.5,
         GameState::Lost(_) => 0.0,
         GameState::Won(_) => 1.0,

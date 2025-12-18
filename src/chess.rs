@@ -5,6 +5,15 @@ use crate::{
 
 pub use montyformat::chess::{Attacks, Castling, GameState, Move, Position};
 
+pub fn score_from_cp(cp: i32) -> f32 {
+    1.0 / (1.0 + (-(cp as f32) / 400.0).exp())
+}
+
+pub fn cp_from_score(score: f32) -> i32 {
+    let score = score.clamp(1e-6, 1.0 - 1e-6);
+    (-400.0 * (1.0 / score - 1.0).ln()).round() as i32
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct EvalWdl {
     pub win: f32,
@@ -161,6 +170,23 @@ impl ChessState {
 
     pub fn hash(&self) -> u64 {
         self.board.hash()
+    }
+
+    pub fn pawn_key(&self) -> u64 {
+        use montyformat::chess::consts::{Piece, Side};
+
+        let bbs = self.board.bbs();
+        let pawns = bbs[Piece::PAWN];
+        let white_pawns = pawns & bbs[Side::WHITE];
+        let black_pawns = pawns & bbs[Side::BLACK];
+
+        let mix = |x: u64| {
+            let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z ^ (z >> 27)
+        };
+
+        mix(white_pawns) ^ mix(black_pawns.rotate_left(1))
     }
 
     pub fn make_move(&mut self, mov: Move) {
