@@ -416,9 +416,9 @@ impl<'a> Searcher<'a> {
         let score = (1.0 - root.q()).clamp(0.0, 1.0);
         let win = (score - 0.5 * draw).clamp(0.0, 1.0);
         let loss = (1.0 - win - draw).clamp(0.0, 1.0);
+        let cp = ((win - loss) * 10_000.0).round() as i32;
+        let output_depth = (draw * 10_000.0).round() as i32;
         let wdl = [win, draw, loss].map(|v| (v * 1000.0).round() as i32);
-        let cp = wdl[0] - wdl[2];
-        let output_depth = wdl[1];
 
         print!("info depth {output_depth} seldepth {seldepth} ");
         let (pv_line, score) = self.get_pv(depth);
