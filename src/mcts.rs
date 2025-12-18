@@ -411,7 +411,16 @@ impl<'a> Searcher<'a> {
         nodes: usize,
         iters: usize,
     ) {
-        print!("info depth {depth} seldepth {seldepth} ");
+        let root = &self.tree[self.tree.root_node()];
+        let draw = root.draw().clamp(0.0, 1.0);
+        let score = (1.0 - root.q()).clamp(0.0, 1.0);
+        let win = (score - 0.5 * draw).clamp(0.0, 1.0);
+        let loss = (1.0 - win - draw).clamp(0.0, 1.0);
+        let wdl = [win, draw, loss].map(|v| (v * 1000.0).round() as i32);
+        let cp = wdl[0] - wdl[2];
+        let output_depth = wdl[1];
+
+        print!("info depth {output_depth} seldepth {seldepth} ");
         let (pv_line, score) = self.get_pv(depth);
 
         if score > 1.0 {
@@ -419,15 +428,7 @@ impl<'a> Searcher<'a> {
         } else if score < 0.0 {
             print!("score mate -{} ", pv_line.len() / 2);
         } else {
-            let cp = Searcher::get_cp(score);
-            let root = &self.tree[self.tree.root_node()];
-            let draw = root.draw().clamp(0.0, 1.0);
-            let score = (1.0 - root.q()).clamp(0.0, 1.0);
-            let win = (score - 0.5 * draw).clamp(0.0, 1.0);
-            let loss = (1.0 - win - draw).clamp(0.0, 1.0);
-            let wdl = [win, draw, loss].map(|v| (v * 1000.0).round() as i32);
-
-            print!("score cp {cp:.0} wdl {} {} {} ", wdl[0], wdl[1], wdl[2]);
+            print!("score cp {cp} wdl {} {} {} ", wdl[0], wdl[1], wdl[2]);
         }
 
         let nodes = if REPORT_ITERS.load(Ordering::Relaxed) {
