@@ -39,7 +39,6 @@ pub fn perform_one(
 
             (tb_eval.score(), tb_eval.draw)
         } else {
-
             // probe hash table to use in place of network
             if node.state() == GameState::Ongoing {
                 if let Some(entry) = tree.probe_hash(cur_hash) {

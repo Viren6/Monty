@@ -200,8 +200,8 @@ pub fn probe_root_dtz_best_move(state: &ChessState) -> Option<(Move, Dtz)> {
 
 fn eval_from_wdl(wdl: Wdl) -> EvalWdl {
     match wdl {
-        Wdl::Win => EvalWdl::new(0.5, 0.5, 0.0),
-        Wdl::Loss => EvalWdl::new(0.0, 0.5, 0.5),
+        Wdl::Win => EvalWdl::new(1.0, 0.0, 0.0),
+        Wdl::Loss => EvalWdl::new(0.0, 0.0, 1.0),
 
         // everything that should be treated as a draw:
         Wdl::CursedWin | Wdl::Draw | Wdl::BlessedLoss => EvalWdl::new(0.0, 1.0, 0.0),

@@ -348,10 +348,7 @@ impl<'a> Searcher<'a> {
                 tablebases::probe_wdl(&pos.board()).unwrap_or_else(|| EvalWdl::new(0.0, 1.0, 0.0));
             let q = 1.0 - eval.score();
 
-            #[cfg(not(feature = "uci-minimal"))]
-            if uci_output {
-                self.report_tablebase(tb_move, eval, &timer);
-            }
+            self.report_tablebase(tb_move, eval, &timer);
 
             return (tb_move, q);
         }
@@ -524,7 +521,6 @@ impl<'a> Searcher<'a> {
         score_from_eval(EvalWdl::new(win, draw, loss))
     }
 
-    #[cfg(not(feature = "uci-minimal"))]
     fn report_tablebase(&self, mov: Move, eval: EvalWdl, timer: &Instant) {
         let (scaled, cal) = score_from_eval(eval);
         let wdl_i = cal.map(|v| (v * 1000.0).round() as i32);
