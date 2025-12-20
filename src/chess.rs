@@ -1,8 +1,7 @@
-use crate::{
-    mcts::MctsParams,
-    networks::{Accumulator, PolicyNetwork, ValueNetwork, POLICY_L1},
-    tablebases,
-};
+use crate::mcts::MctsParams;
+use crate::networks::{Accumulator, PolicyNetwork, ValueNetwork, POLICY_L1};
+#[cfg(not(feature = "datagen"))]
+use crate::tablebases;
 
 pub use montyformat::chess::{Attacks, Castling, GameState, Move, Position};
 
@@ -204,9 +203,12 @@ impl ChessState {
         value: &ValueNetwork,
         params: &MctsParams,
     ) -> (EvalWdl, EvalWdl, i32) {
-        if let Some(tablebase) = tablebases::probe_wdl(&self.board) {
-            let cp = tablebase.to_cp_i32();
-            return (tablebase, tablebase, cp);
+        #[cfg(not(feature = "datagen"))]
+        {
+            if let Some(tablebase) = tablebases::probe_wdl(&self.board) {
+                let cp = tablebase.to_cp_i32();
+                return (tablebase, tablebase, cp);
+            }
         }
 
         let (win, draw, loss) = value.eval(&self.board);

@@ -8,11 +8,13 @@ pub use params::MctsParams;
 pub use search_stats::SearchStats;
 
 use crate::{
-    chess::{GameState, Move},
+    chess::{EvalWdl, GameState, Move},
     networks::{PolicyNetwork, ValueNetwork},
-    tablebases,
     tree::{NodePtr, Tree},
 };
+
+#[cfg(not(feature = "datagen"))]
+use crate::tablebases;
 
 #[cfg(feature = "datagen")]
 use crate::tree::Node;
@@ -30,6 +32,22 @@ pub type SearchRet = (Move, f32, usize);
 pub type SearchRet = (Move, f32);
 
 pub static REPORT_ITERS: AtomicBool = AtomicBool::new(false);
+
+fn score_from_eval(eval: EvalWdl) -> (f32, [f32; 3]) {
+    let cal = calibrate_wdl(eval.win, eval.draw, eval.loss);
+    let expected = cal[0] + 0.5 * cal[1];
+
+    let s = expected - 0.5;
+    let t = s.abs();
+    let scaled = (if t <= 0.25 {
+        s.signum() * 4.0 * t
+    } else {
+        s.signum() * 0.25 / (0.5 - t)
+    } * 100.0)
+        .clamp(-5000.0, 5000.0);
+
+    (scaled, cal)
+}
 
 fn calibrate_wdl(win: f32, draw: f32, loss: f32) -> [f32; 3] {
     const W: [[f64; 3]; 3] = [
@@ -324,20 +342,18 @@ impl<'a> Searcher<'a> {
         let root_stm = pos.stm();
         let node = self.tree.root_node();
 
+        #[cfg(not(feature = "datagen"))]
         if let Some((tb_move, _)) = tablebases::probe_root_dtz_best_move(pos) {
-            let q = tablebases::probe_wdl(&pos.board())
-                .map(|eval| 1.0 - eval.score())
-                .unwrap_or(0.5);
+            let eval =
+                tablebases::probe_wdl(&pos.board()).unwrap_or_else(|| EvalWdl::new(0.0, 1.0, 0.0));
+            let q = 1.0 - eval.score();
 
-            #[cfg(not(feature = "datagen"))]
-            {
-                return (tb_move, q);
+            #[cfg(not(feature = "uci-minimal"))]
+            if uci_output {
+                self.report_tablebase(tb_move, eval, &timer);
             }
 
-            #[cfg(feature = "datagen")]
-            {
-                return (tb_move, q, 0);
-            }
+            return (tb_move, q);
         }
 
         // the root node is added to an empty tree, **and not counted** towards the
@@ -505,19 +521,28 @@ impl<'a> Searcher<'a> {
         let win = (score - 0.5 * draw).clamp(0.0, 1.0);
         let loss = (1.0 - win - draw).clamp(0.0, 1.0);
 
-        let cal = calibrate_wdl(win, draw, loss);
-        let expected = cal[0] + 0.5 * cal[1];
+        score_from_eval(EvalWdl::new(win, draw, loss))
+    }
 
-        let s = expected - 0.5;
-        let t = s.abs();
-        let scaled = (if t <= 0.25 {
-            s.signum() * 4.0 * t
-        } else {
-            s.signum() * 0.25 / (0.5 - t)
-        } * 100.0)
-            .clamp(-5000.0, 5000.0);
+    #[cfg(not(feature = "uci-minimal"))]
+    fn report_tablebase(&self, mov: Move, eval: EvalWdl, timer: &Instant) {
+        let (scaled, cal) = score_from_eval(eval);
+        let wdl_i = cal.map(|v| (v * 1000.0).round() as i32);
 
-        (scaled, cal)
+        let elapsed = timer.elapsed();
+        let ms = elapsed.as_millis();
+        let nodes = 0;
+
+        print!("info depth 0 seldepth 0 ");
+        print!(
+            "score cp {scaled:.0} wdl {} {} {} ",
+            wdl_i[0], wdl_i[1], wdl_i[2]
+        );
+        print!(
+            "time {ms} nodes {nodes} nps 0 pv {}",
+            self.tree.root_position().conv_mov_to_str(mov)
+        );
+        println!();
     }
 
     fn get_pv(&self, mut depth: usize) -> (Vec<Move>, f32) {

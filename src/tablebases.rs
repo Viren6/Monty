@@ -8,7 +8,7 @@ use std::{
 
 use montyformat::chess::Position as MontyPosition;
 use once_cell::sync::Lazy;
-use shakmaty::{fen::Fen, CastlingMode, Chess, Position as _, uci::UciMove};
+use shakmaty::{fen::Fen, uci::UciMove, CastlingMode, Chess, Position as _};
 use shakmaty_syzygy::{Dtz, Tablebase, Wdl};
 
 use crate::chess::{ChessState, EvalWdl, GameState, Move};
@@ -192,20 +192,16 @@ pub fn probe_root_dtz_best_move(state: &ChessState) -> Option<(Move, Dtz)> {
     };
 
     if target_sign > 0 {
-        select_from
-            .into_iter()
-            .min_by_key(|(_, dtz)| dtz.0)
+        select_from.into_iter().min_by_key(|(_, dtz)| dtz.0)
     } else {
-        select_from
-            .into_iter()
-            .max_by_key(|(_, dtz)| dtz.0)
+        select_from.into_iter().max_by_key(|(_, dtz)| dtz.0)
     }
 }
 
 fn eval_from_wdl(wdl: Wdl) -> EvalWdl {
     match wdl {
-        Wdl::Win => EvalWdl::new(1.0, 0.0, 0.0),
-        Wdl::Loss => EvalWdl::new(0.0, 0.0, 1.0),
+        Wdl::Win => EvalWdl::new(0.5, 0.5, 0.0),
+        Wdl::Loss => EvalWdl::new(0.0, 0.5, 0.5),
 
         // everything that should be treated as a draw:
         Wdl::CursedWin | Wdl::Draw | Wdl::BlessedLoss => EvalWdl::new(0.0, 1.0, 0.0),
