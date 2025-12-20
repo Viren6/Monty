@@ -8,10 +8,10 @@ use std::{
 
 use montyformat::chess::Position as MontyPosition;
 use once_cell::sync::Lazy;
-use shakmaty::{fen::Fen, CastlingMode, Chess};
-use shakmaty_syzygy::{Tablebase, Wdl};
+use shakmaty::{fen::Fen, CastlingMode, Chess, Position as _, uci::UciMove};
+use shakmaty_syzygy::{Dtz, Tablebase, Wdl};
 
-use crate::chess::EvalWdl;
+use crate::chess::{ChessState, EvalWdl, GameState, Move};
 
 static SYZYGY: Lazy<RwLock<Option<Tablebase<Chess>>>> = Lazy::new(|| RwLock::new(None));
 
@@ -100,22 +100,106 @@ fn directories_including_subdirectories(root: &Path) -> Result<Vec<PathBuf>, Str
     Ok(directories)
 }
 
-pub fn probe_wdl(position: &MontyPosition) -> Option<EvalWdl> {
-    let guard = SYZYGY.read().ok()?;
+fn tablebase_guard() -> Option<std::sync::RwLockReadGuard<'static, Option<Tablebase<Chess>>>> {
+    SYZYGY.read().ok()
+}
+
+fn to_chess(position: &MontyPosition) -> Option<Chess> {
+    let fen = position.as_fen();
+    Fen::from_ascii(fen.as_bytes())
+        .ok()?
+        .into_position(CastlingMode::Standard)
+        .ok()
+}
+
+fn probe_wdl_inner(position: &MontyPosition) -> Option<Wdl> {
+    let guard = tablebase_guard()?;
     let tablebase = guard.as_ref()?;
 
     if position.occ().count_ones() > 7 {
         return None;
     }
 
-    let fen = position.as_fen();
-    let chess: Chess = Fen::from_ascii(fen.as_bytes())
-        .ok()?
-        .into_position(CastlingMode::Standard)
-        .ok()?;
+    let chess = to_chess(position)?;
+    tablebase.probe_wdl_after_zeroing(&chess).ok()
+}
 
-    let wdl = tablebase.probe_wdl_after_zeroing(&chess).ok()?;
-    Some(eval_from_wdl(wdl))
+pub fn probe_wdl(position: &MontyPosition) -> Option<EvalWdl> {
+    probe_wdl_inner(position).map(eval_from_wdl)
+}
+
+pub fn probe_wdl_with_state(position: &MontyPosition) -> Option<(EvalWdl, GameState)> {
+    let wdl = probe_wdl_inner(position)?;
+    let eval = eval_from_wdl(wdl);
+
+    let state = match wdl {
+        Wdl::Win => GameState::Won(0),
+        Wdl::Loss => GameState::Lost(0),
+        _ => GameState::Draw,
+    };
+
+    Some((eval, state))
+}
+
+pub fn probe_root_dtz_best_move(state: &ChessState) -> Option<(Move, Dtz)> {
+    let guard = tablebase_guard()?;
+    let tablebase = guard.as_ref()?;
+
+    if state.board().occ().count_ones() > 7 {
+        return None;
+    }
+
+    let chess = to_chess(&state.board())?;
+    let root_dtz = tablebase.probe_dtz(&chess).ok()?.ignore_rounding();
+    let target_sign = root_dtz.signum();
+
+    let mut legal_moves = Vec::new();
+    state.map_legal_moves(|mov| legal_moves.push(mov));
+
+    let mut matching: Vec<(Move, Dtz)> = Vec::new();
+    let mut fallback: Vec<(Move, Dtz)> = Vec::new();
+
+    for mov in legal_moves {
+        let uci = mov.to_uci(&state.castling());
+        let Ok(uci_move) = UciMove::from_ascii(uci.as_bytes()) else {
+            continue;
+        };
+
+        let Ok(smove) = uci_move.to_move::<Chess>(&chess) else {
+            continue;
+        };
+
+        let mut after = chess.clone();
+        after.play_unchecked(smove);
+
+        let dtz = match tablebase.probe_dtz(&after) {
+            Ok(v) => v.ignore_rounding(),
+            Err(_) => continue,
+        };
+
+        let our_dtz = Dtz(-dtz.0);
+        if our_dtz.signum() == target_sign {
+            matching.push((mov, our_dtz));
+        } else {
+            fallback.push((mov, our_dtz));
+        }
+    }
+
+    let select_from = if !matching.is_empty() {
+        matching
+    } else {
+        fallback
+    };
+
+    if target_sign > 0 {
+        select_from
+            .into_iter()
+            .min_by_key(|(_, dtz)| dtz.0)
+    } else {
+        select_from
+            .into_iter()
+            .max_by_key(|(_, dtz)| dtz.0)
+    }
 }
 
 fn eval_from_wdl(wdl: Wdl) -> EvalWdl {

@@ -1,5 +1,6 @@
 use crate::{
     chess::{ChessState, GameState},
+    tablebases,
     tree::{Node, NodePtr},
 };
 
@@ -20,20 +21,35 @@ pub fn perform_one(
     let tree = searcher.tree;
     let node = &tree[ptr];
 
-    let mut value = if node.is_terminal() || node.visits() == 0 {
+    let tablebase = if node.state() == GameState::Ongoing {
+        tablebases::probe_wdl_with_state(&pos.board())
+    } else {
+        None
+    };
+
+    let mut value = if node.is_terminal() || node.visits() == 0 || tablebase.is_some() {
         if node.visits() == 0 {
             node.set_state(pos.game_state());
         }
 
-        // probe hash table to use in place of network
-        if node.state() == GameState::Ongoing {
-            if let Some(entry) = tree.probe_hash(cur_hash) {
-                (entry.q(), entry.d())
+        if let Some((tb_eval, tb_state)) = tablebase {
+            if node.state() == GameState::Ongoing {
+                node.set_state(tb_state);
+            }
+
+            (tb_eval.score(), tb_eval.draw)
+        } else {
+
+            // probe hash table to use in place of network
+            if node.state() == GameState::Ongoing {
+                if let Some(entry) = tree.probe_hash(cur_hash) {
+                    (entry.q(), entry.d())
+                } else {
+                    get_utility(searcher, ptr, pos)
+                }
             } else {
                 get_utility(searcher, ptr, pos)
             }
-        } else {
-            get_utility(searcher, ptr, pos)
         }
     } else {
         // expand node on the second visit
