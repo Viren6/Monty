@@ -84,7 +84,7 @@ impl EvalWdl {
 
         // Correction factor: 16x
         let delta_mu =
-            (s * s * contempt * std::f32::consts::LN_10 / (400.0 * 16.0)).clamp(-8.0, 8.0);
+            (s * s * contempt * std::f32::consts::LN_10 / (400.0 * 16.0)).clamp(-0.8, 0.8);
         let mu_new = mu + delta_mu;
 
         let logistic = |x: f32| 1.0 / (1.0 + (-x).exp());
@@ -127,7 +127,7 @@ impl ChessState {
     pub const BENCH_DEPTH: usize = 4;
 
     #[cfg(not(feature = "datagen"))]
-    pub const BENCH_DEPTH: usize = 6;
+    pub const BENCH_DEPTH: usize = 5;
 
     pub fn board(&self) -> Position {
         self.board
@@ -199,11 +199,6 @@ impl ChessState {
         policy.get(&self.board, &mov, hl)
     }
 
-    #[cfg(not(feature = "datagen"))]
-    fn piece_count(&self, piece: usize) -> i32 {
-        self.board.piece(piece).count_ones() as i32
-    }
-
     fn evaluate_material_wdl(
         &self,
         value: &ValueNetwork,
@@ -216,30 +211,29 @@ impl ChessState {
 
         let (win, draw, loss) = value.eval(&self.board);
         let raw = EvalWdl::new(win, draw, loss);
-        let cp_base = raw.to_cp_i32();
 
         #[cfg(not(feature = "datagen"))]
-        let cp = {
-            use montyformat::chess::consts::Piece;
+        let (material, cp) = {
+            let draw_adj = raw.draw * params.sharpness_scale()
+                + raw.draw * raw.draw * params.sharpness_quadratic();
 
-            let mut mat = self.piece_count(Piece::KNIGHT) * params.knight_value()
-                + self.piece_count(Piece::BISHOP) * params.bishop_value()
-                + self.piece_count(Piece::ROOK) * params.rook_value()
-                + self.piece_count(Piece::QUEEN) * params.queen_value();
-
-            mat = params.material_offset() + mat / params.material_div1();
-
-            cp_base * mat / params.material_div2()
+            let sum = raw.win + raw.draw + draw_adj + raw.loss;
+            let material = EvalWdl {
+                win: raw.win / sum,
+                draw: (raw.draw + draw_adj) / sum,
+                loss: raw.loss / sum,
+            };
+            (material, material.to_cp_i32())
         };
 
         #[cfg(feature = "datagen")]
-        let cp = {
+        let (material, cp) = {
             let _ = params;
-            cp_base
+            let cp_base = raw.to_cp_i32();
+            let score = 1.0 / (1.0 + (-(cp_base as f32) / 400.0).exp());
+            let material = EvalWdl::from_draw_and_score(raw.draw, score);
+            (material, cp_base)
         };
-
-        let score = 1.0 / (1.0 + (-(cp as f32) / 400.0).exp());
-        let material = EvalWdl::from_draw_and_score(raw.draw, score);
 
         (raw, material, cp)
     }
