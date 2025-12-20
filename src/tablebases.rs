@@ -11,7 +11,7 @@ use once_cell::sync::Lazy;
 use shakmaty::{fen::Fen, CastlingMode, Chess};
 use shakmaty_syzygy::{Tablebase, Wdl};
 
-use crate::chess::EvalWdl;
+use crate::chess::{ChessState, EvalWdl, GameState, Move};
 
 static SYZYGY: Lazy<RwLock<Option<Tablebase<Chess>>>> = Lazy::new(|| RwLock::new(None));
 
@@ -101,6 +101,16 @@ fn directories_including_subdirectories(root: &Path) -> Result<Vec<PathBuf>, Str
 }
 
 pub fn probe_wdl(position: &MontyPosition) -> Option<EvalWdl> {
+    probe_wdl_state(position).map(|tb| tb.eval)
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TablebaseWdl {
+    pub eval: EvalWdl,
+    pub state: GameState,
+}
+
+pub fn probe_wdl_state(position: &MontyPosition) -> Option<TablebaseWdl> {
     let guard = SYZYGY.read().ok()?;
     let tablebase = guard.as_ref()?;
 
@@ -108,14 +118,13 @@ pub fn probe_wdl(position: &MontyPosition) -> Option<EvalWdl> {
         return None;
     }
 
-    let fen = position.as_fen();
-    let chess: Chess = Fen::from_ascii(fen.as_bytes())
-        .ok()?
-        .into_position(CastlingMode::Standard)
-        .ok()?;
+    let chess = monty_to_shakmaty(position)?;
 
     let wdl = tablebase.probe_wdl_after_zeroing(&chess).ok()?;
-    Some(eval_from_wdl(wdl))
+    Some(TablebaseWdl {
+        eval: eval_from_wdl(wdl),
+        state: wdl_to_state(wdl),
+    })
 }
 
 fn eval_from_wdl(wdl: Wdl) -> EvalWdl {
@@ -126,4 +135,60 @@ fn eval_from_wdl(wdl: Wdl) -> EvalWdl {
         // everything that should be treated as a draw:
         Wdl::CursedWin | Wdl::Draw | Wdl::BlessedLoss => EvalWdl::new(0.0, 1.0, 0.0),
     }
+}
+
+fn wdl_to_state(wdl: Wdl) -> GameState {
+    match wdl {
+        Wdl::Win => GameState::Won(0),
+        Wdl::Loss => GameState::Lost(0),
+        Wdl::CursedWin | Wdl::Draw | Wdl::BlessedLoss => GameState::Draw,
+    }
+}
+
+fn monty_to_shakmaty(position: &MontyPosition) -> Option<Chess> {
+    let fen = position.as_fen();
+    Fen::from_ascii(fen.as_bytes())
+        .ok()?
+        .into_position(CastlingMode::Standard)
+        .ok()
+}
+
+pub fn probe_root_dtz_move(state: &ChessState) -> Option<(Move, EvalWdl)> {
+    let guard = SYZYGY.read().ok()?;
+    let tablebase = guard.as_ref()?;
+
+    if state.board().occ().count_ones() > 7 {
+        return None;
+    }
+
+    let root_chess = monty_to_shakmaty(&state.board())?;
+    let root_dtz = tablebase.probe_dtz(&root_chess).ok()?;
+    let root_wdl = tablebase.probe_wdl_after_zeroing(&root_chess).ok()?;
+
+    let prefer_low = root_dtz.ignore_rounding().is_positive();
+    let mut best: Option<(Move, i32)> = None;
+
+    state.map_legal_moves(|mov| {
+        let mut child = state.clone();
+        child.make_move(mov);
+
+        if let Some(chess) = monty_to_shakmaty(&child.board()) {
+            if let Ok(dtz) = tablebase.probe_dtz(&chess) {
+                let val = i32::from(dtz.ignore_rounding());
+
+                match best {
+                    None => best = Some((mov, val)),
+                    Some((_, current)) => {
+                        let better = if prefer_low { val < current } else { val > current };
+                        if better {
+                            best = Some((mov, val));
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let (mov, _) = best?;
+    Some((mov, eval_from_wdl(root_wdl)))
 }

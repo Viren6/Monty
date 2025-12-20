@@ -10,6 +10,7 @@ pub use search_stats::SearchStats;
 use crate::{
     chess::{GameState, Move},
     networks::{PolicyNetwork, ValueNetwork},
+    tablebases,
     tree::{NodePtr, Tree},
 };
 
@@ -322,6 +323,18 @@ impl<'a> Searcher<'a> {
         let pos = self.tree.root_position();
         let root_stm = pos.stm();
         let node = self.tree.root_node();
+
+        if let Some((best_move, eval)) = tablebases::probe_root_dtz_move(pos) {
+            #[cfg(not(feature = "datagen"))]
+            {
+                return (best_move, eval.score());
+            }
+
+            #[cfg(feature = "datagen")]
+            {
+                return (best_move, eval.score(), 0);
+            }
+        }
 
         // the root node is added to an empty tree, **and not counted** towards the
         // total node count, in order for `go nodes 1` to give the expected result

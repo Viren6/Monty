@@ -1,5 +1,6 @@
 use crate::{
     chess::{ChessState, GameState},
+    tablebases,
     tree::{Node, NodePtr},
 };
 
@@ -20,8 +21,14 @@ pub fn perform_one(
     let tree = searcher.tree;
     let node = &tree[ptr];
 
+    if node.state() == GameState::Ongoing {
+        if let Some(tablebase) = tablebases::probe_wdl_state(&pos.board()) {
+            node.set_state(tablebase.state);
+        }
+    }
+
     let mut value = if node.is_terminal() || node.visits() == 0 {
-        if node.visits() == 0 {
+        if node.visits() == 0 && node.state() == GameState::Ongoing {
             node.set_state(pos.game_state());
         }
 
