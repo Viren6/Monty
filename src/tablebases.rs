@@ -177,11 +177,10 @@ pub fn probe_root_dtz_best_move(state: &ChessState) -> Option<(Move, Dtz)> {
             Err(_) => continue,
         };
 
-        let our_dtz = Dtz(-dtz.0);
-        if our_dtz.signum() == target_sign {
-            matching.push((mov, our_dtz));
+        if dtz.signum() == target_sign {
+            matching.push((mov, dtz));
         } else {
-            fallback.push((mov, our_dtz));
+            fallback.push((mov, dtz));
         }
     }
 
