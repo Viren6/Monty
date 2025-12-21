@@ -152,6 +152,7 @@ pub fn probe_root_dtz_best_move(state: &ChessState) -> Option<(Move, Dtz)> {
     let chess = to_chess(&state.board())?;
     let root_dtz = tablebase.probe_dtz(&chess).ok()?.ignore_rounding();
     let target_sign = root_dtz.signum();
+    let expected_child_sign = -target_sign;
 
     let mut legal_moves = Vec::new();
     state.map_legal_moves(|mov| legal_moves.push(mov));
@@ -177,7 +178,7 @@ pub fn probe_root_dtz_best_move(state: &ChessState) -> Option<(Move, Dtz)> {
             Err(_) => continue,
         };
 
-        if dtz.signum() == target_sign {
+        if dtz.signum() == expected_child_sign {
             matching.push((mov, dtz));
         } else {
             fallback.push((mov, dtz));
