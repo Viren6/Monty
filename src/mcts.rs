@@ -10,7 +10,7 @@ pub use search_stats::SearchStats;
 use crate::{
     chess::{GameState, Move},
     networks::{PolicyNetwork, ValueNetwork},
-    tree::{Node, NodePtr, Tree},
+    tree::{NodePtr, Tree},
 };
 
 use std::{
@@ -623,8 +623,8 @@ impl<'a> Searcher<'a> {
             .collect();
 
         children.sort_by(|(a_ptr, _), (b_ptr, _)| {
-            let a_score = Self::node_order_score(&self.tree[*a_ptr]);
-            let b_score = Self::node_order_score(&self.tree[*b_ptr]);
+            let a_score = self.child_order_score(root, *a_ptr);
+            let b_score = self.child_order_score(root, *b_ptr);
 
             b_score
                 .partial_cmp(&a_score)
@@ -636,7 +636,9 @@ impl<'a> Searcher<'a> {
         children
     }
 
-    fn node_order_score(node: &Node) -> f32 {
+    fn child_order_score(&self, parent: NodePtr, child: NodePtr) -> f32 {
+        let node = &self.tree[child];
+
         if node.visits() == 0 {
             return f32::NEG_INFINITY;
         }
@@ -645,7 +647,15 @@ impl<'a> Searcher<'a> {
             GameState::Lost(n) => 1.0 + f32::from(n),
             GameState::Won(n) => f32::from(n) - 256.0,
             GameState::Draw => 0.5,
-            GameState::Ongoing => node.q(),
+            GameState::Ongoing => {
+                let (mut scaled, _) = self.get_display_score_for(child);
+
+                if parent != child {
+                    scaled = -scaled;
+                }
+
+                scaled
+            }
         }
     }
 
@@ -716,22 +726,27 @@ impl<'a> Searcher<'a> {
         let idx = self.get_best_child(node);
         let ptr = self.tree[node].actions() + idx;
         let child = &self.tree[ptr];
-        (ptr, child.parent_move(), child.q())
+        let score = self.child_order_score(node, ptr);
+
+        (ptr, child.parent_move(), score)
     }
 
     fn get_best_child(&self, node: NodePtr) -> usize {
-        self.tree.get_best_child_by_key(node, |child| {
-            if child.visits() == 0 {
-                f32::NEG_INFINITY
-            } else {
-                match child.state() {
-                    GameState::Lost(n) => 1.0 + f32::from(n),
-                    GameState::Won(n) => f32::from(n) - 256.0,
-                    GameState::Draw => 0.5,
-                    GameState::Ongoing => child.q(),
-                }
+        let mut best_child = usize::MAX;
+        let mut best_score = f32::NEG_INFINITY;
+        let first_child_ptr = self.tree[node].actions();
+
+        for action in 0..self.tree[node].num_actions() {
+            let child_ptr = first_child_ptr + action;
+            let score = self.child_order_score(node, child_ptr);
+
+            if score > best_score {
+                best_score = score;
+                best_child = action;
             }
-        })
+        }
+
+        best_child
     }
 
     pub fn display_moves(&self) {
