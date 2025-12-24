@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub struct Rand(u32);
+pub struct Rand(pub u32);
 
 impl Default for Rand {
     fn default() -> Self {

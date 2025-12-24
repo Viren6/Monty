@@ -29,9 +29,9 @@ struct GameRunner {
 }
 
 impl GameRunner {
-    fn new(book: Option<&crate::book::OpeningBook>) -> Self {
+    fn new(book: Option<&crate::book::OpeningBook>, seed: u32) -> Self {
         let position = if let Some(book) = book {
-            let mut rng = crate::rng::Rand::with_seed();
+            let mut rng = crate::rng::Rand(seed);
             let mut reader = book.reader().expect("failed to get book reader");
             let fen = reader.random_line(&mut rng).expect("failed to read book line");
             ChessState::from_fen(&fen)
@@ -57,8 +57,8 @@ impl GameRunner {
         }
     }
 
-    fn reset(&mut self, book: Option<&crate::book::OpeningBook>) {
-        *self = Self::new(book);
+    fn reset(&mut self, book: Option<&crate::book::OpeningBook>, seed: u32) {
+        *self = Self::new(book, seed);
     }
 }
 
@@ -110,12 +110,12 @@ pub fn run_policy_datagen(
 
     let stop = AtomicBool::new(false);
 
+    let mut rng = crate::rng::Rand::with_seed();
     let mut games: Vec<GameRunner> = (0..BATCH_SIZE)
-        .map(|_| GameRunner::new(book_ref))
+        .map(|_| GameRunner::new(book_ref, rng.rand_int()))
         .collect();
 
     let mut buffer = String::new();
-    let mut rng = crate::rng::Rand::with_seed();
 
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -201,7 +201,7 @@ fn process_game(
     game.position.map_legal_moves(|mov| moves.push(mov));
 
     if moves.is_empty() {
-        game.reset(book);
+        game.reset(book, rng.rand_int());
         return;
     }
 
@@ -324,7 +324,7 @@ fn process_game(
              dest.lock().unwrap().push(&game.value_game, stop, game.searches, game.iters);
         }
         
-        game.reset(book);
+        game.reset(book, rng.rand_int());
         // We only passed book_slice to init, we should probably pass it to reset implicitly or store it in GameRunner.
         // GameRunner reset currently uses new(book), but we need to pass the book again.
         // Current impl of reset calls new.

@@ -147,6 +147,10 @@ impl Destination {
             let average_iters = self.iters / self.searches;
             println!("average iters {average_iters}");
         }
+        if self.games != 0 {
+            let avg_len = self.searches / self.games;
+            println!("average game length {avg_len} plies");
+        }
         println!(
             "finished games {} losses {} draws {} wins {}",
             self.games, self.results[0], self.results[1], self.results[2],
