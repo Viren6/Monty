@@ -29,7 +29,7 @@ void PrintOutput(NetworkComputation& computation, int sample_idx, const std::str
     std::vector<std::pair<float, int>> policy;
     for(int i=0; i<1858; ++i) { // 1858 is standard policy size
         float p = computation.GetPVal(sample_idx, i);
-        if(p > 0.01) { // > 1%
+        if(p > 0.000001) { 
              policy.push_back({p, i});
         }
     }
@@ -85,37 +85,41 @@ int main(int argc, char* argv[]) {
     
     std::cerr << "Network created. Batch size: " << batch_size << "\n";
 
-    std::vector<std::string> fens;
+
+    // Interactive loop
+    std::vector<std::string> batch_fens;
+    batch_fens.reserve(batch_size);
+    
     std::string line;
-    while (std::getline(std::cin, line)) {
-        if (!line.empty()) {
-            fens.push_back(line);
+    while (true) {
+        batch_fens.clear();
+        for (int i = 0; i < batch_size; ++i) {
+             if (std::getline(std::cin, line)) {
+                 // Trim whitespace?
+                 if (!line.empty()) {
+                    batch_fens.push_back(line);
+                 } else {
+                    i--; // retry
+                 }
+             } else {
+                 // EOF
+                 if (batch_fens.empty()) return 0;
+                 break; 
+             }
         }
-    }
+        
+        if (batch_fens.empty()) break;
 
-    std::cerr << "Read " << fens.size() << " FENs. Processing...\n";
-
-    for (size_t i = 0; i < fens.size(); i += batch_size) {
+        // Process batch
         auto computation = network->NewComputation();
         int current_batch = 0;
         
-        for (size_t j = i; j < i + batch_size && j < fens.size(); ++j) {
+        for (const auto& fen : batch_fens) {
             PositionHistory history;
-            history.Reset(Position::FromFen(fens[j]));
+            history.Reset(Position::FromFen(fen));
             
-            // Encode
-            int transform = 0; // We define transform out
-            // For raw FEN inference we normally don't need history, so history planes = 0?
-            // Standard lc0 training uses history. 
-            // If we don't have history, we just pass the position.
-            // EncodePositionForNN(input_format, history, history_planes, fill_empty, &transform)
-            
-            // We need to know input format from capabilities
+            int transform = 0; 
             auto input_format = network->GetCapabilities().input_format;
-            
-            // LC0 default history is 8 (kMoveHistory) maybe?
-            // If user provides just FEN, we treat it as no history.
-            // We'll set history_planes to 0 or use FILL logic.
             
             InputPlanes planes = EncodePositionForNN(
                 input_format, 
@@ -132,9 +136,14 @@ int main(int argc, char* argv[]) {
         computation->ComputeBlocking();
         
         for (int k = 0; k < current_batch; ++k) {
-            PrintOutput(*computation, k, fens[i+k]);
+            PrintOutput(*computation, k, batch_fens[k]);
         }
+        std::cout << "BATCH_DONE\n";
+        std::cout.flush();
+        
+        if (std::cin.eof()) break;
     }
 
     return 0;
 }
+

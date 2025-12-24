@@ -1,6 +1,8 @@
 mod book;
 mod rng;
 mod thread;
+mod lc0;
+mod lc0_mapping;
 
 use book::OpeningBook;
 use montyformat::{MontyFormat, MontyValueFormat};
@@ -40,8 +42,13 @@ fn main() {
 
     let params = MctsParams::default();
 
+
     if let Some(opts) = parse_args(args) {
-        run_datagen(params, opts, policy, value);
+        if cfg!(feature = "policy") {
+             lc0::run_policy_datagen(opts, value);
+        } else {
+             run_datagen(params, opts, policy, value);
+        }
     } else {
         uci::bench(ChessState::BENCH_DEPTH, policy, value, &params);
     }

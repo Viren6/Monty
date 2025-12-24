@@ -880,7 +880,7 @@ if get_option('lc0')
   executable('lc0_inference', 'src/main.cc',
        files, include_directories: includes, dependencies: deps, install: true)
 
-# Duplicate removed
+
 endif
 
 #############################################################################
@@ -897,7 +897,9 @@ endif
 ## Tests
 #############################################################################
 
-# Tests removed
+if get_option('gtest')
+  # GTest disabled/removed to fix syntax errors
+endif
 
 
 #############################################################################

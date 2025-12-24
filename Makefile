@@ -43,5 +43,12 @@ noembed:
 gen-value:
 	$(INVOKE) --package datagen --bin datagen --features value $(LINK)
 
+
 gen-policy:
+# ifeq ($(OS),Windows_NT)
+	# cd lc0_inference_standalone && ./build.cmd
+	# cp lc0_inference_standalone/lc0_inference.exe .
+# else
+# 	cd lc0_inference_standalone && ./build.sh && cp build/release/lc0_inference lc0_inference
+# endif
 	$(INVOKE) --package datagen --bin datagen --features policy $(LINK)
