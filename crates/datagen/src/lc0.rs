@@ -44,7 +44,7 @@ impl GameRunner {
 
         GameRunner {
             position,
-            temp: 0.8,
+            temp: 3.0,
             searches: 0,
             iters: 0,
             policy_game: MontyFormat::new(montyformat_position, montyformat_castling),
@@ -216,6 +216,10 @@ fn process_game(
             0.0
         };
         
+        let mut p = p.max(1e-5);
+        if game.temp > 0.0 {
+            p = p.powf(1.0 / game.temp);
+        }
         probs.push((*mov, p));
         if p > max_val {
             max_val = p;
@@ -223,7 +227,7 @@ fn process_game(
     }
 
     let total: f32 = probs.iter().map(|(_, p)| p).sum();
-    // Renormalize legal moves
+    // Normalize tempered policy
     if total > 0.0 {
         for (_, p) in probs.iter_mut() {
             *p /= total;
@@ -232,6 +236,24 @@ fn process_game(
         let uniform = 1.0 / probs.len() as f32;
         for (_, p) in probs.iter_mut() {
             *p = uniform;
+        }
+    }
+
+    // Add Dirichlet noise if temp > 0
+    if game.temp > 0.0 {
+        let alpha = 0.3;
+        let epsilon = 0.25;
+        let mut noise = Vec::with_capacity(probs.len());
+        let mut noise_total = 0.0;
+        for _ in 0..probs.len() {
+            let n = rng.sample_gamma(alpha);
+            noise.push(n);
+            noise_total += n;
+        }
+
+        for (i, (_, p)) in probs.iter_mut().enumerate() {
+            let n = noise[i] / noise_total;
+            *p = (1.0 - epsilon) * *p + epsilon * n;
         }
     }
 
@@ -245,23 +267,14 @@ fn process_game(
     let best_move: Move = if game.temp == 0.0 {
          probs.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).unwrap().0
     } else {
-         let t = 1.0 / game.temp;
-         let mut weights = Vec::with_capacity(probs.len());
-         let mut w_total = 0.0;
-         for (_, p) in &probs {
-             let w = (*p as f64).powf(t as f64);
-             weights.push(w);
-             w_total += w;
-         }
-         
+         // Weighted sample from probs (which are already tempered + noised)
          let r = (rng.rand_int() as f64) / (u32::MAX as f64);
-         
          let mut cumulative = 0.0;
          let mut chosen = probs.last().unwrap().0;
-         for (i, weight) in weights.iter().enumerate() {
-             cumulative += *weight;
-             if cumulative / w_total > r {
-                 chosen = probs[i].0;
+         for (mov, p) in &probs {
+             cumulative += *p as f64;
+             if cumulative > r {
+                 chosen = *mov;
                  break;
              }
          }
@@ -282,10 +295,6 @@ fn process_game(
 
     game.searches += 1;
     game.iters += 1;
-    game.temp *= 0.9;
-    if game.temp <= 0.2 {
-        game.temp = 0.0;
-    }
 
     game.position.make_move(best_move);
 

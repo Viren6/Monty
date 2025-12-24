@@ -29,7 +29,7 @@ void PrintOutput(NetworkComputation& computation, int sample_idx, const std::str
     std::vector<std::pair<float, int>> policy;
     for(int i=0; i<1858; ++i) { // 1858 is standard policy size
         float p = computation.GetPVal(sample_idx, i);
-        if(p > 0.000001) { 
+        if(p > 0.0) { 
              policy.push_back({p, i});
         }
     }
