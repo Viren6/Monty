@@ -1,8 +1,8 @@
 use crate::{Destination, RunOptions};
 use monty::{
-    chess::ChessState,
+    chess::{ChessState, GameState, Move},
 };
-use montyformat::{MontyFormat, MontyValueFormat};
+use montyformat::{MontyFormat, MontyValueFormat, SearchData};
 use std::{
     io::{BufRead, BufReader, Write},
     process::{Command, Stdio},

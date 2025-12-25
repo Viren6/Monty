@@ -124,8 +124,8 @@ int main(int argc, char* argv[]) {
             InputPlanes planes = EncodePositionForNN(
                 input_format, 
                 history, 
-                0, // history planes
-                FillEmptyHistory::NO, 
+                8, // history planes (current + 7 past)
+                FillEmptyHistory::FEN_ONLY, 
                 &transform
             );
             
