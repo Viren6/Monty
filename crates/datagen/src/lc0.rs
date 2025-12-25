@@ -43,7 +43,7 @@ impl GameRunner {
 
         GameRunner {
             position,
-            temp: 1.0,
+            temp: 1.6,
             searches: 0,
             iters: 0,
             policy_game: MontyFormat::new(montyformat_position, montyformat_castling),
