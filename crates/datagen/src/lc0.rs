@@ -1,9 +1,8 @@
 use crate::{Destination, RunOptions};
 use monty::{
-    chess::{ChessState, GameState, Move},
-    networks::{PolicyNetwork, ValueNetwork},
+    chess::ChessState,
 };
-use montyformat::{MontyFormat, MontyValueFormat, SearchData};
+use montyformat::{MontyFormat, MontyValueFormat};
 use std::{
     io::{BufRead, BufReader, Write},
     process::{Command, Stdio},
@@ -64,7 +63,6 @@ impl GameRunner {
 
 pub fn run_policy_datagen(
     opts: RunOptions,
-    value: &ValueNetwork,
 ) {
     println!("Starting LC0 Datagen with BATCH_SIZE={}", BATCH_SIZE);
     println!("Using Network: {}", LC0_NETWORK_PATH);
@@ -132,6 +130,7 @@ pub fn run_policy_datagen(
         // 2. Read Results
         let mut game_idx = 0;
         let mut current_policy = [0.0f32; 1858]; // Reset per game? Yes.
+        let mut current_value = 0.0f32;
         
         loop {
             buffer.clear();
@@ -148,13 +147,11 @@ pub fn run_policy_datagen(
                  // New game starting in stream
                  // Reset policy buffer
                  current_policy = [0.0; 1858];
+                 current_value = 0.0;
             } else if line.starts_with("Value:") {
-                // We don't use LC0 value for now? 
-                // The diff uses 'value.eval(&position.board())' which is MONTY's value net?
-                // "distill... generating policy data (with value data stored as well ofc) from the raw network outputs"
-                // Does "raw network outputs" imply LC0 Value? 
-                // In diff: `let (win, draw, _) = value.eval(&position.board());` -> This is Monty's Value!
-                // So we ignore LC0 value.
+                if let Ok(val) = line["Value: ".len()..].parse::<f32>() {
+                    current_value = val;
+                }
             } else if line.starts_with("Policy (Top > 1%):") {
                 // Parse
                 let content = &line["Policy (Top > 1%): ".len()..];
@@ -177,7 +174,7 @@ pub fn run_policy_datagen(
                 // Or just: Policy line is unique per game. Process after it.
                 if game_idx < BATCH_SIZE {
                     let game = &mut games[game_idx];
-                    process_game(game, &current_policy, value, &dest, &stop, &mut rng, opts.policy_data, book_ref);
+                    process_game(game, &current_policy, current_value, &dest, &stop, &mut rng, opts.policy_data, book_ref);
                     game_idx += 1;
                 }
             }
@@ -190,7 +187,7 @@ pub fn run_policy_datagen(
 fn process_game(
     game: &mut GameRunner,
     policy_probs: &[f32; 1858],
-    value: &ValueNetwork,
+    lc0_value: f32,
     dest: &Arc<Mutex<Destination>>,
     stop: &AtomicBool,
     rng: &mut crate::rng::Rand,
@@ -205,9 +202,24 @@ fn process_game(
         return;
     }
 
+    // 1. Raw Distribution for Storage (Raw LC0 output)
+    let mut dist = Vec::with_capacity(moves.len());
+    for mov in &moves {
+         let idx = crate::lc0_mapping::get_lc0_index(mov);
+         let p = if let Some(idx) = idx {
+             policy_probs[idx]
+         } else {
+             // If move not in policy (rare/impossible if logic correct), 0.0
+             0.0
+         };
+         let mf_move = montyformat::chess::Move::from(u16::from(*mov));
+         let visits = (p * 65535.0) as u32;
+         dist.push((mf_move, visits));
+    }
+
+    // 2. Selection Probabilities (Temp + Noise -> Distill)
     let mut probs = Vec::with_capacity(moves.len());
     let mut max_val = f32::NEG_INFINITY;
-
     for mov in &moves {
         let idx = crate::lc0_mapping::get_lc0_index(mov);
         let p = if let Some(idx) = idx {
@@ -257,17 +269,11 @@ fn process_game(
         }
     }
 
-    let mut dist = Vec::with_capacity(probs.len());
-    for (mov, p) in &probs {
-         let mf_move = montyformat::chess::Move::from(u16::from(*mov));
-         let visits = (*p * 65535.0) as u32;
-         dist.push((mf_move, visits));
-    }
-
     let best_move: Move = if game.temp == 0.0 {
+         // Greedy
          probs.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).unwrap().0
     } else {
-         // Weighted sample from probs (which are already tempered + noised)
+         // Weighted sample
          let r = (rng.rand_int() as f64) / (u32::MAX as f64);
          let mut cumulative = 0.0;
          let mut chosen = probs.last().unwrap().0;
@@ -281,8 +287,10 @@ fn process_game(
          chosen
     };
 
-    let (win, draw, _) = value.eval(&game.position.board());
-    let score = win + draw / 2.0;
+    // Use LC0 Value (Q is typically -1.0 to 1.0 from perspective of STM)
+    // Monty expects score 0.0 (Loss) to 1.0 (Win).
+    // So map: (q + 1.0) / 2.0
+    let score = (lc0_value + 1.0) / 2.0;
 
     let mf_best_move = montyformat::chess::Move::from(u16::from(best_move));
 

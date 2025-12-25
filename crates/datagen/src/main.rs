@@ -45,7 +45,7 @@ fn main() {
 
     if let Some(opts) = parse_args(args) {
         if cfg!(feature = "policy") {
-             lc0::run_policy_datagen(opts, value);
+             lc0::run_policy_datagen(opts);
         } else {
              run_datagen(params, opts, policy, value);
         }
