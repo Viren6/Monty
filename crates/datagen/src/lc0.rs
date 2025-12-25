@@ -145,38 +145,34 @@ pub fn run_policy_datagen(
             
             if line.starts_with("FEN:") {
                  // New game starting in stream
-                 // Reset policy buffer
-                 current_policy = [0.0; 1858];
+                 // Reset policy buffer to NEG_INFINITY (missing logits are effectively 0 prob)
+                 current_policy = [f32::NEG_INFINITY; 1858];
                  current_value = 0.0;
             } else if line.starts_with("Value:") {
-                if let Ok(val) = line["Value: ".len()..].parse::<f32>() {
-                    current_value = val;
+                if let Some(val_str) = line.split_whitespace().nth(1) {
+                     current_value = val_str.parse().unwrap_or(0.0);
                 }
-            } else if line.starts_with("Policy (Top > 1%):") {
-                // Parse
-                let content = &line["Policy (Top > 1%): ".len()..];
-                for entry in content.split_whitespace() {
-                    let parts: Vec<&str> = entry.split(':').collect();
-                    if parts.len() == 2 {
-                        let idx: usize = parts[0].parse().unwrap_or(0);
-                        let prob: f32 = parts[1].parse().unwrap_or(0.0);
-                        if idx < 1858 {
-                            current_policy[idx] = prob;
+            } else if line.starts_with("Policy (Logits):") {
+                // Parse "idx:logit"
+                let content = line.trim_start_matches("Policy (Logits):").trim();
+                for token in content.split_whitespace() {
+                    if let Some((idx_str, val_str)) = token.split_once(':') {
+                        if let (Ok(idx), Ok(val)) = (idx_str.parse::<usize>(), val_str.parse::<f32>()) {
+                           if idx < 1858 {
+                               current_policy[idx] = val;
+                           }
                         }
                     }
                 }
                 
-                // We assume this is the last piece of info for the current game
-                // (Assuming strict output order: FEN -> Value -> Policy -> ---)
-                // But wait, the loop for batch_size games...
-                // Only execute logic after we read everything for one game.
-                // We can trigger on "---" or implied sequence.
-                // Or just: Policy line is unique per game. Process after it.
+                // Trigger processing after Policy line
                 if game_idx < BATCH_SIZE {
                     let game = &mut games[game_idx];
                     process_game(game, &current_policy, current_value, &dest, &stop, &mut rng, opts.policy_data, book_ref);
                     game_idx += 1;
                 }
+            } else if line.starts_with("Policy (Top > 1%):") {
+                 // Legacy ignore
             }
         }
     }
@@ -202,72 +198,66 @@ fn process_game(
         return;
     }
 
-    // 1. Raw Distribution for Storage (Raw LC0 output)
+    // 1. Compute Legal Move Probabilities from Logits (Softmax over Legal Moves)
     let mut dist = Vec::with_capacity(moves.len());
+    let mut legal_logits = Vec::with_capacity(moves.len());
+    let mut max_legal_logit = f32::NEG_INFINITY;
+    
+    // Collect logits for legal moves
     for mov in &moves {
          let idx = crate::lc0_mapping::get_lc0_index(mov);
-         let p = if let Some(idx) = idx {
+         let logit = if let Some(idx) = idx {
              policy_probs[idx]
          } else {
-             // If move not in policy (rare/impossible if logic correct), 0.0
-             0.0
+             f32::NEG_INFINITY
          };
-         let mf_move = montyformat::chess::Move::from(u16::from(*mov));
-         let visits = (p * 65535.0) as u32;
-         dist.push((mf_move, visits));
-    }
-
-    // 2. Selection Probabilities (Temp + Noise -> Distill)
-    let mut probs = Vec::with_capacity(moves.len());
-    let mut max_val = f32::NEG_INFINITY;
-    for mov in &moves {
-        let idx = crate::lc0_mapping::get_lc0_index(mov);
-        let p = if let Some(idx) = idx {
-            policy_probs[idx]
-        } else {
-            0.0
-        };
-        
-        let mut p = p.max(1e-5);
-        if game.temp > 0.0 {
-            p = p.powf(1.0 / game.temp);
-        }
-        probs.push((*mov, p));
-        if p > max_val {
-            max_val = p;
-        }
-    }
-
-    let total: f32 = probs.iter().map(|(_, p)| p).sum();
-    // Normalize tempered policy
-    if total > 0.0 {
-        for (_, p) in probs.iter_mut() {
-            *p /= total;
-        }
-    } else {
-        let uniform = 1.0 / probs.len() as f32;
-        for (_, p) in probs.iter_mut() {
-            *p = uniform;
-        }
-    }
-
-    let best_move: Move = if game.temp == 0.0 {
-         // Greedy
-         probs.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).unwrap().0
-    } else {
-         // Weighted sample
-         let r = (rng.rand_int() as f64) / (u32::MAX as f64);
-         let mut cumulative = 0.0;
-         let mut chosen = probs.last().unwrap().0;
-         for (mov, p) in &probs {
-             cumulative += *p as f64;
-             if cumulative > r {
-                 chosen = *mov;
-                 break;
-             }
+         
+         if logit > max_legal_logit {
+             max_legal_logit = logit;
          }
-         chosen
-    };
+         legal_logits.push(logit);
+    }
+    
+    // Softmax
+    let mut sum_exp = 0.0;
+    let mut probs = Vec::with_capacity(moves.len());
+    let mut best_move_idx = 0;
+    let mut max_prob = -1.0;
+    
+    for logit in &legal_logits {
+        if *logit > f32::NEG_INFINITY {
+            let p = (*logit - max_legal_logit).exp();
+            sum_exp += p;
+            probs.push(p);
+        } else {
+            probs.push(0.0);
+        }
+    }
+    
+    // Normalize and Store
+    if sum_exp > 1e-9 {
+        let scale = 1.0 / sum_exp;
+        for (i, mov) in moves.iter().enumerate() {
+            let p = probs[i] * scale;
+            let mf_move = montyformat::chess::Move::from(u16::from(*mov));
+            let visits = (p * 65535.0) as u32;
+            dist.push((mf_move, visits));
+            
+            if p > max_prob {
+                max_prob = p;
+                best_move_idx = i;
+            }
+        }
+    } else {
+        // Fallback: Uniform
+        let uniform = 65535 / moves.len() as u32;
+        for mov in &moves {
+            let mf_move = montyformat::chess::Move::from(u16::from(*mov));
+            dist.push((mf_move, uniform));
+        }
+    }
+    
+    let best_move = if !moves.is_empty() { moves[best_move_idx] } else { montyformat::chess::Move::default() };
 
     // Use LC0 Value (Q is typically -1.0 to 1.0 from perspective of STM)
     // Monty expects score 0.0 (Loss) to 1.0 (Win).
@@ -275,6 +265,25 @@ fn process_game(
     let score = (lc0_value + 1.0) / 2.0;
 
     let mf_best_move = montyformat::chess::Move::from(u16::from(best_move));
+
+    // VERIFICATION: Check Policy Integrity
+    if game.iters < 3 {
+        println!("--- VERIFICATION [Game {} Iter {}] ---", game.searches / BATCH_SIZE, game.iters);
+        println!("FEN: {}", game.position.board().as_fen());
+        println!("LC0 Value: {:.6} -> Score: {:.6}", lc0_value, score);
+        
+        println!("Max Legal Logit: {:.4}", max_legal_logit);
+        let mut dist_sum = 0.0;
+        for (m, v) in dist.iter().take(5) {
+             let prob = (*v as f32) / 65535.0;
+             println!("Move: {:?} | Visits: {} | Prob: {:.6}", m, v, prob);
+        }
+        for (_, v) in &dist {
+            dist_sum += (*v as f32) / 65535.0;
+        }
+        println!("Stored Policy Sum: {:.6}", dist_sum);
+        println!("Best Move: {}", best_move);
+    }
 
     if output_policy {
         let search_data = SearchData::new(mf_best_move, score, Some(dist));

@@ -19,41 +19,36 @@ using namespace lczero;
 
 #include <cmath>
 
-void PrintOutput(NetworkComputation& computation, int sample_idx, const std::string& fen) {
+// Output only legal moves to optimize bandwidth and parsing speed.
+void PrintOutput(NetworkComputation& computation, int sample_idx, const std::string& fen, const Position& pos, int transform) {
     float value = computation.GetQVal(sample_idx);
     
     std::cout << "FEN: " << fen << "\n";
     std::cout << "Value: " << value << "\n";
     
-    // Read logits
-    std::vector<float> logits;
-    logits.reserve(1858);
-    float max_logit = -1e9;
+    // Generate Legal Moves
+    // lczero::ChessBoard has GenerateLegalMoves()
+    const ChessBoard& board = pos.GetBoard();
+    MoveList moves = board.GenerateLegalMoves();
     
-    for(int i=0; i<1858; ++i) { 
-        float logit = computation.GetPVal(sample_idx, i);
-        logits.push_back(logit);
-        if (logit > max_logit) max_logit = logit;
-    }
-
-    // Softmax
-    std::vector<std::pair<float, int>> policy;
-    float sum_exp = 0.0f;
-    for (float l : logits) {
-        sum_exp += std::exp(l - max_logit);
-    }
+    // Collect logits for legal moves only
+    std::vector<std::pair<int, float>> legal_outputs;
+    legal_outputs.reserve(moves.size());
     
-    for(int i=0; i<1858; ++i) {
-        float p = std::exp(logits[i] - max_logit) / sum_exp;
-        if(p > 0.000001) { 
-             policy.push_back({p, i});
+    for (const auto& move : moves) {
+        int idx = MoveToNNIndex(move, transform);
+        if (idx >= 0 && idx < 1858) {
+             float logit = computation.GetPVal(sample_idx, idx);
+             legal_outputs.push_back({idx, logit});
         }
     }
-    std::sort(policy.rbegin(), policy.rend());
+    
+    // Sort by index (as requested by user)
+    std::sort(legal_outputs.begin(), legal_outputs.end());
 
-    std::cout << "Policy (Top > 1%): ";
-    for(const auto& p : policy) {
-       std::cout << p.second << ":" << p.first << " ";
+    std::cout << "Policy (Logits): ";
+    for(const auto& p : legal_outputs) {
+         std::cout << p.first << ":" << p.second << " ";
     }
     std::cout << "\n";
     std::cout << "--------------------------------------------------\n";
@@ -72,8 +67,6 @@ int main(int argc, char* argv[]) {
     }
 
     InitializeMagicBitboards();
-    // InitializeHash(); // If needed? Position::Hash() uses HashCat which might need init? 
-    // utils/hashcat.h usually has static tables. 
     
     // Load weights
     std::cerr << "Loading network: " << network_path << "\n";
@@ -81,9 +74,6 @@ int main(int argc, char* argv[]) {
     
     // Setup options
     OptionsDict options;
-    // We want CPU backend usually if not specified. 
-    // Let's rely on auto-detection or force something if needed.
-    // options.RegisterOption("backend", "backend to use", "check"); 
 
     // Auto-select backend
     auto backends = NetworkFactory::Get()->GetBackendsList();
@@ -101,7 +91,6 @@ int main(int argc, char* argv[]) {
     
     std::cerr << "Network created. Batch size: " << batch_size << "\n";
 
-
     // Interactive loop
     std::vector<std::string> batch_fens;
     batch_fens.reserve(batch_size);
@@ -111,14 +100,12 @@ int main(int argc, char* argv[]) {
         batch_fens.clear();
         for (int i = 0; i < batch_size; ++i) {
              if (std::getline(std::cin, line)) {
-                 // Trim whitespace?
                  if (!line.empty()) {
                     batch_fens.push_back(line);
                  } else {
                     i--; // retry
                  }
              } else {
-                 // EOF
                  if (batch_fens.empty()) return 0;
                  break; 
              }
@@ -130,9 +117,18 @@ int main(int argc, char* argv[]) {
         auto computation = network->NewComputation();
         int current_batch = 0;
         
+        // Store positions and transforms for output phase
+        struct BatchMetadata {
+            Position pos;
+            int transform;
+        };
+        std::vector<BatchMetadata> metadata;
+        metadata.reserve(batch_fens.size());
+        
         for (const auto& fen : batch_fens) {
+            Position pos = Position::FromFen(fen);
             PositionHistory history;
-            history.Reset(Position::FromFen(fen));
+            history.Reset(pos);
             
             int transform = 0; 
             auto input_format = network->GetCapabilities().input_format;
@@ -140,19 +136,20 @@ int main(int argc, char* argv[]) {
             InputPlanes planes = EncodePositionForNN(
                 input_format, 
                 history, 
-                8, // history planes (current + 7 past)
+                8, // history planes
                 FillEmptyHistory::FEN_ONLY, 
                 &transform
             );
             
             computation->AddInput(std::move(planes));
+            metadata.push_back({pos, transform});
             current_batch++;
         }
         
         computation->ComputeBlocking();
         
         for (int k = 0; k < current_batch; ++k) {
-            PrintOutput(*computation, k, batch_fens[k]);
+            PrintOutput(*computation, k, batch_fens[k], metadata[k].pos, metadata[k].transform);
         }
         std::cout << "BATCH_DONE\n";
         std::cout.flush();
