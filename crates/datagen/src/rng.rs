@@ -30,4 +30,8 @@ impl Rand {
 
         Self(seed)
     }
+
+    pub fn rand_float(&mut self) -> f32 {
+        (self.rand_int() as f32) / (u32::MAX as f32)
+    }
 }

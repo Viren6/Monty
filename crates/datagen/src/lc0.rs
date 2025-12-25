@@ -43,7 +43,7 @@ impl GameRunner {
 
         GameRunner {
             position,
-            temp: 2.6,
+            temp: 1.0,
             searches: 0,
             iters: 0,
             policy_game: MontyFormat::new(montyformat_position, montyformat_castling),
@@ -60,6 +60,13 @@ impl GameRunner {
         *self = Self::new(book, seed);
     }
 }
+
+// ... (skipping run_policy_datagen usually, but I need to target process_game which is far below)
+// I will split this into two chunks if needed, but context helps.
+// Actually, StartLine is 44. I'll just do the Constructor chunk first.
+
+#[allow(unused)]
+fn dummy() {}
 
 pub fn run_policy_datagen(
     opts: RunOptions,
@@ -235,10 +242,10 @@ fn process_game(
          legal_logits.push(logit);
     }
     
-    // Softmax
+    // Softmax (Temp=1) for Storage
     let mut sum_exp = 0.0;
     let mut probs = Vec::with_capacity(moves.len());
-    let mut best_move_idx = 0;
+    let mut greedy_best_move_idx = 0;
     let mut max_prob = -1.0;
     
     for logit in &legal_logits {
@@ -251,7 +258,7 @@ fn process_game(
         }
     }
     
-    // Normalize and Store
+    // Normalize and Store in Dist
     let scale = 1.0 / sum_exp;
     for (i, mov) in moves.iter().enumerate() {
         let p = probs[i] * scale;
@@ -261,11 +268,55 @@ fn process_game(
         
         if p > max_prob {
             max_prob = p;
-            best_move_idx = i;
+            greedy_best_move_idx = i;
         }
     }
     
-    let best_move = if !moves.is_empty() { moves[best_move_idx] } else { montyformat::chess::Move::default() };
+    // Select Played Move (Temp decay)
+    let played_move_idx = if game.temp > 0.0 {
+        // Sample with temperature
+        let mut sum_exp_temp = 0.0;
+        let mut probs_temp = Vec::with_capacity(moves.len());
+        
+        // Reuse max_legal_logit for stability: (l - max)/T
+        for logit in &legal_logits {
+             if *logit > f32::NEG_INFINITY {
+                 let val = (*logit - max_legal_logit) / game.temp;
+                 let p = val.exp();
+                 sum_exp_temp += p;
+                 probs_temp.push(p);
+             } else {
+                 probs_temp.push(0.0);
+             }
+        }
+        
+        // Sample
+        let mut r = rng.rand_float() * sum_exp_temp;
+        let mut selected = 0;
+        // Robust sampling loop
+        for (i, &p) in probs_temp.iter().enumerate() {
+            if p > 0.0 {
+                r -= p;
+                if r <= 0.0 {
+                    selected = i;
+                    break;
+                }
+            }
+        }
+        // Correct float drift edge case
+        if r > 0.0 { selected = probs_temp.len().saturating_sub(1); }
+        selected
+    } else {
+        greedy_best_move_idx
+    };
+    
+    let best_move =  moves[played_move_idx];
+    
+    // Decay Temperature
+    game.temp *= 0.9;
+    if game.temp < 0.2 {
+        game.temp = 0.0f32;
+    }
 
     // Use LC0 Value (Q is typically -1.0 to 1.0 from perspective of STM)
     // Monty expects score 0.0 (Loss) to 1.0 (Win).
@@ -275,7 +326,7 @@ fn process_game(
     let mf_best_move = montyformat::chess::Move::from(u16::from(best_move));
 
     // VERIFICATION: Check Policy Integrity
-     if game.iters < 3 {
+    /* if game.iters < 3 {
         println!("--- VERIFICATION [Game {} Iter {}] ---", game.searches / BATCH_SIZE, game.iters);
         println!("FEN: {}", game.position.board().as_fen());
         println!("LC0 Value: {:.6} -> Score: {:.6}", lc0_value, score);
@@ -291,7 +342,7 @@ fn process_game(
         }
         println!("Stored Policy Sum: {:.6}", dist_sum);
         println!("Best Move: {}", best_move);
-    }
+    }*/
 
     if output_policy {
         let search_data = SearchData::new(mf_best_move, score, Some(dist));
