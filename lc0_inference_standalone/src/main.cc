@@ -17,18 +17,34 @@
 
 using namespace lczero;
 
+#include <cmath>
+
 void PrintOutput(NetworkComputation& computation, int sample_idx, const std::string& fen) {
     float value = computation.GetQVal(sample_idx);
-    // float d_val = computation.GetDVal(sample_idx); // WDL
-    // float m_val = computation.GetMVal(sample_idx); // Moves left
     
     std::cout << "FEN: " << fen << "\n";
     std::cout << "Value: " << value << "\n";
     
-    // Print top policy moves
+    // Read logits
+    std::vector<float> logits;
+    logits.reserve(1858);
+    float max_logit = -1e9;
+    
+    for(int i=0; i<1858; ++i) { 
+        float logit = computation.GetPVal(sample_idx, i);
+        logits.push_back(logit);
+        if (logit > max_logit) max_logit = logit;
+    }
+
+    // Softmax
     std::vector<std::pair<float, int>> policy;
-    for(int i=0; i<1858; ++i) { // 1858 is standard policy size
-        float p = computation.GetPVal(sample_idx, i);
+    float sum_exp = 0.0f;
+    for (float l : logits) {
+        sum_exp += std::exp(l - max_logit);
+    }
+    
+    for(int i=0; i<1858; ++i) {
+        float p = std::exp(logits[i] - max_logit) / sum_exp;
         if(p > 0.000001) { 
              policy.push_back({p, i});
         }
