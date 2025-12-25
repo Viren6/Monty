@@ -43,7 +43,7 @@ impl GameRunner {
 
         GameRunner {
             position,
-            temp: 3.0,
+            temp: 2.6,
             searches: 0,
             iters: 0,
             policy_game: MontyFormat::new(montyformat_position, montyformat_castling),
@@ -248,24 +248,6 @@ fn process_game(
         let uniform = 1.0 / probs.len() as f32;
         for (_, p) in probs.iter_mut() {
             *p = uniform;
-        }
-    }
-
-    // Add Dirichlet noise if temp > 0
-    if game.temp > 0.0 {
-        let alpha = 0.3;
-        let epsilon = 0.25;
-        let mut noise = Vec::with_capacity(probs.len());
-        let mut noise_total = 0.0;
-        for _ in 0..probs.len() {
-            let n = rng.sample_gamma(alpha);
-            noise.push(n);
-            noise_total += n;
-        }
-
-        for (i, (_, p)) in probs.iter_mut().enumerate() {
-            let n = noise[i] / noise_total;
-            *p = (1.0 - epsilon) * *p + epsilon * n;
         }
     }
 
