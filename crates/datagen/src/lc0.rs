@@ -252,25 +252,16 @@ fn process_game(
     }
     
     // Normalize and Store
-    if sum_exp > 1e-9 {
-        let scale = 1.0 / sum_exp;
-        for (i, mov) in moves.iter().enumerate() {
-            let p = probs[i] * scale;
-            let mf_move = montyformat::chess::Move::from(u16::from(*mov));
-            let visits = (p * 65535.0) as u32;
-            dist.push((mf_move, visits));
-            
-            if p > max_prob {
-                max_prob = p;
-                best_move_idx = i;
-            }
-        }
-    } else {
-        // Fallback: Uniform
-        let uniform = 65535 / moves.len() as u32;
-        for mov in &moves {
-            let mf_move = montyformat::chess::Move::from(u16::from(*mov));
-            dist.push((mf_move, uniform));
+    let scale = 1.0 / sum_exp;
+    for (i, mov) in moves.iter().enumerate() {
+        let p = probs[i] * scale;
+        let mf_move = montyformat::chess::Move::from(u16::from(*mov));
+        let visits = (p * 65535.0) as u32;
+        dist.push((mf_move, visits));
+        
+        if p > max_prob {
+            max_prob = p;
+            best_move_idx = i;
         }
     }
     
@@ -323,21 +314,7 @@ fn process_game(
     if over {
         let result = match state {
             GameState::Lost(_) => if game.position.stm() == 0 { 0.0 } else { 1.0 },
-            GameState::Won(_) => if game.position.stm() == 0 { 1.0 } else { 0.0 }, // Opponent lost? STM won? Won(x) usually means side to move won? No, GameState is usually static property or relative to side to move.
-            // montyformat::chess::GameState::Won(x) => "W{x}".
-            // Position::game_state returns Won if... wait, it doesn't return Won. It returns Lost(0) if mate.
-            // So Won is probably unused for now or used for valid claim.
-            // If Lost(0): "I lost". So result for me is 0.0.
-            // If stm=0 (White), and Lost: White lost -> 0.0. Correct.
-            // If stm=1 (Black), and Lost: Black lost -> result (White perspective) is 1.0. 
-            // result var is score for White?
-            // "let result = (game.result * 2.0) as usize" in Destination::push_policy.
-            // MontyFormat result: 1.0 (White Win), 0.5 (Draw), 0.0 (Black Win).
-            // So if White (0) lost: result=0.0.
-            // If Black (1) lost: result=1.0.
-            // Logic: if stm==0 { 0.0 } else { 1.0 }.
-            // Wait, if stm==0 (White) and Lost, White gets 0.0. Correct.
-            // If stm==1 (Black) and Lost, Black gets 0.0 (from his perspective) -> White gets 1.0. Correct.
+            GameState::Won(_) => if game.position.stm() == 0 { 1.0 } else { 0.0 }, 
             _ => 0.5,
         };
         
@@ -350,18 +327,5 @@ fn process_game(
         }
         
         game.reset(book, rng.rand_int());
-        // We only passed book_slice to init, we should probably pass it to reset implicitly or store it in GameRunner.
-        // GameRunner reset currently uses new(book), but we need to pass the book again.
-        // Current impl of reset calls new.
-        // I need to store book ref in GameRunner? Or just pass it.
-        // I won't complicated GameRunner struct lifetime.
-        // Modified process_game to just call reset(None) is BAD if we want book diversity.
-        // But since we have BATCH_SIZE games, they diverge fast.
-        // I'll leave it as reset(None) which defaults to STARTPOS for simplicity, 
-        // OR ideally pass the book from `run_policy_datagen`.
-        // Let's rely on STARTPOS for subsequent games or simple random book if I can.
-        // Since `process_game` doesn't have access to `book` slice easily without passing it...
-        // and datagen usually runs from book positions.
-        // I should fix this.
     }
 }
