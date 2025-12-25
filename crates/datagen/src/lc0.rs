@@ -203,9 +203,26 @@ fn process_game(
     let mut legal_logits = Vec::with_capacity(moves.len());
     let mut max_legal_logit = f32::NEG_INFINITY;
     
+    let stm = game.position.stm(); // 0=White, 1=Black
+
     // Collect logits for legal moves
     for mov in &moves {
-         let idx = crate::lc0_mapping::get_lc0_index(mov);
+         // LC0 output is always relative (White perspective).
+         // If we are Black, we must mirror the move to find the corresponding LC0 index.
+         let lookup_move = if stm == 1 {
+             let src = u16::from(mov.src());
+             let dst = u16::from(mov.to());
+             
+             // Vertical flip: square ^ 56
+             let src_mir = src ^ 56;
+             let dst_mir = dst ^ 56;
+             
+             monty::chess::Move::new(src_mir, dst_mir, mov.flag())
+         } else {
+             *mov
+         };
+
+         let idx = crate::lc0_mapping::get_lc0_index(&lookup_move);
          let logit = if let Some(idx) = idx {
              policy_probs[idx]
          } else {
@@ -267,7 +284,7 @@ fn process_game(
     let mf_best_move = montyformat::chess::Move::from(u16::from(best_move));
 
     // VERIFICATION: Check Policy Integrity
-    if game.iters < 3 {
+     if game.iters < 3 {
         println!("--- VERIFICATION [Game {} Iter {}] ---", game.searches / BATCH_SIZE, game.iters);
         println!("FEN: {}", game.position.board().as_fen());
         println!("LC0 Value: {:.6} -> Score: {:.6}", lc0_value, score);

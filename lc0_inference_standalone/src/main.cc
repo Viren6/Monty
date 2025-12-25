@@ -47,10 +47,17 @@ void PrintOutput(NetworkComputation& computation, int sample_idx, const std::str
     legal_outputs.reserve(moves.size());
     
     for (const auto& move : moves) {
-        int idx = MoveToNNIndex(move, transform);
-        if (idx >= 0 && idx < 1858) {
-             float logit = computation.GetPVal(sample_idx, idx);
-             legal_outputs.push_back({idx, logit});
+        // The NN output is rotated by 'transform'.
+        // We need to fetch the logit from the NN index corresponding to the transform.
+        int nn_idx = MoveToNNIndex(move, transform);
+        
+        // However, the consumer (datagen) expects indices in the CANONICAL (transform=0) mapping.
+        // So we must pair the logit with the canonical index.
+        int canonical_idx = MoveToNNIndex(move, 0);
+
+        if (nn_idx >= 0 && nn_idx < 1858 && canonical_idx >= 0) {
+             float logit = computation.GetPVal(sample_idx, nn_idx);
+             legal_outputs.push_back({canonical_idx, logit});
         }
     }
     
@@ -63,6 +70,7 @@ void PrintOutput(NetworkComputation& computation, int sample_idx, const std::str
     }
     std::cout << "\n";
     std::cout << "--------------------------------------------------\n";
+    std::cout.flush(); // Ensure flush for pipes
 }
 
 int main(int argc, char* argv[]) {
