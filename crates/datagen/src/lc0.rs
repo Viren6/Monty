@@ -12,7 +12,7 @@ use std::{
     },
 };
 
-const BATCH_SIZE: usize = 256;
+const BATCH_SIZE: usize = 1024;
 // In a real scenario, this path might be dynamic or configured via env var, 
 // but user requested variable to be in script.
 const LC0_NETWORK_PATH: &str = r"C:\Users\viren\Documents\GitHub\Monty0\bt4-1024x15x32h-swa-6147500.pb.gz";
