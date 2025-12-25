@@ -19,3 +19,5 @@ xcuserdata
 compile_flags.txt
 .vscode
 .mesonpy*
+!subprojects/*.wrap
+!subprojects/packagefiles
