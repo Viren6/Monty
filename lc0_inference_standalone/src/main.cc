@@ -19,15 +19,26 @@ using namespace lczero;
 
 #include <cmath>
 
+// Helper to trim whitespace
+std::string Trim(const std::string& str) {
+    size_t first = str.find_first_not_of(" \t\r\n");
+    if (std::string::npos == first) {
+        return str;
+    }
+    size_t last = str.find_last_not_of(" \t\r\n");
+    return str.substr(first, (last - first + 1));
+}
+
 // Output only legal moves to optimize bandwidth and parsing speed.
-void PrintOutput(NetworkComputation& computation, int sample_idx, const std::string& fen, const Position& pos, int transform) {
+void PrintOutput(NetworkComputation& computation, int sample_idx, const std::string& fen, int transform) {
     float value = computation.GetQVal(sample_idx);
     
     std::cout << "FEN: " << fen << "\n";
     std::cout << "Value: " << value << "\n";
     
     // Generate Legal Moves
-    // lczero::ChessBoard has GenerateLegalMoves()
+    // Re-parse Position to avoid storing/copying Position objects which might be risky or large.
+    Position pos = Position::FromFen(fen);
     const ChessBoard& board = pos.GetBoard();
     MoveList moves = board.GenerateLegalMoves();
     
@@ -55,106 +66,112 @@ void PrintOutput(NetworkComputation& computation, int sample_idx, const std::str
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <network_path> [batch_size]\n";
-        return 1;
-    }
+    try {
+        if (argc < 2) {
+            std::cerr << "Usage: " << argv[0] << " <network_path> [batch_size]\n";
+            return 1;
+        }
 
-    std::string network_path = argv[1];
-    int batch_size = 4;
-    if (argc >= 3) {
-        batch_size = std::stoi(argv[2]);
-    }
+        std::string network_path = argv[1];
+        int batch_size = 4;
+        if (argc >= 3) {
+            batch_size = std::stoi(argv[2]);
+        }
 
-    InitializeMagicBitboards();
-    
-    // Load weights
-    std::cerr << "Loading network: " << network_path << "\n";
-    auto weights = LoadWeightsFromFile(network_path);
-    
-    // Setup options
-    OptionsDict options;
+        InitializeMagicBitboards();
+        
+        // Load weights
+        std::cerr << "Loading network: " << network_path << "\n";
+        auto weights = LoadWeightsFromFile(network_path);
+        
+        // Setup options
+        OptionsDict options;
 
-    // Auto-select backend
-    auto backends = NetworkFactory::Get()->GetBackendsList();
-    std::string backend_name;
-    if (!backends.empty()) {
-        backend_name = backends[0];
-        std::cerr << "Auto-selected backend: " << backend_name << "\n";
-    } else {
-        std::cerr << "No backends found! Ensure you have compiled with backend support.\n";
-        return 1;
-    }
+        // Auto-select backend
+        auto backends = NetworkFactory::Get()->GetBackendsList();
+        std::string backend_name;
+        if (!backends.empty()) {
+            backend_name = backends[0];
+            std::cerr << "Auto-selected backend: " << backend_name << "\n";
+        } else {
+            std::cerr << "No backends found! Ensure you have compiled with backend support.\n";
+            return 1;
+        }
 
-    // Create network
-    auto network = NetworkFactory::Get()->Create(backend_name, weights, options);
-    
-    std::cerr << "Network created. Batch size: " << batch_size << "\n";
+        // Create network
+        auto network = NetworkFactory::Get()->Create(backend_name, weights, options);
+        
+        std::cerr << "Network created. Batch size: " << batch_size << "\n";
 
-    // Interactive loop
-    std::vector<std::string> batch_fens;
-    batch_fens.reserve(batch_size);
-    
-    std::string line;
-    while (true) {
-        batch_fens.clear();
-        for (int i = 0; i < batch_size; ++i) {
-             if (std::getline(std::cin, line)) {
-                 if (!line.empty()) {
-                    batch_fens.push_back(line);
+        // Interactive loop
+        std::vector<std::string> batch_fens;
+        batch_fens.reserve(batch_size);
+        
+        std::string line;
+        while (true) {
+            batch_fens.clear();
+            for (int i = 0; i < batch_size; ++i) {
+                 if (std::getline(std::cin, line)) {
+                     // Trim is critical for Windows pipes and robustness
+                     line = Trim(line);
+                     if (!line.empty()) {
+                        batch_fens.push_back(line);
+                     } else {
+                        i--; // retry
+                     }
                  } else {
-                    i--; // retry
+                     if (batch_fens.empty()) return 0;
+                     break; 
                  }
-             } else {
-                 if (batch_fens.empty()) return 0;
-                 break; 
-             }
-        }
-        
-        if (batch_fens.empty()) break;
+            }
+            
+            if (batch_fens.empty()) break;
 
-        // Process batch
-        auto computation = network->NewComputation();
-        int current_batch = 0;
-        
-        // Store positions and transforms for output phase
-        struct BatchMetadata {
-            Position pos;
-            int transform;
-        };
-        std::vector<BatchMetadata> metadata;
-        metadata.reserve(batch_fens.size());
-        
-        for (const auto& fen : batch_fens) {
-            Position pos = Position::FromFen(fen);
-            PositionHistory history;
-            history.Reset(pos);
+            // Process batch
+            auto computation = network->NewComputation();
+            int current_batch = 0;
             
-            int transform = 0; 
-            auto input_format = network->GetCapabilities().input_format;
+            // Store transforms for output phase
+            std::vector<int> transforms;
+            transforms.reserve(batch_fens.size());
             
-            InputPlanes planes = EncodePositionForNN(
-                input_format, 
-                history, 
-                8, // history planes
-                FillEmptyHistory::FEN_ONLY, 
-                &transform
-            );
+            for (const auto& fen : batch_fens) {
+                Position pos = Position::FromFen(fen);
+                PositionHistory history;
+                history.Reset(pos);
+                
+                int transform = 0; 
+                auto input_format = network->GetCapabilities().input_format;
+                
+                InputPlanes planes = EncodePositionForNN(
+                    input_format, 
+                    history, 
+                    8, // history planes
+                    FillEmptyHistory::FEN_ONLY, 
+                    &transform
+                );
+                
+                computation->AddInput(std::move(planes));
+                transforms.push_back(transform);
+                current_batch++;
+            }
             
-            computation->AddInput(std::move(planes));
-            metadata.push_back({pos, transform});
-            current_batch++;
+            computation->ComputeBlocking();
+            
+            for (int k = 0; k < current_batch; ++k) {
+                PrintOutput(*computation, k, batch_fens[k], transforms[k]);
+            }
+            std::cout << "BATCH_DONE\n";
+            std::cout.flush();
+            
+            if (std::cin.eof()) break;
         }
-        
-        computation->ComputeBlocking();
-        
-        for (int k = 0; k < current_batch; ++k) {
-            PrintOutput(*computation, k, batch_fens[k], metadata[k].pos, metadata[k].transform);
-        }
-        std::cout << "BATCH_DONE\n";
-        std::cout.flush();
-        
-        if (std::cin.eof()) break;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    } catch (...) {
+        std::cerr << "Unknown error occurred.\n";
+        return 1;
     }
 
     return 0;
