@@ -126,8 +126,8 @@ fn main() {
                         .optimiser
                         .graph
                         .get_ref(node_id, GraphNodeIdTy::Gradients)
-                        .borrow_mut()
-                        .load_dense_from_slice(None, &g)
+                        .dense_mut()
+                        .load_from_slice(None, &g)
                         .unwrap();
                 }
             }
