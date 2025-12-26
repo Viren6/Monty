@@ -30,7 +30,7 @@ fn main() {
 
     let device = CudaDevice::new(0).unwrap();
 
-    let (graph, node) = model::make(device, hl);
+    let (graph, node) = model::make(device.clone(), hl);
 
     let params = AdamWParams {
         decay: 0.01,
@@ -79,7 +79,8 @@ fn main() {
 
     dataloader
         .map_batches(steps.batch_size, |batch| {
-            let batch = PreparedBatchDevice::new(vec![Arc::new(device)], &batch).unwrap();
+            let device = trainer.optimiser.graph.device();
+            let mut batch = PreparedBatchDevice::new(vec![device], &batch).unwrap();
             batch.load_into_graph(&mut trainer.optimiser.graph).unwrap();
 
             trainer.optimiser.graph.zero_grads().unwrap();
