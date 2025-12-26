@@ -12,7 +12,9 @@ use acyclib::{
         schedule::{TrainingSchedule, TrainingSteps},
         Trainer,
     },
+    graph::GraphNodeIdTy,
 };
+use std::sync::Arc;
 use bullet_cuda_backend::CudaDevice;
 
 use data::MontyDataLoader;
@@ -77,10 +79,10 @@ fn main() {
 
     dataloader
         .map_batches(steps.batch_size, |batch| {
-            let batch = PreparedBatchDevice::new(vec![device], &batch).unwrap();
+            let batch = PreparedBatchDevice::new(vec![Arc::new(device)], &batch).unwrap();
             batch.load_into_graph(&mut trainer.optimiser.graph).unwrap();
 
-            trainer.optimiser.zero_gradient();
+            trainer.optimiser.zero_grad();
             let loss = trainer.optimiser.graph.forward().unwrap();
             trainer.optimiser.graph.backward().unwrap();
 
@@ -90,7 +92,8 @@ fn main() {
             let mut grads = Vec::new();
 
             for id in ["l0w", "l0b", "l1w", "l1b"] {
-                let grad_tensor = trainer.optimiser.graph.get_gradient(id).unwrap();
+                let node_id = trainer.optimiser.graph.get_node(id).unwrap().id;
+                let grad_tensor = trainer.optimiser.graph.get_ref(node_id, GraphNodeIdTy::Gradients);
                 let g = grad_tensor.get_dense_vals().unwrap();
                 for x in &g {
                     sq_norm += x * x;
@@ -107,11 +110,12 @@ fn main() {
                     for x in g.iter_mut() {
                         *x *= scale;
                     }
+
+                    let node_id = trainer.optimiser.graph.get_node(id).unwrap().id;
                     trainer
                         .optimiser
                         .graph
-                        .get_gradient_mut(id)
-                        .unwrap()
+                        .get_mut_ref(node_id, GraphNodeIdTy::Gradients)
                         .load_dense_vals(&g)
                         .unwrap();
                 }
@@ -119,7 +123,7 @@ fn main() {
 
             total_updates += 1;
 
-            let lr = schedule.lr(0, superbatch);
+            let lr = (schedule.lr_schedule)(0, superbatch);
             trainer.optimiser.step(lr).unwrap();
 
             curr_batch += 1;
