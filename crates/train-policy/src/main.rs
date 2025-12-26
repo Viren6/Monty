@@ -4,7 +4,7 @@ pub mod model;
 use acyclib::{
     device::Device,
     trainer::{
-        dataloader::PreparedBatchDevice,
+        dataloader::{DataLoader, PreparedBatchDevice},
         optimiser::{
             adam::{AdamW, AdamWParams},
             Optimiser,
@@ -82,7 +82,7 @@ fn main() {
             let batch = PreparedBatchDevice::new(vec![Arc::new(device)], &batch).unwrap();
             batch.load_into_graph(&mut trainer.optimiser.graph).unwrap();
 
-            trainer.optimiser.zero_grad();
+            trainer.optimiser.graph.zero_grads().unwrap();
             let loss = trainer.optimiser.graph.forward().unwrap();
             trainer.optimiser.graph.backward().unwrap();
 
@@ -92,7 +92,12 @@ fn main() {
             let mut grads = Vec::new();
 
             for id in ["l0w", "l0b", "l1w", "l1b"] {
-                let node_id = trainer.optimiser.graph.get_node(id).unwrap().id;
+                let node_id = trainer
+                    .optimiser
+                    .graph
+                    .get_node_values(trainer.optimiser.graph.get_weights(id).node().into())
+                    .id;
+
                 let grad_tensor = trainer.optimiser.graph.get_ref(node_id, GraphNodeIdTy::Gradients);
                 let g = grad_tensor.get_dense_vals().unwrap();
                 for x in &g {
@@ -111,11 +116,16 @@ fn main() {
                         *x *= scale;
                     }
 
-                    let node_id = trainer.optimiser.graph.get_node(id).unwrap().id;
+                    let node_id = trainer
+                        .optimiser
+                        .graph
+                        .get_node_values(trainer.optimiser.graph.get_weights(id).node().into())
+                        .id;
+
                     trainer
                         .optimiser
                         .graph
-                        .get_mut_ref(node_id, GraphNodeIdTy::Gradients)
+                        .get_ref(node_id, GraphNodeIdTy::Gradients)
                         .load_dense_vals(&g)
                         .unwrap();
                 }
@@ -124,7 +134,7 @@ fn main() {
             total_updates += 1;
 
             let lr = (schedule.lr_schedule)(0, superbatch);
-            trainer.optimiser.step(lr).unwrap();
+            trainer.optimiser.update(1.0 / steps.batch_size as f32, lr).unwrap();
 
             curr_batch += 1;
 
