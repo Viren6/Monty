@@ -257,7 +257,7 @@ fn process_game(
     
     for logit in &legal_logits {
         if *logit > f32::NEG_INFINITY {
-            let p = (*logit - max_legal_logit).exp();
+            let p = ((*logit - max_legal_logit) / 2.0).exp();
             sum_exp += p;
             probs.push(p);
         } else {
