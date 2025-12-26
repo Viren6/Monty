@@ -95,8 +95,8 @@ fn main() {
                 let node_id = trainer
                     .optimiser
                     .graph
-                    .get_node_values(trainer.optimiser.graph.get_weights(id).node().into())
-                    .id;
+                    .weight_idx(id)
+                    .unwrap();
 
                 let grad_tensor = trainer.optimiser.graph.get_ref(node_id, GraphNodeIdTy::Gradients);
                 let g = grad_tensor.get_dense_vals().unwrap();
@@ -119,14 +119,15 @@ fn main() {
                     let node_id = trainer
                         .optimiser
                         .graph
-                        .get_node_values(trainer.optimiser.graph.get_weights(id).node().into())
-                        .id;
+                        .weight_idx(id)
+                        .unwrap();
 
                     trainer
                         .optimiser
                         .graph
                         .get_ref(node_id, GraphNodeIdTy::Gradients)
-                        .load_dense_vals(&g)
+                        .borrow_mut()
+                        .load_dense_from_slice(None, &g)
                         .unwrap();
                 }
             }
