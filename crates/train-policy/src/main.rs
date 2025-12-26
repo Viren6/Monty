@@ -163,7 +163,7 @@ fn main() {
                 superbatch += 1;
             }
 
-            superbatch < steps.end_superbatch
+            superbatch >= steps.end_superbatch
         })
         .unwrap();
 
