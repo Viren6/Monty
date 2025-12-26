@@ -14,7 +14,6 @@ use acyclib::{
     },
     graph::GraphNodeIdTy,
 };
-use std::sync::Arc;
 use bullet_cuda_backend::CudaDevice;
 
 use data::MontyDataLoader;
@@ -30,7 +29,7 @@ fn main() {
 
     let device = CudaDevice::new(0).unwrap();
 
-    let (graph, node) = model::make(device.clone(), hl);
+    let (graph, node) = model::make(device, hl);
 
     let params = AdamWParams {
         decay: 0.01,
