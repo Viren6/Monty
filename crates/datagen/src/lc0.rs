@@ -113,7 +113,14 @@ pub fn run_policy_datagen(
         results: [0; 3],
     }));
 
-    let stop = AtomicBool::new(false);
+    let stop = Arc::new(AtomicBool::new(false));
+    
+    // Graceful Shutdown
+    let stop_signal = stop.clone();
+    ctrlc::set_handler(move || {
+        stop_signal.store(true, Ordering::SeqCst);
+    })
+    .expect("Error setting Ctrl-C handler");
 
     let mut rng = crate::rng::Rand::with_seed();
     let mut games: Vec<GameRunner> = (0..BATCH_SIZE)

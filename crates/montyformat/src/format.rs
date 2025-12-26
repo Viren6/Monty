@@ -233,16 +233,21 @@ impl FastDeserialise for MontyFormat {
         buffer.extend_from_slice(&header);
 
         loop {
-            let mut move_header = [0u8; 5];
-            reader.read_exact(&mut move_header)?;
-            buffer.extend_from_slice(&move_header);
+            let mut move_bytes = [0u8; 2];
+            reader.read_exact(&mut move_bytes)?;
+            buffer.extend_from_slice(&move_bytes);
 
-            let best_move = Move::from(u16::from_le_bytes([move_header[0], move_header[1]]));
+            let best_move = Move::from(u16::from_le_bytes(move_bytes));
             if best_move == Move::NULL {
                 break;
             }
 
-            let move_count = usize::from(move_header[4]);
+            let mut rest = [0u8; 3];
+            reader.read_exact(&mut rest)?;
+            buffer.extend_from_slice(&rest);
+
+            let move_header_4 = rest[2]; // move_header[4] equivalent
+            let move_count = usize::from(move_header_4);
             if move_count > 0 {
                 let start_len = buffer.len();
                 buffer.resize(start_len + move_count, 0);

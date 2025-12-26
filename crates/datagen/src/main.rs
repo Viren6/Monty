@@ -170,8 +170,16 @@ pub fn run_datagen(
 ) {
     println!("{opts:#?}");
 
-    let stop_base = AtomicBool::new(false);
-    let stop = &stop_base;
+    println!("{opts:#?}");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    
+    // Graceful Shutdown
+    let stop_signal = stop.clone();
+    ctrlc::set_handler(move || {
+        stop_signal.store(true, Ordering::SeqCst);
+    })
+    .expect("Error setting Ctrl-C handler");
 
     let vout = File::create(opts.out_path.as_str()).unwrap();
     let vout = BufWriter::new(vout);
@@ -197,8 +205,9 @@ pub fn run_datagen(
             std::thread::sleep(Duration::from_millis(10));
             let this_book = book.clone();
             let this_dest = dest_mutex.clone();
+            let this_stop = stop.clone();
             s.spawn(move || {
-                let mut thread = DatagenThread::new(params.clone(), stop, this_book, this_dest);
+                let mut thread = DatagenThread::new(params.clone(), &this_stop, this_book, this_dest);
                 thread.run(opts.policy_data, policy, value);
             });
         }
