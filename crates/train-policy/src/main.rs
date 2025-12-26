@@ -4,6 +4,7 @@ pub mod model;
 use acyclib::{
     device::Device,
     trainer::{
+        dataloader::PreparedBatchDevice,
         optimiser::{
             adam::{AdamW, AdamWParams},
             Optimiser,
@@ -68,25 +69,87 @@ fn main() {
         }),
     };
 
-    trainer
-        .train_custom(
-            schedule,
-            dataloader,
-            |_, _, _, _| {},
-            |trainer, superbatch| {
+    let mut total_updates = 0;
+    let mut clipped_updates = 0;
+    let mut superbatch = steps.start_superbatch;
+    let mut curr_batch = 0;
+    let mut running_error = 0.0;
+
+    dataloader
+        .map_batches(steps.batch_size, |batch| {
+            let batch = PreparedBatchDevice::new(vec![device], &batch).unwrap();
+            batch.load_into_graph(&mut trainer.optimiser.graph).unwrap();
+
+            trainer.optimiser.zero_gradient();
+            let loss = trainer.optimiser.graph.forward().unwrap();
+            trainer.optimiser.graph.backward().unwrap();
+
+            running_error += loss;
+
+            let mut sq_norm = 0.0f32;
+            let mut grads = Vec::new();
+
+            for id in ["l0w", "l0b", "l1w", "l1b"] {
+                let grad_tensor = trainer.optimiser.graph.get_gradient(id).unwrap();
+                let g = grad_tensor.get_dense_vals().unwrap();
+                for x in &g {
+                    sq_norm += x * x;
+                }
+                grads.push((id, g));
+            }
+
+            let norm = sq_norm.sqrt();
+            if norm > 0.25 {
+                clipped_updates += 1;
+                let scale = 0.25 / norm;
+
+                for (id, mut g) in grads {
+                    for x in g.iter_mut() {
+                        *x *= scale;
+                    }
+                    trainer
+                        .optimiser
+                        .graph
+                        .get_gradient_mut(id)
+                        .unwrap()
+                        .load_dense_vals(&g)
+                        .unwrap();
+                }
+            }
+
+            total_updates += 1;
+
+            let lr = schedule.lr(0, superbatch);
+            trainer.optimiser.step(lr).unwrap();
+
+            curr_batch += 1;
+
+            if curr_batch >= steps.batches_per_superbatch {
+                let avg_loss = running_error / steps.batches_per_superbatch as f32;
+                running_error = 0.0;
+
+                println!(
+                    "Superbatch {superbatch} - Loss {avg_loss:.5} - Clipped {:.2}%",
+                    clipped_updates as f32 / total_updates as f32 * 100.0
+                );
+                clipped_updates = 0;
+                total_updates = 0;
+
                 if superbatch % save_rate == 0 || superbatch == steps.end_superbatch {
                     println!("Saving Checkpoint");
                     let dir = format!("checkpoints/policy-{superbatch}");
                     let _ = std::fs::create_dir(&dir);
                     trainer.optimiser.write_to_checkpoint(&dir).unwrap();
-                    model::save_quantised(
-                        &trainer.optimiser.graph,
-                        &format!("{dir}/quantised.bin"),
-                    )
-                    .unwrap();
+                    model::save_quantised(&trainer.optimiser.graph, &format!("{dir}/quantised.bin"))
+                        .unwrap();
                 }
-            },
-        )
+
+                curr_batch = 0;
+                superbatch += 1;
+            }
+
+            superbatch < steps.end_superbatch
+        })
         .unwrap();
 
     model::eval(
