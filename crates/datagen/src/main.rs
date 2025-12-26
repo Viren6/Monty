@@ -98,6 +98,7 @@ impl Destination {
         self.iters += iters;
 
         game.serialise_into(&mut self.writer).unwrap();
+        self.writer.flush().unwrap();
 
         if self.games >= self.limit {
             stop.store(true, Ordering::Relaxed);
@@ -130,6 +131,8 @@ impl Destination {
         game.serialise_into_buffer(&mut self.reusable_buffer)
             .unwrap();
         self.writer.write_all(&self.reusable_buffer).unwrap();
+        // Flush to ensure data integrity on SIGINT/Kill
+        self.writer.flush().unwrap();
         self.reusable_buffer.clear();
 
         if self.games >= self.limit {
