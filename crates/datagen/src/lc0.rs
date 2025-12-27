@@ -68,19 +68,24 @@ impl GameRunner {
 #[allow(unused)]
 fn dummy() {}
 
+static TOTAL_FAILURES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static UNRESOLVED_FAILURES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn get_exe_path() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "./lc0_inference_standalone/lc0_inference.exe"
+    } else {
+        "./lc0_inference_standalone/lc0_inference"
+    }
+}
+
 pub fn run_policy_datagen(
     opts: RunOptions,
 ) {
     println!("Starting LC0 Datagen with BATCH_SIZE={}", BATCH_SIZE);
     println!("Using Network: {}", LC0_NETWORK_PATH);
 
-    // Ensure lc0_inference exists relative to CWD or use absolute path if simpler
-    // Just using "./lc0_inference/lc0_inference.exe" for Windows
-    let exe_path = if cfg!(target_os = "windows") {
-        "./lc0_inference_standalone/lc0_inference.exe"
-    } else {
-        "./lc0_inference_standalone/lc0_inference"
-    };
+    let exe_path = get_exe_path();
 
     let mut child = Command::new(exe_path)
         .arg(LC0_NETWORK_PATH)
@@ -143,8 +148,9 @@ pub fn run_policy_datagen(
 
         // 2. Read Results
         let mut game_idx = 0;
-        let mut current_policy = [0.0f32; 1858]; // Reset per game? Yes.
+        let mut current_policy = [f32::NEG_INFINITY; 1858]; 
         let mut current_value = 0.0f32;
+        let mut reading_fen = String::new();
         
         loop {
             buffer.clear();
@@ -159,9 +165,11 @@ pub fn run_policy_datagen(
             
             if line.starts_with("FEN:") {
                  // New game starting in stream
-                 // Reset policy buffer to NEG_INFINITY (missing logits are effectively 0 prob)
                  current_policy = [f32::NEG_INFINITY; 1858];
                  current_value = 0.0;
+                 if let Some(f) = line.strip_prefix("FEN: ") {
+                     reading_fen = f.trim().to_string();
+                 }
             } else if line.starts_with("Value:") {
                 if let Some(val_str) = line.split_whitespace().nth(1) {
                      current_value = val_str.parse().unwrap_or(0.0);
@@ -182,6 +190,67 @@ pub fn run_policy_datagen(
                 // Trigger processing after Policy line
                 if game_idx < BATCH_SIZE {
                     let game = &mut games[game_idx];
+
+                    // VALIDATION
+                    let mut valid = true;
+                    if current_value.is_nan() || current_value.is_infinite() {
+                        valid = false;
+                        println!("ERROR: Na/Inf Value for FEN: {}", reading_fen);
+                    }
+                    
+                    if valid {
+                        let mut has_finite = false;
+                        for &p in &current_policy {
+                            if p.is_nan() || p.is_infinite() {
+                                // -Inf is okay for illegal moves (we init with NEG_INFINITY), but +Inf is bad.
+                                // But here we initialize with NEG_INFINITY. If we see NaN or POS_INFINITY: BAD.
+                                // If we see NEG_INFINITY, that's fine (unplayed move).
+                                if p == f32::NEG_INFINITY { continue; }
+                                valid = false;
+                                break;
+                            }
+                            has_finite = true;
+                        }
+                        if !has_finite {
+                             valid = false;
+                             println!("ERROR: No finite policy logits for FEN: {}", reading_fen);
+                        }
+                    }
+
+                    if !valid {
+                        TOTAL_FAILURES.fetch_add(1, Ordering::Relaxed);
+                        println!("Validation FAILED for FEN: {}", reading_fen);
+                        
+                        // RETRY MECHANISM
+                        let mut resolved = false;
+                        for attempt in 1..=3 {
+                            println!("Attempting Retry {}/3...", attempt);
+                            if let Some((retry_pol, retry_val)) = run_single_inference_retry(&reading_fen) {
+                                current_policy = retry_pol;
+                                current_value = retry_val;
+                                resolved = true;
+                                println!("Retry SUCCESS.");
+                                break;
+                            }
+                        }
+
+                        if !resolved {
+                            UNRESOLVED_FAILURES.fetch_add(1, Ordering::Relaxed);
+                            println!("All retries FAILED. Using UNIFORM FALLBACK.");
+                            
+                            // FALLBACK to Uniform
+                            // We set value to 0.0 (Score 0.5)
+                            current_value = 0.0;
+                            // We set policy to 0.0 for ALL legal moves.
+                            // However, we don't have legal moves easily accessible here without query.
+                            // But `process_game` generates legal moves.
+                            // So we set ALL policy values to 0.0 (essentially uniform logits).
+                            // This includes illegal moves, but `process_game` filters by legal moves
+                            // and only looks up legal move indices.
+                            current_policy = [0.0; 1858];
+                        }
+                    }
+
                     process_game(game, &current_policy, current_value, &dest, &stop, &mut rng, opts.policy_data, book_ref);
                     game_idx += 1;
                 }
@@ -192,6 +261,83 @@ pub fn run_policy_datagen(
     }
     
     let _ = child.kill();
+    
+    println!("Datagen Finished.");
+    println!("Total Failures: {}", TOTAL_FAILURES.load(Ordering::Relaxed));
+    println!("Unresolved Failures (Fallbacks): {}", UNRESOLVED_FAILURES.load(Ordering::Relaxed));
+}
+
+fn run_single_inference_retry(fen: &str) -> Option<([f32; 1858], f32)> {
+    let exe_path = get_exe_path();
+    
+    // Spawn fresh process with batch_size=1
+    let mut child = Command::new(exe_path)
+        .arg(LC0_NETWORK_PATH)
+        .arg("1") 
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null()) // validation is noisy enough
+        .spawn()
+        .ok()?;
+
+    {
+        let stdin = child.stdin.as_mut()?;
+        writeln!(stdin, "{}", fen).ok()?;
+    } // close stdin to signal we are done sending? actually tool waits for newlines.
+    
+    let stdout = child.stdout.take()?;
+    let mut reader = BufReader::new(stdout);
+    let mut buffer = String::new();
+    
+    let mut policy = [f32::NEG_INFINITY; 1858];
+    let mut value = 0.0f32;
+    let mut found_policy = false;
+    let mut found_value = false;
+
+    loop {
+        buffer.clear();
+        if reader.read_line(&mut buffer).unwrap_or(0) == 0 { break; }
+        let line = buffer.trim();
+        if line == "BATCH_DONE" { break; }
+        
+        if line.starts_with("Value:") {
+            if let Some(val_str) = line.split_whitespace().nth(1) {
+                if let Ok(v) = val_str.parse::<f32>() {
+                    value = v;
+                    found_value = true;
+                }
+            }
+        } else if line.starts_with("Policy (Logits):") {
+             let content = line.trim_start_matches("Policy (Logits):").trim();
+             for token in content.split_whitespace() {
+                if let Some((idx_str, val_str)) = token.split_once(':') {
+                    if let (Ok(idx), Ok(val)) = (idx_str.parse::<usize>(), val_str.parse::<f32>()) {
+                       if idx < 1858 {
+                           policy[idx] = val;
+                       }
+                    }
+                }
+             }
+             found_policy = true;
+        }
+    }
+    
+    let _ = child.kill();
+
+    if found_policy && found_value {
+        // Validate again!
+        if value.is_nan() || value.is_infinite() { return None; }
+        let mut has_finite = false;
+        for &p in &policy {
+             if p.is_nan() || (p.is_infinite() && p == f32::INFINITY) { return None; }
+             if p.is_finite() { has_finite = true; }
+        }
+        if !has_finite { return None; }
+        
+        return Some((policy, value));
+    }
+    
+    None
 }
 
 fn process_game(
