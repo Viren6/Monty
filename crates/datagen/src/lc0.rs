@@ -139,7 +139,33 @@ pub fn run_policy_datagen(
             break;
         }
 
-        // 1. Send FENs
+        // 1. Prepare Games (Handle Terminal States)
+        for game in &mut games {
+            let mut moves = 0;
+            game.position.map_legal_moves(|_| moves += 1);
+            
+            if moves == 0 {
+                let in_check = game.position.board().in_check();
+                
+                let result = if in_check {
+                    if game.position.stm() == 0 { 0.0 } else { 1.0 }
+                } else {
+                    0.5
+                };
+
+                if opts.policy_data {
+                    game.policy_game.result = result;
+                    dest.lock().unwrap().push_policy(&game.policy_game, &stop, game.searches, game.iters);
+                } else {
+                    game.value_game.result = result;
+                    dest.lock().unwrap().push(&game.value_game, &stop, game.searches, game.iters);
+                }
+                
+                game.reset(book_ref, rng.rand_int());
+            }
+        }
+
+        // 2. Send FENs
         for game in &games {
             let fen = game.position.board().as_fen();
             writeln!(stdin, "{}", fen).unwrap();
