@@ -224,12 +224,11 @@ pub fn run_policy_datagen(
                         println!("ERROR: Na/Inf Value for FEN: {}", reading_fen);
                     }
                     
+                    let mut has_finite = false;
                     if valid {
-                        let mut has_finite = false;
                         for &p in &current_policy {
                             if p.is_nan() || p.is_infinite() {
-                                // -Inf is okay for illegal moves (we init with NEG_INFINITY), but +Inf is bad.
-                                // But here we initialize with NEG_INFINITY. If we see NaN or POS_INFINITY: BAD.
+                                // If we see NaN or POS_INFINITY: BAD.
                                 // If we see NEG_INFINITY, that's fine (unplayed move).
                                 if p == f32::NEG_INFINITY { continue; }
                                 valid = false;
@@ -237,10 +236,37 @@ pub fn run_policy_datagen(
                             }
                             has_finite = true;
                         }
-                        if !has_finite {
-                             valid = false;
-                             println!("ERROR: No finite policy logits for FEN: {}", reading_fen);
+                    }
+
+                    // Strict "No Finite Logits" handling (Terminal State Disagreement)
+                    // If Monty thought there were moves, but LC0 returns NO finite logits, 
+                    // it means the position was actually terminal (Checkmate or Stalemate).
+                    if valid && !has_finite {
+                        // Handle as Terminal State
+                        let in_check = game.position.board().in_check();
+                        
+                        let result = if in_check {
+                             // Checkmate: Loss for STM
+                             if game.position.stm() == 0 { 0.0 } else { 1.0 }
+                        } else {
+                             // Stalemate: Draw
+                             0.5
+                        };
+                        
+                        // Log event but don't panic
+                        println!("Info: LC0 detected terminal state for FEN: {}. Result: {}", reading_fen, result);
+
+                        if opts.policy_data {
+                            game.policy_game.result = result;
+                            dest.lock().unwrap().push_policy(&game.policy_game, &stop, game.searches, game.iters);
+                        } else {
+                            game.value_game.result = result;
+                            dest.lock().unwrap().push(&game.value_game, &stop, game.searches, game.iters);
                         }
+
+                        game.reset(book_ref, rng.rand_int());
+                        game_idx += 1;
+                        continue; 
                     }
 
                     if !valid {
@@ -265,14 +291,7 @@ pub fn run_policy_datagen(
                             println!("All retries FAILED. Using UNIFORM FALLBACK.");
                             
                             // FALLBACK to Uniform
-                            // We set value to 0.0 (Score 0.5)
                             current_value = 0.0;
-                            // We set policy to 0.0 for ALL legal moves.
-                            // However, we don't have legal moves easily accessible here without query.
-                            // But `process_game` generates legal moves.
-                            // So we set ALL policy values to 0.0 (essentially uniform logits).
-                            // This includes illegal moves, but `process_game` filters by legal moves
-                            // and only looks up legal move indices.
                             current_policy = [0.0; 1858];
                         }
                     }
