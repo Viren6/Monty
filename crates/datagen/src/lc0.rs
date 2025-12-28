@@ -427,6 +427,22 @@ fn process_game(
              *mov
          };
 
+         // FIX: Map Castling to King-takes-Rook (FRC style) for LC0
+         let flag = lookup_move.flag();
+         let lookup_move = if flag == 2 || flag == 3 {
+             let k_to = u16::from(lookup_move.to());
+             let r_to = if k_to == 6 { // g1
+                  7 // h1
+             } else if k_to == 2 { // c1
+                  0 // a1
+             } else {
+                  k_to 
+             };
+             monty::chess::Move::new(u16::from(lookup_move.src()), r_to, flag)
+         } else {
+             lookup_move
+         };
+
          let idx = crate::lc0_mapping::get_lc0_index(&lookup_move);
          let logit = if let Some(idx) = idx {
              policy_probs[idx]
@@ -438,6 +454,51 @@ fn process_game(
              max_legal_logit = logit;
          }
          legal_logits.push(logit);
+    }
+    
+    // DEBUG: Print logits for specific FENs
+    let fen_str = game.position.board().as_fen();
+    if fen_str.contains("r1b1k2r/ppppqNpp/2n5/8/2B1nB2/2B5/P1P3PP/R2QK2R") ||
+       fen_str.contains("r1b1k2r/ppppqNpp/2n5/8/2B1nB2/2P5/P1P3PP/R2QK2R") ||
+       fen_str.contains("r3k2r/pQp3pp/5n2/2b5/8/2N1q3/PPP3PP/R4R1K") ||
+       fen_str.contains("rn2r1k1/pbb2pNp/1p3n2/3p2P1/1PP1pP2/P3P2q/1BBN3P/R2Q1RK1") ||
+       fen_str.contains("8/8/p3k1p1/4Pp2/1ppPK2P/8/P1P5/8") {
+           println!("----------------------------------------------------------------");
+           println!("DEBUG CHECK FOR FEN: {}", fen_str);
+           println!("En Passant Square: {}", game.position.board().enp_sq());
+           println!("Castling Rights: {:b}", game.position.board().rights());
+           for (i, mov) in moves.iter().enumerate() {
+                let logit = legal_logits[i];
+                let lookup_move = if stm == 1 {
+                    let src = u16::from(mov.src());
+                    let dst = u16::from(mov.to());
+                    let src_mir = src ^ 56;
+                    let dst_mir = dst ^ 56;
+                    monty::chess::Move::new(src_mir, dst_mir, mov.flag())
+               } else {
+                   *mov
+               };
+               
+               let flag = lookup_move.flag();
+               let lookup_move = if flag == 2 || flag == 3 {
+                    let k_to = u16::from(lookup_move.to());
+                    let r_to = if k_to == 6 { 7 } else if k_to == 2 { 0 } else { k_to };
+                    monty::chess::Move::new(u16::from(lookup_move.src()), r_to, flag)
+               } else {
+                    lookup_move
+               };
+               
+               let idx = crate::lc0_mapping::get_lc0_index(&lookup_move);
+               
+               let flag_str = match mov.flag() {
+                   0 => "QUIET", 1 => "DBL", 2 => "KS", 3 => "QS", 4 => "CAP", 5 => "ENP",
+                   _ => "PROMO",
+               };
+               
+               let uci = game.position.conv_mov_to_str(*mov);
+               println!("Move: {} ({}) | LC0 Index: {:?} | Logit: {:.4}", uci, flag_str, idx, logit);
+           }
+           println!("----------------------------------------------------------------");
     }
     
     // Softmax (Temp=1) for Storage
