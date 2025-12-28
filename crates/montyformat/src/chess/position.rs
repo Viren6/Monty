@@ -670,15 +670,32 @@ impl Position {
         if self.rights == 0 {
             fen.push('-');
         } else {
-            let mut r = self.rights;
-            while r > 0 {
-                let q = r.trailing_zeros();
-                r &= r - 1;
-                fen.push(['k', 'q', 'K', 'Q'][q as usize]);
+            if self.rights & Right::WKS > 0 {
+                fen.push('K');
+            }
+            if self.rights & Right::WQS > 0 {
+                fen.push('Q');
+            }
+            if self.rights & Right::BKS > 0 {
+                fen.push('k');
+            }
+            if self.rights & Right::BQS > 0 {
+                fen.push('q');
             }
         }
 
-        fen.push_str(&format!(" - {} {}", self.halfm(), self.fullm()));
+        fen.push(' ');
+
+        if self.enp_sq == 0 {
+            fen.push('-');
+        } else {
+            let file = self.enp_sq % 8;
+            let rank = self.enp_sq / 8;
+            fen.push((b'a' + file) as char);
+            fen.push((b'1' + rank) as char);
+        }
+
+        fen.push_str(&format!(" {} {}", self.halfm(), self.fullm()));
 
         fen
     }
