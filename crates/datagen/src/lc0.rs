@@ -430,15 +430,17 @@ fn process_game(
          // FIX: Map Castling to King-takes-Rook (FRC style) for LC0
          let flag = lookup_move.flag();
          let lookup_move = if flag == 2 || flag == 3 {
-             let k_to = u16::from(lookup_move.to());
-             let r_to = if k_to == 6 { // g1
-                  7 // h1
-             } else if k_to == 2 { // c1
-                  0 // a1
+             let dest_sq = u16::from(mov.to());
+             let bit = 1u64 << dest_sq;
+             let is_rook = game.position.board().get_pc(bit) == montyformat::chess::consts::Piece::ROOK;
+
+             if is_rook {
+                 lookup_move
              } else {
-                  k_to 
-             };
-             monty::chess::Move::new(u16::from(lookup_move.src()), r_to, flag)
+                 let k_to = u16::from(lookup_move.to());
+                 let r_to = if k_to == 6 { 7 } else if k_to == 2 { 0 } else { k_to };
+                 monty::chess::Move::new(u16::from(lookup_move.src()), r_to, flag)
+             }
          } else {
              lookup_move
          };
