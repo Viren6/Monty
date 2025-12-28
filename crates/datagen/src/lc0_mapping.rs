@@ -255,14 +255,14 @@ pub fn get_lc0_index(mov: &Move) -> Option<usize> {
 
     let s = if mov.is_promo() {
          let p = mov.promo_pc();
-         let char_p = match p {
-             Piece::QUEEN => 'q',
-             Piece::ROOK => 'r',
-             Piece::BISHOP => 'b',
-             Piece::KNIGHT => 'n',
+         let suffix = match p {
+             Piece::QUEEN => "q",
+             Piece::ROOK => "r",
+             Piece::BISHOP => "b",
+             Piece::KNIGHT => "",
              _ => return None,
          };
-         format!("{}{}{}", idx_to_sq(mov.src()), idx_to_sq(mov.to()), char_p)
+         format!("{}{}{}", idx_to_sq(mov.src()), idx_to_sq(mov.to()), suffix)
     } else {
         format!("{}{}", idx_to_sq(mov.src()), idx_to_sq(mov.to()))
     };
