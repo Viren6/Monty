@@ -452,7 +452,7 @@ fn process_game(
                  lookup_move
              } else {
                  let side = game.position.stm();
-                 let ks = usize::from(flag == 3);
+                 let ks = usize::from(flag == 2);
                  // DFRC/FRC support: lookup actual rook file
                  let rook_file = game.position.castling().rook_file(side, ks);
                  // lookup_move is from White's perspective (Rank 1), so we use file index as square index (0-7)
@@ -469,6 +469,8 @@ fn process_game(
          } else {
              f32::NEG_INFINITY
          };
+
+
          
          if logit > max_legal_logit {
              max_legal_logit = logit;
