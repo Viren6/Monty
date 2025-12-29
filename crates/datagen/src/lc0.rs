@@ -1,8 +1,11 @@
 use crate::{Destination, RunOptions};
 use monty::{
-    chess::{ChessState, GameState, Move},
+    chess::{ChessState, GameState, Move, Castling},
 };
-use montyformat::{MontyFormat, MontyValueFormat, SearchData};
+use montyformat::{
+    chess::{Right, Side},
+    MontyFormat, MontyValueFormat, SearchData,
+};
 use std::{
     io::{BufRead, BufReader, Write},
     process::{Command, Stdio},
@@ -87,9 +90,16 @@ pub fn run_policy_datagen(
 
     let exe_path = get_exe_path();
 
-    let mut child = Command::new(exe_path)
+    let mut command = Command::new(exe_path);
+    command
         .arg(LC0_NETWORK_PATH)
-        .arg(BATCH_SIZE.to_string())
+        .arg(BATCH_SIZE.to_string());
+
+    if opts.dfrc {
+        command.arg("--chess960");
+    }
+
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -167,7 +177,11 @@ pub fn run_policy_datagen(
 
         // 2. Send FENs
         for game in &games {
-            let fen = game.position.board().as_fen();
+            let fen = if opts.dfrc {
+                make_shredder_fen(&game.position)
+            } else {
+                game.position.board().as_fen()
+            };
             writeln!(stdin, "{}", fen).unwrap();
         }
         stdin.flush().unwrap();
@@ -437,8 +451,12 @@ fn process_game(
              if is_rook {
                  lookup_move
              } else {
-                 let k_to = u16::from(lookup_move.to());
-                 let r_to = if k_to == 6 { 7 } else if k_to == 2 { 0 } else { k_to };
+                 let side = game.position.stm();
+                 let ks = usize::from(flag == 3);
+                 // DFRC/FRC support: lookup actual rook file
+                 let rook_file = game.position.castling().rook_file(side, ks);
+                 // lookup_move is from White's perspective (Rank 1), so we use file index as square index (0-7)
+                 let r_to = rook_file;
                  monty::chess::Move::new(u16::from(lookup_move.src()), r_to, flag)
              }
          } else {
@@ -597,4 +615,81 @@ fn process_game(
         
         game.reset(book, rng.rand_int());
     }
+}
+
+pub fn make_shredder_fen(pos: &ChessState) -> String {
+    let board = pos.board();
+    let castling = pos.castling();
+    let pcs = ['p', 'n', 'b', 'r', 'q', 'k', 'P', 'N', 'B', 'R', 'Q', 'K'];
+    let mut fen = String::new();
+
+    for rank in (0..8).rev() {
+        let mut clear = 0;
+
+        for file in 0..8 {
+            let sq = 8 * rank + file;
+            let bit = 1 << sq;
+            let pc = board.get_pc(bit);
+            if pc != 0 {
+                if clear > 0 {
+                    fen.push_str(&format!("{}", clear));
+                }
+                clear = 0;
+                let is_black = board.piece(Side::BLACK) & bit > 0;
+                let idx = pc - 2 + 6 * usize::from(!is_black);
+                fen.push(pcs[idx]);
+            } else {
+                clear += 1;
+            }
+        }
+
+        if clear > 0 {
+            fen.push_str(&format!("{}", clear));
+        }
+
+        if rank > 0 {
+            fen.push('/');
+        }
+    }
+
+    fen.push(' ');
+    fen.push(['w', 'b'][board.stm()]);
+    fen.push(' ');
+
+    let rights = board.rights();
+    if rights == 0 {
+        fen.push('-');
+    } else {
+        if rights & Right::WKS > 0 {
+            let file = castling.rook_file(Side::WHITE, 1); // 1 = KS
+            fen.push((b'A' + file as u8) as char);
+        }
+        if rights & Right::WQS > 0 {
+            let file = castling.rook_file(Side::WHITE, 0); // 0 = QS
+            fen.push((b'A' + file as u8) as char);
+        }
+        if rights & Right::BKS > 0 {
+            let file = castling.rook_file(Side::BLACK, 1);
+            fen.push((b'a' + file as u8) as char);
+        }
+        if rights & Right::BQS > 0 {
+            let file = castling.rook_file(Side::BLACK, 0);
+            fen.push((b'a' + file as u8) as char);
+        }
+    }
+
+    fen.push(' ');
+
+    if board.enp_sq() == 0 {
+        fen.push('-');
+    } else {
+        let file = board.enp_sq() % 8;
+        let rank = board.enp_sq() / 8;
+        fen.push((b'a' + file) as char);
+        fen.push((b'1' + rank) as char);
+    }
+
+    fen.push_str(&format!(" {} {}", board.halfm(), board.fullm()));
+
+    fen
 }

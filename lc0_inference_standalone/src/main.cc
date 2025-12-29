@@ -82,8 +82,18 @@ int main(int argc, char* argv[]) {
 
         std::string network_path = argv[1];
         int batch_size = 4;
+        bool chess960 = false;
+
         if (argc >= 3) {
             batch_size = std::stoi(argv[2]);
+        }
+        
+        // Simple flag parsing
+        for (int i = 1; i < argc; ++i) {
+             std::string arg = argv[i];
+             if (arg == "--chess960") {
+                 chess960 = true;
+             }
         }
 
         InitializeMagicBitboards();
@@ -94,6 +104,10 @@ int main(int argc, char* argv[]) {
         
         // Setup options
         OptionsDict options;
+        if (chess960) {
+            options.Set<bool>("chess960", true);
+            std::cerr << "Enabled Chess960 Mode.\n";
+        }
 
         // Auto-select backend
         auto backends = NetworkFactory::Get()->GetBackendsList();

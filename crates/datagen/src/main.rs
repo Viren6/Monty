@@ -226,6 +226,7 @@ pub struct RunOptions {
     policy_data: bool,
     nodes: usize,
     out_path: String,
+    dfrc: bool,
 }
 
 pub fn parse_args(args: Args) -> Option<RunOptions> {
@@ -241,6 +242,7 @@ pub fn parse_args(args: Args) -> Option<RunOptions> {
         match arg.as_str() {
             "bench" => return None,
             "--policy-data" => opts.policy_data = true,
+            "--dfrc" => opts.dfrc = true,
             "-t" | "--threads" => mode = 1,
             "-b" | "--book" => mode = 2,
             "-n" | "--nodes" => mode = 3,
