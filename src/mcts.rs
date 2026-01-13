@@ -25,8 +25,6 @@ pub type SearchRet = (Move, f32, usize);
 #[cfg(not(feature = "datagen"))]
 pub type SearchRet = (Move, f32);
 
-pub static REPORT_ITERS: AtomicBool = AtomicBool::new(false);
-
 fn calibrate_wdl(win: f32, draw: f32, loss: f32) -> [f32; 3] {
     const W: [[f64; 3]; 3] = [
         [3.75992276, 0.23714723, -1.85080033],
@@ -154,12 +152,14 @@ impl<'a> Searcher<'a> {
         loop {
             let mut pos = self.tree.root_position().clone();
             let mut this_depth = 0;
+            let mut root_child = None;
 
             if iteration::perform_one(
                 self,
                 &mut pos,
                 self.tree.root_node(),
                 &mut this_depth,
+                &mut root_child,
                 thread_id,
             )
             .is_none()
@@ -168,6 +168,9 @@ impl<'a> Searcher<'a> {
             }
 
             search_stats.add_iter(thread_id, this_depth, main_thread);
+            if let Some(child_ptr) = root_child {
+                self.tree[child_ptr].add_nodes(this_depth as u64);
+            }
 
             // proven checkmate
             if self.tree[self.tree.root_node()].is_terminal() {
@@ -468,36 +471,31 @@ impl<'a> Searcher<'a> {
         gui_compatibility: bool,
     ) {
         let elapsed = timer.elapsed();
-        let pv_lines = self.multipv_lines(depth, seldepth, nodes, multipv);
+        let pv_lines = self.multipv_lines(depth, seldepth, nodes, iters, multipv);
 
         let elapsed_secs = elapsed.as_secs_f32();
         let ms = elapsed.as_millis();
 
-        for (idx, pv_line) in pv_lines.iter().enumerate() {
-            let line_depth = if multipv > 1 {
+        let emit_info_line = |pv_line: &PvLine, idx: usize, use_multipv: bool| {
+            let line_depth = if use_multipv {
                 pv_line.depth.max(1)
             } else {
                 depth
             };
 
-            let line_seldepth = if multipv > 1 {
+            let line_seldepth = if use_multipv {
                 pv_line.seldepth.max(1)
             } else {
                 seldepth
             };
 
-            let line_nodes = if multipv > 1 {
-                pv_line.nodes
-            } else if REPORT_ITERS.load(Ordering::Relaxed) {
-                iters
-            } else {
-                nodes
-            };
+            let line_nodes = if use_multipv { pv_line.nodes } else { nodes };
+            let line_iters = if use_multipv { pv_line.iters } else { iters };
 
             let nps = line_nodes as f32 / elapsed_secs;
 
             print!("info depth {line_depth} seldepth {line_seldepth} ");
-            if multipv > 1 {
+            if use_multipv && multipv > 1 {
                 print!("multipv {} ", idx + 1);
             }
 
@@ -506,13 +504,13 @@ impl<'a> Searcher<'a> {
             } else if pv_line.score < 0.0 {
                 print!("score mate -{} ", pv_line.line.len() / 2);
             } else {
-                let (mut scaled, mut cal) = if multipv > 1 {
+                let (mut scaled, mut cal) = if use_multipv {
                     self.get_display_score_for(pv_line.node)
                 } else {
                     self.get_display_score()
                 };
 
-                if multipv > 1 && pv_line.node != self.tree.root_node() {
+                if use_multipv && pv_line.node != self.tree.root_node() {
                     scaled = -scaled;
                     cal = [cal[2], cal[1], cal[0]];
                 }
@@ -525,9 +523,11 @@ impl<'a> Searcher<'a> {
                 }
             }
 
-            print!("time {ms} nodes {line_nodes} nps {nps:.0} ");
+            print!("time {ms} nodes {line_nodes} ");
+            print!("nps {nps:.0} ");
 
             if !gui_compatibility {
+                print!("iters {line_iters} ");
                 let policy = (pv_line.policy * 10000.0).round();
                 print!("policy {policy:.0} ");
             }
@@ -539,6 +539,16 @@ impl<'a> Searcher<'a> {
             }
 
             println!();
+        };
+
+        if !gui_compatibility && multipv > 1 {
+            if let Some(pv_line) = pv_lines.first() {
+                emit_info_line(pv_line, 0, false);
+            }
+        }
+
+        for (idx, pv_line) in pv_lines.iter().enumerate() {
+            emit_info_line(pv_line, idx, multipv > 1);
         }
     }
 
@@ -579,6 +589,7 @@ impl<'a> Searcher<'a> {
         depth: usize,
         seldepth: usize,
         nodes: usize,
+        iters: usize,
         multipv: usize,
     ) -> Vec<PvLine> {
         let children = self.root_children_by_score(multipv.max(1));
@@ -592,6 +603,7 @@ impl<'a> Searcher<'a> {
                 depth,
                 seldepth,
                 nodes,
+                iters,
             }];
         }
 
@@ -605,6 +617,7 @@ impl<'a> Searcher<'a> {
                 line.depth = depth;
                 line.seldepth = seldepth;
                 line.nodes = nodes;
+                line.iters = iters;
             }
         }
 
@@ -694,6 +707,11 @@ impl<'a> Searcher<'a> {
             nodes: if start_ptr.is_null() {
                 0
             } else {
+                self.tree[start_ptr].nodes() as usize
+            },
+            iters: if start_ptr.is_null() {
+                0
+            } else {
                 self.tree[start_ptr].visits() as usize
             },
         }
@@ -760,4 +778,5 @@ struct PvLine {
     depth: usize,
     seldepth: usize,
     nodes: usize,
+    iters: usize,
 }
