@@ -20,7 +20,8 @@
 
 #include <algorithm>
 #include <cassert>
-#include <deque>
+#include <list>
+#include <iostream>
 #include <iosfwd>
 #include <memory>
 #include <ostream>
@@ -42,7 +43,9 @@
 #include "syzygy/tbprobe.h"
 #include "types.h"
 #include "uci.h"
+#include "uci.h"
 #include "ucioption.h"
+#include "score.h"
 
 namespace Stockfish {
 
@@ -61,7 +64,7 @@ constexpr NumaAutoPolicy DefaultNumaPolicy = BundledL3Policy{32};
 Engine::Engine(std::optional<std::string> path) :
     binaryDirectory(path ? CommandLine::get_binary_directory(*path) : ""),
     numaContext(NumaConfig::from_system(DefaultNumaPolicy)),
-    states(new std::deque<StateInfo>(1)),
+    states(new std::list<StateInfo>(1)),
     threads(),
     networks(numaContext,
              // Heap-allocate because sizeof(NN::Networks) is large
@@ -157,6 +160,115 @@ std::uint64_t Engine::perft(const std::string& fen, Depth depth, bool isChess960
     return Benchmark::perft(fen, depth, isChess960);
 }
 
+int Engine::datagen_game(int nodes_limit, std::vector<std::string>& moves, std::vector<int16_t>& scores) {
+    Search::LimitsType limits;
+    limits.nodes = nodes_limit;
+
+    StateListPtr game_states(new std::list<StateInfo>(1));
+    Position game_pos;
+    game_pos.set(pos.fen(), options["UCI_Chess960"], &game_states->back());
+    // std::cerr << "Debug: Inside datagen_game. FEN: " << pos.fen() << std::endl;
+    limits.startTime = now();
+
+    // Loop until game over
+    while (true) {
+        // Check game over conditions (Adjudication/Mate/Draw)
+        // Checkmate/Stalemate
+        if (MoveList<LEGAL>(game_pos).size() == 0) {
+            if (game_pos.checkers()) {
+                // Checkmate
+                // Side to move lost, so return 0 (Loss)
+                return 0; // Loss for STM
+            } else {
+                // Stalemate
+                return 1; // 1 = Draw
+            }
+        }
+        
+        // Insufficient material, etc? optional. simplified for now.
+        // 50 move rule, repetition
+        if (game_pos.is_draw(1) || game_pos.rule50_count() >= 100) {
+             return 1;
+        }
+
+        // Run Search
+        // We need to capture bestmove and score
+        std::string best_move_uci;
+        Score best_score_val = Score::zero();
+
+        bool move_found = false;
+
+        // Hook up listeners for this search
+        updateContext.onBestmove = [&](std::string_view bm, std::string_view) {
+             best_move_uci = std::string(bm);
+             move_found = true;
+        };
+        
+        // We need to grab score from info string or callback
+        // on_update_full is good, but might be called multiple times.
+        // The last one is the best one.
+        updateContext.onUpdateFull = [&](const InfoFull& info) {
+             best_score_val = info.score;
+        };
+
+        // Suppress output
+        updateContext.onUpdateNoMoves = [](const InfoShort&){};
+        updateContext.onIter = [](const InfoIter&){};
+
+        // Configure threads
+        // Create a copy of game_states for the ThreadPool to own/consume
+        // This is necessary because start_thinking moves the unique_ptr
+        StateListPtr search_states(new std::list<StateInfo>(*game_states));
+
+        threads.start_thinking(options, game_pos, search_states, limits);
+        threads.main_thread()->wait_for_search_finished(); // Blocking
+
+        if (!move_found) {
+             // Should not happen, but return draw if it does
+             return 1;
+        }
+        
+        // Process Move
+        Move m = UCIEngine::to_move(game_pos, best_move_uci);
+        if (m == Move::none()) {
+             break;
+        }
+
+        moves.push_back(best_move_uci);
+        
+        // Process Score
+        struct ToCp {
+            int val = 0;
+            void operator()(Score::Mate m) { 
+                // Mate positive = winning, negative = losing
+                if (m.plies > 0) val = 30000;
+                else val = -30000;
+            }
+            void operator()(Score::Tablebase t) {
+                if (t.win) val = 20000;
+                else val = -20000;
+            }
+            void operator()(Score::InternalUnits u) {
+                val = u.value;
+            }
+        };
+        ToCp converter;
+        best_score_val.visit(converter);
+        
+        // Clamp to i16
+        if (converter.val > 32000) converter.val = 32000;
+        if (converter.val < -32000) converter.val = -32000;
+        
+        scores.push_back((int16_t)converter.val);
+
+        // Make move
+        game_states->emplace_back();
+        game_pos.do_move(m, game_states->back());
+    }
+    
+    return 1; // Fallback draw
+}
+
 void Engine::go(Search::LimitsType& limits) {
     assert(limits.perft == 0);
     verify_networks();
@@ -199,7 +311,7 @@ void Engine::wait_for_search_finished() { threads.main_thread()->wait_for_search
 
 void Engine::set_position(const std::string& fen, const std::vector<std::string>& moves) {
     // Drop the old state and create a new one
-    states = StateListPtr(new std::deque<StateInfo>(1));
+    states = StateListPtr(new std::list<StateInfo>(1));
     pos.set(fen, options["UCI_Chess960"], &states->back());
 
     for (const auto& move : moves)
@@ -327,7 +439,7 @@ void Engine::save_network(const std::pair<std::optional<std::string>, std::strin
 // utility functions
 
 void Engine::trace_eval() const {
-    StateListPtr trace_states(new std::deque<StateInfo>(1));
+    StateListPtr trace_states(new std::list<StateInfo>(1));
     Position     p;
     p.set(pos.fen(), options["UCI_Chess960"], &trace_states->back());
 

@@ -21,7 +21,7 @@
 
 #include <array>
 #include <cassert>
-#include <deque>
+#include <list>
 #include <iosfwd>
 #include <memory>
 #include <new>
@@ -68,7 +68,7 @@ struct StateInfo {
 // start position to the position just before the search starts). Needed by
 // 'draw by repetition' detection. Use a std::deque because pointers to
 // elements are not invalidated upon list resizing.
-using StateListPtr = std::unique_ptr<std::deque<StateInfo>>;
+using StateListPtr = std::unique_ptr<std::list<StateInfo>>;
 
 // Position class stores information regarding the board representation as
 // pieces, side to move, hash keys, castling info, etc. Important methods are

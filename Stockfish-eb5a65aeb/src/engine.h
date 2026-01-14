@@ -58,6 +58,11 @@ class Engine {
     ~Engine() { wait_for_search_finished(); }
 
     std::uint64_t perft(const std::string& fen, Depth depth, bool isChess960);
+    
+    // Play a single game from the current position with a fixed node count limit per move.
+    // Returns the game result (WDL) from side to move perspective.
+    // Populates moves and scores into referenced vectors.
+    int datagen_game(int nodes_limit, std::vector<std::string>& moves, std::vector<int16_t>& scores);
 
     // non blocking call to start searching
     void go(Search::LimitsType&);

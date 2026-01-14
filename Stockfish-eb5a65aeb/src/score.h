@@ -46,6 +46,12 @@ class Score {
     Score() = default;
     Score(Value v, const Position& pos);
 
+    static Score zero() {
+        Score s;
+        s.score = InternalUnits{0};
+        return s;
+    }
+
     template<typename T>
     bool is() const {
         return std::holds_alternative<T>(score);

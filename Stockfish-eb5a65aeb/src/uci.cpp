@@ -42,6 +42,7 @@
 namespace Stockfish {
 
 constexpr auto BenchmarkCommand = "speedtest";
+constexpr auto DatagenCommand = "datagen";
 
 constexpr auto StartFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 template<typename... Ts>
@@ -144,6 +145,8 @@ void UCIEngine::loop() {
             bench(is);
         else if (token == BenchmarkCommand)
             benchmark(is);
+        else if (token == DatagenCommand)
+            datagen(is);
         else if (token == "d")
             sync_cout << engine.visualize() << sync_endl;
         else if (token == "eval")
@@ -452,6 +455,53 @@ void UCIEngine::benchmark(std::istream& args) {
     // clang-format on
 
     init_search_update_listeners();
+}
+
+void UCIEngine::datagen(std::istream& args) {
+    int nodes = 0, batch_size = 0;
+    args >> nodes >> batch_size;
+
+    if (nodes <= 0 || batch_size <= 0) {
+        sync_cout << "Error: invalid datagen args" << sync_endl;
+        return;
+    }
+
+    std::string fen;
+    std::vector<std::string> moves;
+    std::vector<int16_t> scores;
+
+    for (int i = 0; i < batch_size; ++i) {
+        if (!std::getline(std::cin, fen) || fen.empty()) {
+             // std::cerr << "Debug: Read failed or empty FEN at " << i << std::endl;
+             break;
+        }
+        
+        // Trim FEN
+        fen.erase(0, fen.find_first_not_of(" \t\n\r"));
+        fen.erase(fen.find_last_not_of(" \t\n\r") + 1);
+
+        if (fen.empty()) continue;
+
+        engine.search_clear();
+        engine.set_position(fen, {}); // Set FEN, no moves initially
+
+        moves.clear();
+        scores.clear();
+
+        // std::cerr << "Debug: Playing game " << i << " FEN: " << fen << std::endl;
+        int result = engine.datagen_game(nodes, moves, scores);
+
+        std::stringstream ss;
+        ss << "Game " << i << ":";
+        for (const auto& m : moves) ss << " " << m;
+        ss << " scores";
+        for (const auto& s : scores) ss << " " << s;
+        ss << " result " << result;
+
+        sync_cout << ss.str() << sync_endl;
+    }
+    init_search_update_listeners(); // Restore listeners
+    sync_cout << "BATCH_DONE" << sync_endl;
 }
 
 void UCIEngine::setoption(std::istringstream& is) {

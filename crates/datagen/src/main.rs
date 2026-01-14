@@ -3,6 +3,7 @@ mod rng;
 mod thread;
 mod lc0;
 mod lc0_mapping;
+mod stockfish;
 
 use book::OpeningBook;
 use montyformat::{MontyFormat, MontyValueFormat};
@@ -47,8 +48,8 @@ fn main() {
         if cfg!(feature = "policy") {
              lc0::run_policy_datagen(opts);
         } else {
-             run_datagen(params, opts, policy, value);
-        }
+             stockfish::run(opts, policy, value);
+         }
     } else {
         uci::bench(ChessState::BENCH_DEPTH, policy, value, &params);
     }
