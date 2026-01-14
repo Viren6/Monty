@@ -29,7 +29,6 @@ fn get_sf_path() -> &'static str {
 pub fn run(
     opts: RunOptions,
     policy: &PolicyNetwork,
-    value: &ValueNetwork,
 ) {
     println!("Starting Stockfish Value Datagen");
     println!("Threads: {}", opts.threads);
@@ -67,7 +66,7 @@ pub fn run(
              let book = book.clone();
              
              s.spawn(move || {
-                 worker(opts, policy, value, dest, stop, book);
+                 worker(opts, policy, dest, stop, book);
              });
         }
     });
@@ -79,7 +78,6 @@ pub fn run(
 fn worker(
     opts: &RunOptions,
     policy: &PolicyNetwork,
-    value: &ValueNetwork,
     dest: Arc<Mutex<Destination>>,
     stop: Arc<AtomicBool>,
     book: Option<Arc<crate::book::OpeningBook>>,
@@ -135,37 +133,46 @@ fn worker(
                      break;
                  }
                  
-                 let (m, q) = run_monty_policy(&mut game, policy, value, &mut rng);
-                 
-                 let mf_move = montyformat::chess::Move::from(u16::from(m));
-                 game.value_game.moves.push(montyformat::SearchResult {
-                     best_move: mf_move,
-                     score: q_to_cp(q),
-                 });
+                 let m = run_monty_policy(&mut game, policy, &mut rng);
+                 // We do NOT record these moves
+                 game.position.make_move(m);
 
                  plies_played += 1;
             }
             
-            // Update iters for accurate reporting
-            game.iters = game.value_game.moves.len();
-            
             if !early_term {
-                let fen = if opts.dfrc {
-                     make_shredder_fen(&game.position)
-                } else {
-                     game.position.board().as_fen()
-                };
-                fens_to_send.push(fen);
-                pending_games.push(game);
+                // Update startpos to current position (after 8 plies)
+                game.value_game.startpos = game.position.board();
+                game.value_game.castling = game.position.castling();
+                pending_games.push(Some(game));
             } else {
+                game.iters = game.value_game.moves.len();
                 dest.lock().unwrap().push(&game.value_game, &stop, game.searches, game.iters);
+                pending_games.push(None);
+            }
+        }
+            
+        let mut batch_mapping = Vec::new();
+        for (i, slot) in pending_games.iter().enumerate() {
+            if let Some(game) = slot {
+                if game.value_game.moves.len() >= 8 && game.value_game.result == 0.0 {
+                    fens_to_send.push(if opts.dfrc {
+                         make_shredder_fen(&game.position)
+                    } else {
+                         game.position.board().as_fen()
+                    });
+                    batch_mapping.push(i);
+                }
             }
         }
         
         if fens_to_send.is_empty() { continue; }
         
         writeln!(stdin, "datagen {} {}", opts.nodes, fens_to_send.len()).unwrap();
+        stdin.flush().unwrap(); // Flush command line
+
         for fen in &fens_to_send {
+            println!("DEBUG: Sending FEN: '{}'", fen);
             writeln!(stdin, "{}", fen).unwrap();
         }
         stdin.flush().unwrap();
@@ -179,18 +186,25 @@ fn worker(
             }
             let line = buf.trim();
             if line == "BATCH_DONE" { break; }
+            
             if line.starts_with("Game ") {
                  let parts: Vec<&str> = line.split_whitespace().collect();
                  if parts.len() < 2 { continue; }
                  
                  // Format: Game 0: e2e4 ... scores 10 20 ... result 1
                  // Identify sections
-                 let mut game_idx = 0;
+                 let mut sf_idx = 0;
                  if let Some(idx_str) = parts[1].strip_suffix(':') {
                      if let Ok(idx) = idx_str.parse::<usize>() {
-                         game_idx = idx;
+                         sf_idx = idx;
                      }
                  }
+                 
+                 if sf_idx >= batch_mapping.len() {
+                     eprintln!("Stockfish returned invalid game index: {}", sf_idx);
+                     continue;
+                 }
+                 let game_idx = batch_mapping[sf_idx];
                  
                  let mut moves_start = 2;
                  let mut scores_start = 0;
@@ -202,20 +216,11 @@ fn worker(
                  }
                  
                  if game_idx < pending_games.len() {
-                     let game = &mut pending_games[game_idx];
+                     if let Some(game) = &mut pending_games[game_idx] {
                      
                      // Parse Moves & Scores
-                     // Assuming scores correspond 1-to-1 with moves or plies?
-                     // Stockfish plays out game.
-                     // We need to feed moves into game position to get correct Move objects (uci -> Move)
-                     
-                     // We iterate moves and scores together?
-                     // Verify lengths.
                      let moves_end = if scores_start > 0 { scores_start - 1 } else { parts.len() };
                      let scores_end = if result_start > 0 { result_start - 1 } else { parts.len() };
-                     
-                     // let moves_cnt = moves_end - moves_start;
-                     // let scores_cnt = scores_end - scores_start;
                      
                      let mut current_score_idx = scores_start;
                      for i in moves_start..moves_end {
@@ -224,10 +229,6 @@ fn worker(
                          // We need to find move in legal moves.
                          let mut matched_move = Move::NULL;
                          
-                         // We need scanning.
-                         // But Monty's Move parsing might be available.
-                         // Or manual match.
-                         // Optimization: we can just iterate legal moves.
                          game.position.map_legal_moves(|m| {
                              if uci == uci_str(m, &game.position) {
                                  matched_move = m;
@@ -249,34 +250,28 @@ fn worker(
                              
                              game.position.make_move(matched_move);
                          } else {
-                             // Break if illegal/unknown (should not happen)
+                             println!("Mismatch! UCI: '{}' Read FEN: '{}' Line: '{}'", uci, fens_to_send[game_idx], line);
+                             println!("UCI Bytes: {:?}", uci.as_bytes());
+                             println!("FEN: '{}'", game.value_game.startpos.as_fen());
+                             
+                             eprintln!("History:");
+                             for res in &game.value_game.moves {
+                                 eprintln!(" {}", res.best_move.to_uci(&game.position.castling()));
+                             }
+
+                             eprintln!("Legal moves:");
+                             game.position.map_legal_moves(|m| {
+                                 let s = uci_str(m, &game.position);
+                                 if s == uci {
+                                     eprintln!(" - {} ({:?}) MATCHED BUT IGNORED?", s, m);
+                                 }
+                                 eprintln!(" - {} ({:?}) flag={} promo={} bytes={:?}", s, m, m.flag(), m.promo_pc(), s.as_bytes());
+                             });
                              break;
                          }
                      }
                      
                      // Parse Result
-                     // result 1 (Draw/Unknown) or 0 (Loss for STM)? 
-                     // In SF we returned: 0=Loss(STM), 1=Draw. 
-                     // If SF is playing, the result is from Perspective of Side To Move *at end*?
-                     // No, "returns the game result (WDL) from side to move perspective".
-                     // Wait, datagen_game returns result.
-                     // if returned 0 (Loss), it means the side whose turn it was LOST.
-                     // if returned 1 (Draw).
-                     // What about Win?
-                     
-                     // My SF implementation:
-                     // if checkers: return 0. (Loss)
-                     // else: return 1. (Draw, Stalemate)
-                     // So result is from perspective of person about to move.
-                     
-                     // Monty expects result 0.0 (Loss), 1.0 (Win), 0.5 (Draw) *from White perspective??*
-                     // MontyValueFormat result: "result: f32".
-                     // Usually 1.0 for White Win, 0.0 for Black Win, 0.5 Draw.
-                     
-                     // We need to map (ResultSTM, STM).
-                     // If ResultSTM = 0 (Loss), then STM lost. So Other won.
-                     // If ResultSTM = 1 (Draw), Draw.
-                     
                      let sf_res = if result_start < parts.len() {
                          parts[result_start].parse::<i32>().unwrap_or(1)
                      } else { 1 };
@@ -288,19 +283,18 @@ fn worker(
                          0.5
                      } else {
                          // Loss for STM.
-                         // If STM=White(0) and Loss -> Black Wins -> 0.0
-                         // If STM=Black(1) and Loss -> White Wins -> 1.0
                          if stm == 0 { 0.0 } else { 1.0 }
                      };
                      
                      game.value_game.result = final_res;
-                     game.iters = game.value_game.moves.len();
+                     game.searches = game.value_game.moves.len();
                      dest.lock().unwrap().push(&game.value_game, &stop, game.searches, game.iters);
                      
                      received_count += 1;
+                     }
                  }
-            }
-        }
+             }
+         }
     }
     
     let _ = child.kill();
@@ -331,7 +325,7 @@ impl GameRunner {
 
         GameRunner {
             position,
-            temp: 1.4,
+            temp: 1.0,
             searches: 0,
             iters: 0,
             value_game: MontyValueFormat {
@@ -372,17 +366,10 @@ fn uci_str(m: Move, pos: &ChessState) -> String {
     
     if m.is_promo() {
          let p = match promo {
-             0 => 'n', 1 => 'b', 2 => 'r', 3 => 'q', _ => 'q'
+             3 => 'n', 4 => 'b', 5 => 'r', 6 => 'q', _ => 'q'
          };
          s.push(p);
     }
-    
-    // Castling Fix? Stockfish expects e1g1.
-    // Monty Move might be "King takes Rook" for castling if FRC?
-    // In Standard, Monty uses King->Rook square?
-    // Let's check `make_shredder_fen` usage. 
-    // Standard UCI: e1g1.
-    // Verify Monty move structure. 
     
     s
 }
@@ -390,9 +377,8 @@ fn uci_str(m: Move, pos: &ChessState) -> String {
 fn run_monty_policy(
     game: &mut GameRunner, 
     policy: &PolicyNetwork, 
-    value: &ValueNetwork,
     rng: &mut crate::rng::Rand
-) -> (Move, f32) {
+) -> Move {
     let board = game.position.board();
     let hl = policy.hl(&board);
     
@@ -430,32 +416,8 @@ fn run_monty_policy(
     }
     
     let best_move = moves[selected_idx];
-    game.position.make_move(best_move);
-
-    let (w, d, _l) = value.eval(&board);
-
-    // Sharpness scaling
-    const SHARPNESS_SCALE: f32 = 2.459;
-    const SHARPNESS_QUADRATIC: f32 = 0.8724;
-
-    let draw_adj = d * SHARPNESS_SCALE + d * d * SHARPNESS_QUADRATIC;
-    let sum = w + d + draw_adj + _l;
     
-    let w_scaled = w / sum;
-    let d_scaled = (d + draw_adj) / sum;
-    // let l_scaled = _l / sum;
-
-    let q = w_scaled + 0.5 * d_scaled;
-
-    // Decay temp
-    game.temp *= 0.9;
-    
-    (best_move, q)
-}
-
-fn q_to_cp(q: f32) -> i16 {
-    let q = q.clamp(0.001, 0.999);
-    (-(400.0 * (1.0 / q - 1.0).ln())) as i16
+    best_move
 }
 
 pub fn make_shredder_fen(pos: &ChessState) -> String {

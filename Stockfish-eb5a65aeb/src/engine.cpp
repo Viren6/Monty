@@ -20,7 +20,7 @@
 
 #include <algorithm>
 #include <cassert>
-#include <list>
+#include <deque>
 #include <iostream>
 #include <iosfwd>
 #include <memory>
@@ -64,7 +64,7 @@ constexpr NumaAutoPolicy DefaultNumaPolicy = BundledL3Policy{32};
 Engine::Engine(std::optional<std::string> path) :
     binaryDirectory(path ? CommandLine::get_binary_directory(*path) : ""),
     numaContext(NumaConfig::from_system(DefaultNumaPolicy)),
-    states(new std::list<StateInfo>(1)),
+    states(new std::deque<StateInfo>(1)),
     threads(),
     networks(numaContext,
              // Heap-allocate because sizeof(NN::Networks) is large
@@ -164,10 +164,10 @@ int Engine::datagen_game(int nodes_limit, std::vector<std::string>& moves, std::
     Search::LimitsType limits;
     limits.nodes = nodes_limit;
 
-    StateListPtr game_states(new std::list<StateInfo>(1));
+    StateListPtr game_states(new std::deque<StateInfo>(1));
     Position game_pos;
     game_pos.set(pos.fen(), options["UCI_Chess960"], &game_states->back());
-    // std::cerr << "Debug: Inside datagen_game. FEN: " << pos.fen() << std::endl;
+    std::cerr << "Debug: Internal game_pos FEN: " << game_pos.fen() << std::endl;
     limits.startTime = now();
 
     // Loop until game over
@@ -218,7 +218,7 @@ int Engine::datagen_game(int nodes_limit, std::vector<std::string>& moves, std::
         // Configure threads
         // Create a copy of game_states for the ThreadPool to own/consume
         // This is necessary because start_thinking moves the unique_ptr
-        StateListPtr search_states(new std::list<StateInfo>(*game_states));
+        StateListPtr search_states(new std::deque<StateInfo>(*game_states));
 
         threads.start_thinking(options, game_pos, search_states, limits);
         threads.main_thread()->wait_for_search_finished(); // Blocking
@@ -232,6 +232,16 @@ int Engine::datagen_game(int nodes_limit, std::vector<std::string>& moves, std::
         Move m = UCIEngine::to_move(game_pos, best_move_uci);
         if (m == Move::none()) {
              break;
+        }
+
+        {
+            Square from = m.from_sq();
+            Square to = m.to_sq();
+            Piece p = game_pos.piece_on(from);
+            std::cerr << "Debug: GameMove " << moves.size() << " " << best_move_uci 
+                      << " Piece: " << (int)p 
+                      << " (" << (type_of(p) == ROOK ? "ROOK" : (type_of(p) == BISHOP ? "BISHOP" : "OTHER")) << ")"
+                      << " From: " << from << " To: " << to << std::endl;
         }
 
         moves.push_back(best_move_uci);
@@ -311,7 +321,7 @@ void Engine::wait_for_search_finished() { threads.main_thread()->wait_for_search
 
 void Engine::set_position(const std::string& fen, const std::vector<std::string>& moves) {
     // Drop the old state and create a new one
-    states = StateListPtr(new std::list<StateInfo>(1));
+    states = StateListPtr(new std::deque<StateInfo>(1));
     pos.set(fen, options["UCI_Chess960"], &states->back());
 
     for (const auto& move : moves)
@@ -439,7 +449,7 @@ void Engine::save_network(const std::pair<std::optional<std::string>, std::strin
 // utility functions
 
 void Engine::trace_eval() const {
-    StateListPtr trace_states(new std::list<StateInfo>(1));
+    StateListPtr trace_states(new std::deque<StateInfo>(1));
     Position     p;
     p.set(pos.fen(), options["UCI_Chess960"], &trace_states->back());
 

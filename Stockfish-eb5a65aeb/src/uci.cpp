@@ -470,35 +470,45 @@ void UCIEngine::datagen(std::istream& args) {
     std::vector<std::string> moves;
     std::vector<int16_t> scores;
 
-    for (int i = 0; i < batch_size; ++i) {
-        if (!std::getline(std::cin, fen) || fen.empty()) {
-             // std::cerr << "Debug: Read failed or empty FEN at " << i << std::endl;
+    for (int i = 0; i < batch_size; ) {
+        if (!std::getline(std::cin, fen)) {
              break;
         }
         
-        // Trim FEN
-        fen.erase(0, fen.find_first_not_of(" \t\n\r"));
-        fen.erase(fen.find_last_not_of(" \t\n\r") + 1);
+        if (!fen.empty() && fen.back() == '\r') fen.pop_back();
+        std::cerr << "Debug: Raw Input: '" << fen << "'" << std::endl;
 
-        if (fen.empty()) continue;
+        // Skip empty lines (whitespace only check)
+        if (fen.find_first_not_of(" \t") == std::string::npos) continue;
+        
+        // Trim leading whitespace
+        fen.erase(0, fen.find_first_not_of(" \t"));
+
+        std::cerr << "Debug: Playing game " << i << " Read FEN: '" << fen << "' (Len: " << fen.length() << ")" << std::endl;
 
         engine.search_clear();
         engine.set_position(fen, {}); // Set FEN, no moves initially
+        
+        std::string set_fen = engine.fen();
+        std::cerr << "Debug: Engine FEN after set: '" << set_fen << "'" << std::endl;
+
+        if (set_fen.substr(0, 10) != fen.substr(0, 10)) {
+             std::cerr << "WARNING: FEN Mismatch detected!" << std::endl;
+        }
 
         moves.clear();
         scores.clear();
 
-        // std::cerr << "Debug: Playing game " << i << " FEN: " << fen << std::endl;
         int result = engine.datagen_game(nodes, moves, scores);
+        
+        // Output result
+        std::cout << "Game " << i << ": ";
+        for (const auto& m : moves) std::cout << m << " ";
+        std::cout << "scores ";
+        for (const auto& s : scores) std::cout << s << " ";
+        std::cout << "result " << result << std::endl;
 
-        std::stringstream ss;
-        ss << "Game " << i << ":";
-        for (const auto& m : moves) ss << " " << m;
-        ss << " scores";
-        for (const auto& s : scores) ss << " " << s;
-        ss << " result " << result;
-
-        sync_cout << ss.str() << sync_endl;
+        i++;
     }
     init_search_update_listeners(); // Restore listeners
     sync_cout << "BATCH_DONE" << sync_endl;

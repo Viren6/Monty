@@ -48,7 +48,7 @@ fn main() {
         if cfg!(feature = "policy") {
              lc0::run_policy_datagen(opts);
         } else {
-             stockfish::run(opts, policy, value);
+             stockfish::run(opts, policy);
          }
     } else {
         uci::bench(ChessState::BENCH_DEPTH, policy, value, &params);
