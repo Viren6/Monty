@@ -155,14 +155,14 @@ fn worker(
         let mut batch_mapping = Vec::new();
         for (i, slot) in pending_games.iter().enumerate() {
             if let Some(game) = slot {
-                if game.value_game.moves.len() >= 8 && game.value_game.result == 0.0 {
-                    fens_to_send.push(if opts.dfrc {
-                         make_shredder_fen(&game.position)
-                    } else {
-                         game.position.board().as_fen()
-                    });
-                    batch_mapping.push(i);
-                }
+                // Ensure we only process active games
+                // We don't check result here because new games have result 0.0 (default)
+                fens_to_send.push(if opts.dfrc {
+                        make_shredder_fen(&game.position)
+                } else {
+                        game.position.board().as_fen()
+                });
+                batch_mapping.push(i);
             }
         }
         
@@ -179,7 +179,9 @@ fn worker(
         
         // Read Results
         let mut received_count = 0;
-        while received_count < fens_to_send.len() {
+        // Read Results
+        let mut received_count = 0;
+        loop {
             buf.clear();
             if reader.read_line(&mut buf).unwrap() == 0 {
                 panic!("Stockfish died");
