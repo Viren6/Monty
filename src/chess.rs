@@ -136,6 +136,10 @@ impl ChessState {
         self.castling
     }
 
+    pub fn set_chess960(&mut self, is_960: bool) {
+        self.castling.set_chess960(is_960);
+    }
+
     pub fn conv_mov_to_str(&self, mov: Move) -> String {
         mov.to_uci(&self.castling)
     }

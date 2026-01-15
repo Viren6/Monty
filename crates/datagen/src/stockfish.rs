@@ -117,7 +117,7 @@ fn worker(
         let mut pending_games = Vec::with_capacity(BATCH_SIZE);
         
         for _ in 0..BATCH_SIZE {
-            let mut game = GameRunner::new(book.as_deref(), rng.rand_int());
+            let mut game = GameRunner::new(book.as_deref(), rng.rand_int(), opts.dfrc);
             
             let mut plies_played = 0;
             let target_plies = 8;
@@ -155,13 +155,7 @@ fn worker(
         let mut batch_mapping = Vec::new();
         for (i, slot) in pending_games.iter().enumerate() {
             if let Some(game) = slot {
-                // Ensure we only process active games
-                // We don't check result here because new games have result 0.0 (default)
-                fens_to_send.push(if opts.dfrc {
-                        make_shredder_fen(&game.position)
-                } else {
-                        game.position.board().as_fen()
-                });
+                fens_to_send.push(game.position.board().as_fen());
                 batch_mapping.push(i);
             }
         }
@@ -169,15 +163,13 @@ fn worker(
         if fens_to_send.is_empty() { continue; }
         
         writeln!(stdin, "datagen {} {}", opts.nodes, fens_to_send.len()).unwrap();
-        stdin.flush().unwrap(); // Flush command line
+        stdin.flush().unwrap();
 
         for fen in &fens_to_send {
             writeln!(stdin, "{}", fen).unwrap();
         }
         stdin.flush().unwrap();
         
-        // Read Results
-        let mut received_count = 0;
         // Read Results
         let mut received_count = 0;
         loop {
@@ -251,7 +243,7 @@ fn worker(
                              
                             game.position.make_move(matched_move);
                         } else {
-                            panic!("Mismatch! UCI: '{}' FEN: '{}'", uci, fens_to_send[game_idx]);
+                            panic!("Mismatch! UCI: '{}' FEN: '{}' (sf_idx: {}, game_idx: {})", uci, fens_to_send[sf_idx], sf_idx, game_idx);
                         }
                      }
                      
@@ -294,8 +286,8 @@ struct GameRunner {
 }
 
 impl GameRunner {
-    fn new(book: Option<&crate::book::OpeningBook>, seed: u32) -> Self {
-        let position = if let Some(book) = book {
+    fn new(book: Option<&crate::book::OpeningBook>, seed: u32, dfrc: bool) -> Self {
+        let mut position = if let Some(book) = book {
             let mut rng = crate::rng::Rand(seed);
             let mut reader = book.reader().expect("failed to get book reader");
             let fen = reader.random_line(&mut rng).expect("failed to read book line");
@@ -303,6 +295,10 @@ impl GameRunner {
         } else {
             ChessState::from_fen(ChessState::STARTPOS)
         };
+
+        if dfrc {
+            position.set_chess960(true);
+        }
 
         let montyformat_position = position.board();
         let montyformat_castling = position.castling();
@@ -334,28 +330,7 @@ impl GameRunner {
 
 // Helpers
 fn uci_str(m: Move, pos: &ChessState) -> String {
-    let src = m.src();
-    let to = m.to();
-    let promo = m.promo_pc();
-    
-    let f1 = (src % 8) as u8;
-    let r1 = (src / 8) as u8;
-    let f2 = (to % 8) as u8;
-    let r2 = (to / 8) as u8;
-    
-    let mut s = format!("{}{}{}{}", 
-        (b'a' + f1) as char, (b'1' + r1) as char,
-        (b'a' + f2) as char, (b'1' + r2) as char
-    );
-    
-    if m.is_promo() {
-         let p = match promo {
-             3 => 'n', 4 => 'b', 5 => 'r', 6 => 'q', _ => 'q'
-         };
-         s.push(p);
-    }
-    
-    s
+    m.to_uci(&pos.castling())
 }
 
 fn run_monty_policy(
@@ -404,79 +379,4 @@ fn run_monty_policy(
     best_move
 }
 
-pub fn make_shredder_fen(pos: &ChessState) -> String {
-    let board = pos.board();
-    let castling = pos.castling();
-    let pcs = ['p', 'n', 'b', 'r', 'q', 'k', 'P', 'N', 'B', 'R', 'Q', 'K'];
-    let mut fen = String::new();
 
-    for rank in (0..8).rev() {
-        let mut clear = 0;
-
-        for file in 0..8 {
-            let sq = 8 * rank + file;
-            let bit = 1 << sq;
-            let pc = board.get_pc(bit);
-            if pc != 0 {
-                if clear > 0 {
-                    fen.push_str(&format!("{}", clear));
-                }
-                clear = 0;
-                let is_black = board.piece(Side::BLACK) & bit > 0;
-                let idx = pc - 2 + 6 * usize::from(!is_black);
-                fen.push(pcs[idx]);
-            } else {
-                clear += 1;
-            }
-        }
-
-        if clear > 0 {
-            fen.push_str(&format!("{}", clear));
-        }
-
-        if rank > 0 {
-            fen.push('/');
-        }
-    }
-
-    fen.push(' ');
-    fen.push(['w', 'b'][board.stm()]);
-    fen.push(' ');
-
-    let rights = board.rights();
-    if rights == 0 {
-        fen.push('-');
-    } else {
-        if rights & Right::WKS > 0 {
-            let file = castling.rook_file(Side::WHITE, 1); // 1 = KS
-            fen.push((b'A' + file as u8) as char);
-        }
-        if rights & Right::WQS > 0 {
-            let file = castling.rook_file(Side::WHITE, 0); // 0 = QS
-            fen.push((b'A' + file as u8) as char);
-        }
-        if rights & Right::BKS > 0 {
-            let file = castling.rook_file(Side::BLACK, 1);
-            fen.push((b'a' + file as u8) as char);
-        }
-        if rights & Right::BQS > 0 {
-            let file = castling.rook_file(Side::BLACK, 0);
-            fen.push((b'a' + file as u8) as char);
-        }
-    }
-
-    fen.push(' ');
-
-    if board.enp_sq() == 0 {
-        fen.push('-');
-    } else {
-        let file = board.enp_sq() % 8;
-        let rank = board.enp_sq() / 8;
-        fen.push((b'a' + file) as char);
-        fen.push((b'1' + rank) as char);
-    }
-
-    fen.push_str(&format!(" {} {}", board.halfm(), board.fullm()));
-
-    fen
-}

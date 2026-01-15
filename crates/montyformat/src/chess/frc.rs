@@ -25,6 +25,10 @@ impl Castling {
         self.chess960
     }
 
+    pub fn set_chess960(&mut self, is_960: bool) {
+        self.chess960 = is_960;
+    }
+
     pub fn mask(&self, sq: usize) -> u8 {
         self.castle_mask[sq]
     }

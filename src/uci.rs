@@ -26,6 +26,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
     let mut uci_rating_adv: Option<i32> = None;
     let mut contempt_override: Option<i32> = None;
     let mut contempt_analysis = false;
+    let mut chess960 = false;
 
     let mut stored_message: Option<String> = None;
 
@@ -64,8 +65,12 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
                 &mut uci_rating_adv,
                 &mut contempt_override,
                 &mut contempt_analysis,
+                &mut chess960,
             ),
-            "position" => position(commands, &mut pos),
+            "position" => {
+                position(commands, &mut pos);
+                pos.set_chess960(chess960);
+            },
             "go" => {
                 // increment game ply every time `go` is called
                 root_game_ply += 2;
@@ -292,6 +297,7 @@ fn setoption(
     uci_rating_adv: &mut Option<i32>,
     contempt_override: &mut Option<i32>,
     disable_tree_reuse: &mut bool,
+    chess960: &mut bool,
 ) {
     let Some((name, value)) = parse_name_value(commands) else {
         return;
@@ -301,7 +307,11 @@ fn setoption(
         "report_moves" => {
             *report_moves = !*report_moves;
         }
-        "UCI_Chess960" => {}
+        "UCI_Chess960" => {
+             if let Some(v) = value {
+                *chess960 = v.eq_ignore_ascii_case("true");
+            }
+        }
         "Contempt_Analysis" => {
             if let Some(v) = value {
                 *disable_tree_reuse = v.eq_ignore_ascii_case("true");
