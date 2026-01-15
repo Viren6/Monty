@@ -16,3 +16,4 @@ ctrlc = "3.4"
 default = []
 value   = ["monty/value"]
 policy  = ["monty/policy"]
+embed_stockfish = []

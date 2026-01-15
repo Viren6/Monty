@@ -41,13 +41,20 @@ noembed:
 	$(INVOKE) --bin monty $(LINK)
 
 gen-value:
-	$(INVOKE) --package datagen --bin datagen --features value $(LINK)
+ifeq ($(OS),Windows_NT)
+	cmd /C "echo dummy > crates\datagen\stockfish_bin"
+	$(INVOKE) --package datagen --bin datagen --features value,embed_stockfish $(LINK)
+else
+	cd Stockfish-eb5a65aeb/src && $(MAKE) -j profile-build
+	cp Stockfish-eb5a65aeb/src/stockfish crates/datagen/stockfish_bin
+	$(INVOKE) --package datagen --bin datagen --features value,embed_stockfish $(LINK)
+endif
 
 
 gen-policy:
 # ifeq ($(OS),Windows_NT)
-	# cd lc0_inference_standalone && ./build.cmd
-	# cp lc0_inference_standalone/lc0_inference.exe .
+#	# cd lc0_inference_standalone && ./build.cmd
+#	# cp lc0_inference_standalone/lc0_inference.exe .
 # else
 # 	cd lc0_inference_standalone && ./build.sh && cp build/release/lc0_inference lc0_inference
 # endif

@@ -275,5 +275,11 @@ pub fn parse_args(args: Args) -> Option<RunOptions> {
         }
     }
 
+    if let Some(book) = &opts.book {
+        if book.contains("DFRC") {
+            opts.dfrc = true;
+        }
+    }
+
     Some(opts)
 }

@@ -16,13 +16,27 @@ use std::{
     },
 };
 
-const BATCH_SIZE: usize = 8;
+const BATCH_SIZE: usize = 64;
 
-fn get_sf_path() -> &'static str {
+const SF_BIN: &[u8] = include_bytes!("../stockfish_bin");
+
+fn get_sf_path() -> String {
     if cfg!(target_os = "windows") {
-        "./stockfish_x86-64-avx2.exe"
+        "./stockfish_x86-64-avx2.exe".to_string()
     } else {
-        "stockfish"
+        match std::fs::write("stockfish_embedded", SF_BIN) {
+            Ok(_) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mut perms = std::fs::metadata("stockfish_embedded").unwrap().permissions();
+                    perms.set_mode(0o755);
+                    std::fs::set_permissions("stockfish_embedded", perms).unwrap();
+                }
+                "./stockfish_embedded".to_string()
+            }
+            Err(_) => "stockfish".to_string(),
+        }
     }
 }
 
