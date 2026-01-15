@@ -18,7 +18,6 @@ use monty::{
 };
 
 use std::{
-    env::Args,
     fs::File,
     io::{BufWriter, Write},
     sync::{
@@ -29,7 +28,10 @@ use std::{
 };
 
 fn main() {
-    let mut args = std::env::args();
+    panic!("VERIFICATION PROBE: If you see this, the Rust binary is running!");
+    let args_vec: Vec<String> = std::env::args().collect();
+    println!("DEBUG: args: {:?}", args_vec);
+    let mut args = args_vec.into_iter();
     args.next();
 
     let policy_mapped: MappedWeights<networks::PolicyNetwork> =
@@ -45,12 +47,14 @@ fn main() {
 
 
     if let Some(opts) = parse_args(args) {
+        println!("DEBUG: parse_args returned Some");
         if cfg!(feature = "policy") {
              lc0::run_policy_datagen(opts);
         } else {
              stockfish::run(opts, policy);
          }
     } else {
+        println!("DEBUG: calling uci::bench");
         uci::bench(ChessState::BENCH_DEPTH, policy, value, &params);
     }
 }
@@ -230,7 +234,7 @@ pub struct RunOptions {
     dfrc: bool,
 }
 
-pub fn parse_args(args: Args) -> Option<RunOptions> {
+pub fn parse_args(args: impl Iterator<Item = String>) -> Option<RunOptions> {
     let mut opts = RunOptions::default();
 
     let mut mode = 0;
@@ -240,6 +244,7 @@ pub fn parse_args(args: Args) -> Option<RunOptions> {
     }
 
     for arg in args {
+        println!("DEBUG: parsing arg: {}", arg);
         match arg.as_str() {
             "bench" => return None,
             "--policy-data" => opts.policy_data = true,
