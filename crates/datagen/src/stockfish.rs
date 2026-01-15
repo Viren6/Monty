@@ -264,6 +264,16 @@ fn worker(
                      
                      game.value_game.result = final_res;
                      game.searches = game.value_game.moves.len();
+                     /*println!("Game Inserted");
+                     let mut temp_pos = game.value_game.startpos;
+                     println!("Initial FEN: {}", temp_pos.as_fen());
+                     for res in &game.value_game.moves {
+                         println!("Move: {}, Score: {}, FEN after:", res.best_move.to_uci(&game.value_game.castling), res.score);
+                         let m = Move::from(u16::from(res.best_move));
+                         temp_pos.make(res.best_move, &game.value_game.castling);
+                         println!("{}", temp_pos.as_fen());
+                     }
+                     println!("Result: {}", game.value_game.result);*/
                      dest.lock().unwrap().push(&game.value_game, &stop, game.searches, game.iters);
                      
                      received_count += 1;
