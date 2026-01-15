@@ -1,6 +1,6 @@
 use crate::{Destination, RunOptions};
 use monty::{
-    chess::{ChessState, GameState, Move, Castling},
+    chess::{ChessState, GameState},
 };
 use montyformat::{
     chess::{Right, Side},

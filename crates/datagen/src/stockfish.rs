@@ -1,10 +1,9 @@
 use crate::{Destination, RunOptions};
 use monty::{
-    chess::{ChessState, GameState, Move},
-    networks::{PolicyNetwork, ValueNetwork},
+    chess::{ChessState, Move},
+    networks::PolicyNetwork,
 };
 use montyformat::{
-    chess::{Right, Side},
     MontyValueFormat,
 };
 use std::{
@@ -184,8 +183,6 @@ fn worker(
         }
         stdin.flush().unwrap();
         
-        // Read Results
-        let mut received_count = 0;
         loop {
             buf.clear();
             if reader.read_line(&mut buf).unwrap() == 0 {
@@ -213,7 +210,7 @@ fn worker(
                  }
                  let game_idx = batch_mapping[sf_idx];
                  
-                 let mut moves_start = 2;
+                 let moves_start = 2;
                  let mut scores_start = 0;
                  let mut result_start = 0;
                  
@@ -290,7 +287,6 @@ fn worker(
                      println!("Result: {}", game.value_game.result);*/
                      dest.lock().unwrap().push(&game.value_game, &stop, game.searches, game.iters);
                      
-                     received_count += 1;
                      }
                  }
              }
