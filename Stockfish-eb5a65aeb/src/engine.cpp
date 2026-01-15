@@ -167,7 +167,6 @@ int Engine::datagen_game(int nodes_limit, std::vector<std::string>& moves, std::
     StateListPtr game_states(new std::deque<StateInfo>(1));
     Position game_pos;
     game_pos.set(pos.fen(), options["UCI_Chess960"], &game_states->back());
-    std::cerr << "Debug: Internal game_pos FEN: " << game_pos.fen() << std::endl;
     limits.startTime = now();
 
     // Loop until game over
@@ -234,15 +233,6 @@ int Engine::datagen_game(int nodes_limit, std::vector<std::string>& moves, std::
              break;
         }
 
-        {
-            Square from = m.from_sq();
-            Square to = m.to_sq();
-            Piece p = game_pos.piece_on(from);
-            std::cerr << "Debug: GameMove " << moves.size() << " " << best_move_uci 
-                      << " Piece: " << (int)p 
-                      << " (" << (type_of(p) == ROOK ? "ROOK" : (type_of(p) == BISHOP ? "BISHOP" : "OTHER")) << ")"
-                      << " From: " << from << " To: " << to << std::endl;
-        }
 
         moves.push_back(best_move_uci);
         

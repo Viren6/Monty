@@ -172,7 +172,6 @@ fn worker(
         stdin.flush().unwrap(); // Flush command line
 
         for fen in &fens_to_send {
-            println!("DEBUG: Sending FEN: '{}'", fen);
             writeln!(stdin, "{}", fen).unwrap();
         }
         stdin.flush().unwrap();
@@ -250,27 +249,10 @@ fn worker(
                                  score,
                              });
                              
-                             game.position.make_move(matched_move);
-                         } else {
-                             println!("Mismatch! UCI: '{}' Read FEN: '{}' Line: '{}'", uci, fens_to_send[game_idx], line);
-                             println!("UCI Bytes: {:?}", uci.as_bytes());
-                             println!("FEN: '{}'", game.value_game.startpos.as_fen());
-                             
-                             eprintln!("History:");
-                             for res in &game.value_game.moves {
-                                 eprintln!(" {}", res.best_move.to_uci(&game.position.castling()));
-                             }
-
-                             eprintln!("Legal moves:");
-                             game.position.map_legal_moves(|m| {
-                                 let s = uci_str(m, &game.position);
-                                 if s == uci {
-                                     eprintln!(" - {} ({:?}) MATCHED BUT IGNORED?", s, m);
-                                 }
-                                 eprintln!(" - {} ({:?}) flag={} promo={} bytes={:?}", s, m, m.flag(), m.promo_pc(), s.as_bytes());
-                             });
-                             break;
-                         }
+                            game.position.make_move(matched_move);
+                        } else {
+                            panic!("Mismatch! UCI: '{}' FEN: '{}'", uci, fens_to_send[game_idx]);
+                        }
                      }
                      
                      // Parse Result

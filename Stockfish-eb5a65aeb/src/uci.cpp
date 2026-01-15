@@ -476,26 +476,14 @@ void UCIEngine::datagen(std::istream& args) {
         }
         
         if (!fen.empty() && fen.back() == '\r') fen.pop_back();
-        std::cerr << "Debug: Raw Input: '" << fen << "'" << std::endl;
-
-        // Skip empty lines (whitespace only check)
         if (fen.find_first_not_of(" \t") == std::string::npos) continue;
         
         // Trim leading whitespace
         fen.erase(0, fen.find_first_not_of(" \t"));
 
-        std::cerr << "Debug: Playing game " << i << " Read FEN: '" << fen << "' (Len: " << fen.length() << ")" << std::endl;
-
         engine.search_clear();
         engine.set_position(fen, {}); // Set FEN, no moves initially
         
-        std::string set_fen = engine.fen();
-        std::cerr << "Debug: Engine FEN after set: '" << set_fen << "'" << std::endl;
-
-        if (set_fen.substr(0, 10) != fen.substr(0, 10)) {
-             std::cerr << "WARNING: FEN Mismatch detected!" << std::endl;
-        }
-
         moves.clear();
         scores.clear();
 
