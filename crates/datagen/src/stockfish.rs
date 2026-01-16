@@ -19,10 +19,15 @@ const BATCH_SIZE: usize = 64;
 
 const SF_BIN: &[u8] = include_bytes!("../stockfish_bin");
 
-fn get_sf_path() -> String {
+fn prepare_sf_path() -> String {
     if cfg!(target_os = "windows") {
         "./stockfish_x86-64-avx2.exe".to_string()
     } else {
+        let path = std::path::Path::new("./stockfish_embedded");
+        if path.exists() {
+            return "./stockfish_embedded".to_string();
+        }
+
         match std::fs::write("stockfish_embedded", SF_BIN) {
             Ok(_) => {
                 #[cfg(unix)]
@@ -47,6 +52,9 @@ pub fn run(
     println!("Threads: {}", opts.threads);
     println!("Games: {}", opts.games);
     println!("Out: {}", opts.out_path);
+
+    // Prepare Stockfish binary (extract only once if needed)
+    let sf_path = prepare_sf_path();
 
     let book = opts
         .book
@@ -77,9 +85,10 @@ pub fn run(
              let dest = dest.clone();
              let stop = stop.clone();
              let book = book.clone();
+             let sf_path = sf_path.clone();
              
              s.spawn(move || {
-                 worker(opts, policy, dest, stop, book);
+                 worker(opts, policy, dest, stop, book, sf_path);
              });
         }
     });
@@ -94,9 +103,9 @@ fn worker(
     dest: Arc<Mutex<Destination>>,
     stop: Arc<AtomicBool>,
     book: Option<Arc<crate::book::OpeningBook>>,
+    sf_path: String,
 ) {
     let mut rng = crate::rng::Rand::with_seed();
-    let sf_path = get_sf_path();
     
     let mut child = Command::new(sf_path)
         .stdin(Stdio::piped())
