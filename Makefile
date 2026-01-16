@@ -46,7 +46,7 @@ ifeq ($(OS),Windows_NT)
 	$(INVOKE) --package datagen --bin datagen --features value,embed_stockfish $(LINK)
 else
 	@sed -i 's/-flto=jobserver/-flto/g' Stockfish-eb5a65aeb/src/Makefile
-	+cd Stockfish-eb5a65aeb/src && $(MAKE) profile-build
+	+$(MAKE) -C Stockfish-eb5a65aeb/src profile-build EXE=stockfish PGOBENCH="./stockfish bench" MAKEOVERRIDES=
 	cp Stockfish-eb5a65aeb/src/stockfish crates/datagen/stockfish_bin
 	$(INVOKE) --package datagen --bin datagen --features value,embed_stockfish $(LINK)
 endif
