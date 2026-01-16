@@ -45,7 +45,7 @@ ifeq ($(OS),Windows_NT)
 	cmd /C "echo dummy > crates\datagen\stockfish_bin"
 	$(INVOKE) --package datagen --bin datagen --features value,embed_stockfish $(LINK)
 else
-	cd Stockfish-eb5a65aeb/src && $(MAKE) -j profile-build
+	cd Stockfish-eb5a65aeb/src && +$(MAKE) profile-build
 	cp Stockfish-eb5a65aeb/src/stockfish crates/datagen/stockfish_bin
 	$(INVOKE) --package datagen --bin datagen --features value,embed_stockfish $(LINK)
 endif
