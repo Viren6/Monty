@@ -122,7 +122,7 @@ fn worker(
     if opts.dfrc {
         writeln!(stdin, "setoption name UCI_Chess960 value true").unwrap();
     }
-    writeln!(stdin, "setoption name Hash value 16").unwrap();
+    writeln!(stdin, "setoption name Hash value 8").unwrap();
     writeln!(stdin, "isready").unwrap();
     
     let mut buf = String::new();
