@@ -530,7 +530,11 @@ fn process_game(
         }
     }
     
-    // Select Played Move (Temp decay)
+    // S-curve temperature: 0.2 + (0.7 / (1 + exp((x - 18) / 4)))
+    let x = game.searches as f32;
+    game.temp = 0.2 + 0.7 / (1.0 + ((x - 18.0) / 4.0).exp());
+
+    // Select Played Move
     let played_move_idx = if game.temp > 0.0 {
         // Sample with temperature
         let mut sum_exp_temp = 0.0;
@@ -569,12 +573,6 @@ fn process_game(
     };
     
     let best_move =  moves[played_move_idx];
-    
-    // Decay Temperature
-    game.temp *= 0.95;
-    if game.temp < 0.2 {
-        game.temp = 0.2f32;
-    }
 
     // Use LC0 Value (Q is typically -1.0 to 1.0 from perspective of STM)
     // Monty expects score 0.0 (Loss) to 1.0 (Win).
