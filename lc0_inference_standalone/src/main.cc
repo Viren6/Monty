@@ -73,6 +73,43 @@ void PrintOutput(NetworkComputation& computation, int sample_idx, const std::str
     std::cout.flush(); // Ensure flush for pipes
 }
 
+// Helper to separate string by whitespace
+std::vector<std::string> Split(const std::string& str) {
+    std::istringstream iss(str);
+    std::vector<std::string> tokens;
+    std::string token;
+    while (iss >> token) {
+        tokens.push_back(token);
+    }
+    return tokens;
+}
+
+Move ParseMove(const Position& pos, const std::string& move_str, bool chess960) {
+    const auto& board = pos.GetBoard();
+    MoveList moves = board.GenerateLegalMoves();
+    for (const auto& m : moves) {
+        Move m_real = m;
+        if (pos.IsBlackToMove()) {
+            m_real.Flip();
+        }
+        if (m_real.ToString(chess960) == move_str) return m;
+    }
+    
+    // DEBUG FAILURE
+    std::cerr << "FAILED to parse move: " << move_str << "\n";
+    std::cerr << "STM: " << (pos.IsBlackToMove() ? "Black" : "White") << "\n";
+    std::cerr << "Legal Moves (Internal -> Real): ";
+    int count = 0;
+    for (const auto& m : moves) {
+        Move m_real = m;
+        if (pos.IsBlackToMove()) m_real.Flip();
+        if (count++ < 10) std::cerr << m_real.ToString(chess960) << " ";
+    }
+    std::cerr << "... (" << moves.size() << " total)\n";
+    
+    return Move(); // null
+}
+
 int main(int argc, char* argv[]) {
     try {
         if (argc < 2) {
@@ -126,28 +163,28 @@ int main(int argc, char* argv[]) {
         std::cerr << "Network created. Batch size: " << batch_size << "\n";
 
         // Interactive loop
-        std::vector<std::string> batch_fens;
-        batch_fens.reserve(batch_size);
+        std::vector<std::string> batch_lines;
+        batch_lines.reserve(batch_size);
         
         std::string line;
         while (true) {
-            batch_fens.clear();
+            batch_lines.clear();
             for (int i = 0; i < batch_size; ++i) {
                  if (std::getline(std::cin, line)) {
                      // Trim is critical for Windows pipes and robustness
                      line = Trim(line);
                      if (!line.empty()) {
-                        batch_fens.push_back(line);
+                        batch_lines.push_back(line);
                      } else {
                         i--; // retry
                      }
                  } else {
-                     if (batch_fens.empty()) return 0;
+                     if (batch_lines.empty()) return 0;
                      break; 
                  }
             }
             
-            if (batch_fens.empty()) break;
+            if (batch_lines.empty()) break;
 
             // Process batch
             auto computation = network->NewComputation();
@@ -155,13 +192,39 @@ int main(int argc, char* argv[]) {
             
             // Store transforms for output phase
             std::vector<int> transforms;
-            transforms.reserve(batch_fens.size());
+            transforms.reserve(batch_lines.size());
+            std::vector<std::string> fens; // To store the FINAL fen for checking
+            fens.reserve(batch_lines.size());
             
-            for (const auto& fen : batch_fens) {
-                Position pos = Position::FromFen(fen);
+            for (const auto& input_line : batch_lines) {
+                // Parse: FEN (6 tokens) + Moves
+                auto tokens = Split(input_line);
+                if (tokens.size() < 6) {
+                    std::cerr << "Error: Invalid input line (too short): " << input_line << "\n";
+                    // Hack: push dummy? Or just fail?
+                    // Let's just create a startpos to keep alignment
+                    tokens = Split("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+                }
+                
+                std::string start_fen = tokens[0] + " " + tokens[1] + " " + tokens[2] + " " + tokens[3] + " " + tokens[4] + " " + tokens[5];
+                
+                Position pos = Position::FromFen(start_fen);
                 PositionHistory history;
                 history.Reset(pos);
                 
+                for (size_t k = 6; k < tokens.size(); ++k) {
+                    Move m = ParseMove(pos, tokens[k], chess960);
+                     // If invalid move, we stop processing history to avoid crash, but keep position so far?
+                     if (!m.is_null()) {
+                         pos = Position(pos, m);
+                         history.Append(m);
+                     } else {
+                         std::cerr << "Warning: Invalid move " << tokens[k] << " for FEN " << start_fen << "\n";
+                     }
+                }
+                
+                fens.push_back(PositionToFen(pos));
+
                 int transform = 0; 
                 auto input_format = network->GetCapabilities().input_format;
                 
@@ -181,7 +244,8 @@ int main(int argc, char* argv[]) {
             computation->ComputeBlocking();
             
             for (int k = 0; k < current_batch; ++k) {
-                PrintOutput(*computation, k, batch_fens[k], transforms[k]);
+                // Return the FINAL fen, consistent with old behavior validation
+                PrintOutput(*computation, k, fens[k], transforms[k]);
             }
             std::cout << "BATCH_DONE\n";
             std::cout.flush();

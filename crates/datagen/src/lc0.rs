@@ -1,6 +1,6 @@
 use crate::{Destination, RunOptions};
 use monty::{
-    chess::{ChessState, GameState, Move, Castling},
+    chess::{ChessState, GameState},
 };
 use montyformat::{
     chess::{Right, Side},
@@ -21,17 +21,22 @@ const BATCH_SIZE: usize = 1024;
 const LC0_NETWORK_PATH: &str = r"C:\Users\viren\Documents\GitHub\Monty0\bt4-1024x15x32h-swa-6147500.pb.gz";
 
 struct GameRunner {
+    #[allow(dead_code)]
+    id: usize,
     position: ChessState,
+    dfrc: bool,
     temp: f32,
     searches: usize,
     iters: usize,
+    fen_history: Vec<String>,
+    move_history: Vec<String>,
     policy_game: MontyFormat,
     #[allow(dead_code)]
     value_game: MontyValueFormat,
 }
 
 impl GameRunner {
-    fn new(book: Option<&crate::book::OpeningBook>, seed: u32) -> Self {
+    fn new(id: usize, book: Option<&crate::book::OpeningBook>, seed: u32, dfrc: bool) -> Self {
         let position = if let Some(book) = book {
             let mut rng = crate::rng::Rand(seed);
             let mut reader = book.reader().expect("failed to get book reader");
@@ -44,11 +49,21 @@ impl GameRunner {
         let montyformat_position = position.board();
         let montyformat_castling = position.castling();
 
+        let start_fen = if dfrc {
+            make_shredder_fen(&position)
+        } else {
+            position.board().as_fen()
+        };
+
         GameRunner {
+            id,
             position,
-            temp: 1.4,
+            dfrc,
+            temp: 1.0,
             searches: 0,
             iters: 0,
+            fen_history: vec![start_fen],
+            move_history: Vec::new(),
             policy_game: MontyFormat::new(montyformat_position, montyformat_castling),
             value_game: MontyValueFormat {
                 startpos: montyformat_position,
@@ -60,7 +75,7 @@ impl GameRunner {
     }
 
     fn reset(&mut self, book: Option<&crate::book::OpeningBook>, seed: u32) {
-        *self = Self::new(book, seed);
+        *self = Self::new(self.id, book, seed, self.dfrc);
     }
 }
 
@@ -139,7 +154,7 @@ pub fn run_policy_datagen(
 
     let mut rng = crate::rng::Rand::with_seed();
     let mut games: Vec<GameRunner> = (0..BATCH_SIZE)
-        .map(|_| GameRunner::new(book_ref, rng.rand_int()))
+        .map(|i| GameRunner::new(i, book_ref, rng.rand_int(), opts.dfrc))
         .collect();
 
     let mut buffer = String::new();
@@ -177,12 +192,17 @@ pub fn run_policy_datagen(
 
         // 2. Send FENs
         for game in &games {
-            let fen = if opts.dfrc {
-                make_shredder_fen(&game.position)
-            } else {
-                game.position.board().as_fen()
-            };
-            writeln!(stdin, "{}", fen).unwrap();
+            let history_len = 8;
+            let start_idx = game.iters.saturating_sub(history_len);
+            
+            let mut input = game.fen_history[start_idx].clone();
+            
+            for m in &game.move_history[start_idx..] {
+                input.push(' ');
+                input.push_str(m);
+            }
+
+            writeln!(stdin, "{}", input).unwrap();
         }
         stdin.flush().unwrap();
 
@@ -551,9 +571,9 @@ fn process_game(
     let best_move =  moves[played_move_idx];
     
     // Decay Temperature
-    game.temp *= 0.9;
+    game.temp *= 0.95;
     if game.temp < 0.2 {
-        game.temp = 0.0f32;
+        game.temp = 0.2f32;
     }
 
     // Use LC0 Value (Q is typically -1.0 to 1.0 from perspective of STM)
@@ -582,6 +602,35 @@ fn process_game(
         println!("Best Move: {}", best_move);
     }*/
 
+    // VERIFICATION: Check Policy Integrity
+    // Verify only for the first game to avoid log spam and show progression
+    /*if game.id == 0 {
+        let history_len = 8;
+        let start_idx = game.iters.saturating_sub(history_len);
+        
+        println!("DEBUG_GAME_ID: {}", game.id);
+        println!("DEBUG_ITERS: {}", game.iters);
+        println!("DEBUG_START_FEN: {}", game.fen_history[start_idx]);
+        
+        print!("DEBUG_PLAYED_MOVES:");
+        for m in &game.move_history[start_idx..] {
+             print!(" {}", m);
+        }
+        println!("");
+
+        print!("DEBUG_MOVES:");
+        for (_i, (m, v)) in dist.iter().enumerate() {
+             let prob = (*v as f32) / 65535.0;
+             if prob > 0.001 { 
+                 print!(" {}:{:.2}%", m, prob * 100.0);
+             }
+        }
+        println!("");
+        println!("DEBUG_PLAYED: {}", best_move);
+    }*/
+
+    game.move_history.push(format!("{}", best_move));
+    
     if output_policy {
         let search_data = SearchData::new(mf_best_move, score, Some(dist));
         game.policy_game.push(search_data);
@@ -593,6 +642,13 @@ fn process_game(
     game.iters += 1;
 
     game.position.make_move(best_move);
+
+    let fen = if game.dfrc {
+        make_shredder_fen(&game.position)
+    } else {
+        game.position.board().as_fen()
+    };
+    game.fen_history.push(fen);
 
     let state = game.position.game_state();
     let over = match state {
