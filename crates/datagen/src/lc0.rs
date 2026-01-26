@@ -629,7 +629,12 @@ fn process_game(
         println!("DEBUG_PLAYED: {}", best_move);
     }*/
 
-    game.move_history.push(format!("{}", best_move));
+    let move_str = if game.dfrc {
+        format_move_dfrc(best_move, &game.position)
+    } else {
+        format!("{}", best_move)
+    };
+    game.move_history.push(move_str);
     
     if output_policy {
         let search_data = SearchData::new(mf_best_move, score, Some(dist));
@@ -750,4 +755,35 @@ pub fn make_shredder_fen(pos: &ChessState) -> String {
     fen.push_str(&format!(" {} {}", board.halfm(), board.fullm()));
 
     fen
+}
+
+fn format_move_dfrc(m: monty::chess::Move, pos: &ChessState) -> String {
+    let flag = m.flag();
+    // K_CASTLE=2, Q_CASTLE=3.
+    if flag == 2 || flag == 3 {
+        // flag=2 -> KingSide (ks=1 in monty Castling)
+        // flag=3 -> QueenSide (ks=0 in monty Castling)
+        let ks = if flag == 2 { 1 } else { 0 };
+        let stm = pos.stm();
+        
+        let castling = pos.castling();
+        let rook_file = castling.rook_file(stm, ks);
+        let src_rank = if stm == 0 { 0 } else { 7 };
+        let dst_rank = src_rank; // Castling is horizontal
+        
+        // Construct KxR move string
+        let src_sq = m.src();
+        let src_file = src_sq % 8;
+        // dst is Rook's square (file from rights, rank from color)
+        let dst_file = rook_file;
+        
+        let mut s = String::new();
+        s.push((b'a' + src_file as u8) as char);
+        s.push((b'1' + src_rank as u8) as char);
+        s.push((b'a' + dst_file as u8) as char);
+        s.push((b'1' + dst_rank as u8) as char);
+        return s;
+    }
+    
+    format!("{}", m)
 }
