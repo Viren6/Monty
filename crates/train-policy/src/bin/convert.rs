@@ -34,7 +34,7 @@ fn main() {
 
         for result in game.moves {
             positions += 1;
-            value.push(stm, result.best_move, result.score);
+            value.push(stm, result.best_move, result.q_value, result.d_value);
             stm = 1 - stm;
         }
 

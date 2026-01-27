@@ -1,11 +1,12 @@
-use bullet_lib::game::{formats::bulletformat::ChessBoard, inputs::SparseInputType};
+use bullet_lib::game::inputs::SparseInputType;
+use crate::structs::WdlPosition;
 
 use monty::networks::value::threats::{map_features, TOTAL};
 
 #[derive(Clone, Copy, Default)]
 pub struct ThreatInputs;
 impl SparseInputType for ThreatInputs {
-    type RequiredDataType = ChessBoard;
+    type RequiredDataType = WdlPosition;
 
     fn num_inputs(&self) -> usize {
         TOTAL
@@ -15,9 +16,9 @@ impl SparseInputType for ThreatInputs {
         128
     }
 
-    fn map_features<F: FnMut(usize, usize)>(&self, pos: &ChessBoard, mut f: F) {
+    fn map_features<F: FnMut(usize, usize)>(&self, pos: &WdlPosition, mut f: F) {
         let mut bbs = [0; 8];
-        for (pc, sq) in pos.into_iter() {
+        for (pc, sq) in pos.board.into_iter() {
             let pt = 2 + usize::from(pc & 7);
             let c = usize::from(pc & 8 > 0);
             let bit = 1 << sq;

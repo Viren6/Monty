@@ -1,5 +1,6 @@
 mod dataloader;
 mod input;
+mod structs;
 
 use dataloader::MontyBinpackLoader;
 use input::ThreatInputs;
@@ -115,7 +116,7 @@ fn main() {
         batch_queue_size: 32,
     };
 
-    fn filter(_: &Position, _: Move, _: i16, _: f32) -> bool {
+    fn filter(_: &Position, _: Move, _: u16, _: u16) -> bool {
         true
     }
 

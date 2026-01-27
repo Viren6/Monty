@@ -6,6 +6,7 @@ use std::{
 };
 
 use bullet_lib::{game::formats::bulletformat::ChessBoard, value::loader::DataLoader};
+use crate::structs::WdlPosition;
 
 use montyformat::{
     chess::{Move, Position},
@@ -13,14 +14,14 @@ use montyformat::{
 };
 
 #[derive(Clone)]
-pub struct MontyBinpackLoader<T: Fn(&Position, Move, i16, f32) -> bool> {
+pub struct MontyBinpackLoader<T: Fn(&Position, Move, u16, u16) -> bool> {
     file_paths: Vec<String>,
     buffer_size: usize,
     threads: usize,
     filter: T,
 }
 
-impl<T: Fn(&Position, Move, i16, f32) -> bool> MontyBinpackLoader<T> {
+impl<T: Fn(&Position, Move, u16, u16) -> bool> MontyBinpackLoader<T> {
     pub fn new(path: &str, buffer_size_mb: usize, threads: usize, filter: T) -> Self {
         Self::new_concat_multiple(&[path], buffer_size_mb, threads, filter)
     }
@@ -33,16 +34,16 @@ impl<T: Fn(&Position, Move, i16, f32) -> bool> MontyBinpackLoader<T> {
     ) -> Self {
         Self {
             file_paths: paths.iter().map(|x| x.to_string()).collect(),
-            buffer_size: buffer_size_mb * 1024 * 1024 / std::mem::size_of::<ChessBoard>() / 2,
+            buffer_size: buffer_size_mb * 1024 * 1024 / std::mem::size_of::<WdlPosition>() / 2,
             threads,
             filter,
         }
     }
 }
 
-impl<T> DataLoader<ChessBoard> for MontyBinpackLoader<T>
+impl<T> DataLoader<WdlPosition> for MontyBinpackLoader<T>
 where
-    T: Fn(&Position, Move, i16, f32) -> bool + Clone + Send + Sync + 'static,
+    T: Fn(&Position, Move, u16, u16) -> bool + Clone + Send + Sync + 'static,
 {
     fn data_file_paths(&self) -> &[String] {
         &self.file_paths
@@ -52,7 +53,7 @@ where
         None
     }
 
-    fn map_batches<F: FnMut(&[ChessBoard]) -> bool>(&self, _: usize, batch_size: usize, mut f: F) {
+    fn map_batches<F: FnMut(&[WdlPosition]) -> bool>(&self, _: usize, batch_size: usize, mut f: F) {
         let mut shuffle_buffer = Vec::new();
         shuffle_buffer.reserve_exact(self.buffer_size);
 
@@ -79,7 +80,7 @@ where
             }
         });
 
-        let (game_sender, game_receiver) = mpsc::sync_channel::<Vec<ChessBoard>>(4 * self.threads);
+        let (game_sender, game_receiver) = mpsc::sync_channel::<Vec<WdlPosition>>(4 * self.threads);
         let (game_msg_sender, game_msg_receiver) = mpsc::sync_channel::<bool>(1);
 
         let threads = self.threads;
@@ -102,7 +103,7 @@ where
             }
         });
 
-        let (buffer_sender, buffer_receiver) = mpsc::sync_channel::<Vec<ChessBoard>>(0);
+        let (buffer_sender, buffer_receiver) = mpsc::sync_channel::<Vec<WdlPosition>>(0);
         let (buffer_msg_sender, buffer_msg_receiver) = mpsc::sync_channel::<bool>(1);
 
         std::thread::spawn(move || {
@@ -151,9 +152,9 @@ where
     }
 }
 
-fn convert_buffer<T: Fn(&Position, Move, i16, f32) -> bool + Send + Sync>(
+fn convert_buffer<T: Fn(&Position, Move, u16, u16) -> bool + Send + Sync>(
     threads: usize,
-    sender: &SyncSender<Vec<ChessBoard>>,
+    sender: &SyncSender<Vec<WdlPosition>>,
     games: &[Vec<u8>],
     filter: &T,
 ) {
@@ -175,9 +176,9 @@ fn convert_buffer<T: Fn(&Position, Move, i16, f32) -> bool + Send + Sync>(
     });
 }
 
-fn parse_into_buffer<T: Fn(&Position, Move, i16, f32) -> bool>(
+fn parse_into_buffer<T: Fn(&Position, Move, u16, u16) -> bool>(
     game_bytes: &[u8],
-    buffer: &mut Vec<ChessBoard>,
+    buffer: &mut Vec<WdlPosition>,
     filter: &T,
 ) {
     let mut reader = Cursor::new(game_bytes);
@@ -187,16 +188,21 @@ fn parse_into_buffer<T: Fn(&Position, Move, i16, f32) -> bool>(
     let castling = game.castling;
 
     for data in game.moves {
-        if filter(&pos, data.best_move, data.score, game.result) {
-            buffer
-                .push(ChessBoard::from_raw(pos.bbs(), pos.stm(), data.score, game.result).unwrap());
+        if filter(&pos, data.best_move, data.q_value, data.d_value) {
+            let q = f32::from(data.q_value) / 65535.0 * 2.0 - 1.0;
+            let d = f32::from(data.d_value) / 65535.0;
+            let w = (q + 1.0 - d) / 2.0;
+            let l = 1.0 - w - d;
+            
+            let board = ChessBoard::from_raw(pos.bbs(), pos.stm(), 0, 0.0).unwrap();
+            buffer.push(WdlPosition::new(board, [w, d, l]));
         }
 
         pos.make(data.best_move, &castling);
     }
 }
 
-fn shuffle(data: &mut [ChessBoard]) {
+fn shuffle(data: &mut [WdlPosition]) {
     let mut rng = SimpleRand::with_seed();
 
     for i in (0..data.len()).rev() {
