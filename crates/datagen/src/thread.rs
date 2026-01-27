@@ -118,7 +118,10 @@ impl<'a> DatagenThread<'a> {
                 temp = 0.0;
             }
 
-            value_game.push(position.stm(), best_move, score);
+            let q_value = (score * 65535.0).clamp(0.0, 65535.0) as u16;
+            let d_value = 0;
+
+            value_game.push(position.stm(), best_move, q_value, d_value);
 
             let mut root_count = 0;
             position.map_legal_moves(|_| root_count += 1);
@@ -142,7 +145,7 @@ impl<'a> DatagenThread<'a> {
                 Some(dist)
             };
 
-            let search_data = SearchData::new(best_move, score, dist);
+            let search_data = SearchData::new(best_move, q_value, d_value, dist);
 
             policy_game.push(search_data);
 

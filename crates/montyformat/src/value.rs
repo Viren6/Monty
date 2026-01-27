@@ -7,7 +7,8 @@ use crate::{
 
 pub struct SearchResult {
     pub best_move: Move,
-    pub score: i16,
+    pub q_value: u16,
+    pub d_value: u16,
 }
 
 pub struct MontyValueFormat {
@@ -18,14 +19,8 @@ pub struct MontyValueFormat {
 }
 
 impl MontyValueFormat {
-    pub fn push(&mut self, stm: usize, best_move: Move, mut score: f32) {
-        if stm == 1 {
-            score = 1.0 - score;
-        }
-
-        let score = -(400.0 * (1.0 / score - 1.0).ln()) as i16;
-
-        self.moves.push(SearchResult { best_move, score });
+    pub fn push(&mut self, _stm: usize, best_move: Move, q_value: u16, d_value: u16) {
+        self.moves.push(SearchResult { best_move, q_value, d_value });
     }
 
     pub fn serialise_into(&self, writer: &mut impl std::io::Write) -> std::io::Result<()> {
@@ -50,12 +45,13 @@ impl MontyValueFormat {
         let result = (self.result * 2.0) as u8;
         writer.write_all(&result.to_le_bytes())?;
 
-        for SearchResult { best_move, score } in &self.moves {
+        for SearchResult { best_move, q_value, d_value } in &self.moves {
             writer.write_all(&u16::from(*best_move).to_le_bytes())?;
-            writer.write_all(&score.to_le_bytes())?;
+            writer.write_all(&q_value.to_le_bytes())?;
+            writer.write_all(&d_value.to_le_bytes())?;
         }
 
-        writer.write_all(&[0; 4])?;
+        writer.write_all(&[0; 6])?;
         Ok(())
     }
 
@@ -100,19 +96,21 @@ impl MontyValueFormat {
         moves.clear();
 
         loop {
-            let mut buf = [0; 4];
+            let mut buf = [0; 6];
             reader.read_exact(&mut buf)?;
 
-            if buf == [0; 4] {
+            if buf == [0; 6] {
                 break;
             }
 
             let best_move = u16::from_le_bytes([buf[0], buf[1]]);
-            let score = i16::from_le_bytes([buf[2], buf[3]]);
+            let q_value = u16::from_le_bytes([buf[2], buf[3]]);
+            let d_value = u16::from_le_bytes([buf[4], buf[5]]);
 
             moves.push(SearchResult {
                 best_move: best_move.into(),
-                score,
+                q_value,
+                d_value,
             });
         }
 

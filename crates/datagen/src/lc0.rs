@@ -210,6 +210,7 @@ pub fn run_policy_datagen(
         let mut game_idx = 0;
         let mut current_policy = [f32::NEG_INFINITY; 1858]; 
         let mut current_value = 0.0f32;
+        let mut current_draw = 0.0f32;
         let mut reading_fen = String::new();
         
         loop {
@@ -233,6 +234,10 @@ pub fn run_policy_datagen(
             } else if line.starts_with("Value:") {
                 if let Some(val_str) = line.split_whitespace().nth(1) {
                      current_value = val_str.parse().unwrap_or(0.0);
+                }
+            } else if line.starts_with("Draw:") {
+                if let Some(val_str) = line.split_whitespace().nth(1) {
+                     current_draw = val_str.parse().unwrap_or(0.0);
                 }
             } else if line.starts_with("Policy (Logits):") {
                 // Parse "idx:logit"
@@ -311,9 +316,10 @@ pub fn run_policy_datagen(
                         let mut resolved = false;
                         for attempt in 1..=3 {
                             println!("Attempting Retry {}/3...", attempt);
-                            if let Some((retry_pol, retry_val)) = run_single_inference_retry(&reading_fen) {
+                            if let Some((retry_pol, retry_val, retry_draw)) = run_single_inference_retry(&reading_fen) {
                                 current_policy = retry_pol;
                                 current_value = retry_val;
+                                current_draw = retry_draw;
                                 resolved = true;
                                 println!("Retry SUCCESS.");
                                 break;
@@ -330,7 +336,7 @@ pub fn run_policy_datagen(
                         }
                     }
 
-                    process_game(game, &current_policy, current_value, &dest, &stop, &mut rng, opts.policy_data, book_ref);
+                    process_game(game, &current_policy, current_value, current_draw, &dest, &stop, &mut rng, opts.policy_data, book_ref);
                     game_idx += 1;
                 }
             } else if line.starts_with("Policy (Top > 1%):") {
@@ -346,7 +352,7 @@ pub fn run_policy_datagen(
     println!("Unresolved Failures (Fallbacks): {}", UNRESOLVED_FAILURES.load(Ordering::Relaxed));
 }
 
-fn run_single_inference_retry(fen: &str) -> Option<([f32; 1858], f32)> {
+fn run_single_inference_retry(fen: &str) -> Option<([f32; 1858], f32, f32)> {
     let exe_path = get_exe_path();
     
     // Spawn fresh process with batch_size=1
@@ -370,8 +376,10 @@ fn run_single_inference_retry(fen: &str) -> Option<([f32; 1858], f32)> {
     
     let mut policy = [f32::NEG_INFINITY; 1858];
     let mut value = 0.0f32;
+    let mut draw = 0.0f32;
     let mut found_policy = false;
     let mut found_value = false;
+    let mut found_draw = false;
 
     loop {
         buffer.clear();
@@ -380,13 +388,20 @@ fn run_single_inference_retry(fen: &str) -> Option<([f32; 1858], f32)> {
         if line == "BATCH_DONE" { break; }
         
         if line.starts_with("Value:") {
-            if let Some(val_str) = line.split_whitespace().nth(1) {
-                if let Ok(v) = val_str.parse::<f32>() {
-                    value = v;
-                    found_value = true;
+                if let Some(val_str) = line.split_whitespace().nth(1) {
+                    if let Ok(v) = val_str.parse::<f32>() {
+                        value = v;
+                        found_value = true;
+                    }
                 }
-            }
-        } else if line.starts_with("Policy (Logits):") {
+            } else if line.starts_with("Draw:") {
+                if let Some(val_str) = line.split_whitespace().nth(1) {
+                    if let Ok(v) = val_str.parse::<f32>() {
+                        draw = v;
+                        found_draw = true;
+                    }
+                }
+            } else if line.starts_with("Policy (Logits):") {
              let content = line.trim_start_matches("Policy (Logits):").trim();
              for token in content.split_whitespace() {
                 if let Some((idx_str, val_str)) = token.split_once(':') {
@@ -403,7 +418,7 @@ fn run_single_inference_retry(fen: &str) -> Option<([f32; 1858], f32)> {
     
     let _ = child.kill();
 
-    if found_policy && found_value {
+    if found_policy && found_value && found_draw {
         // Validate again!
         if value.is_nan() || value.is_infinite() { return None; }
         let mut has_finite = false;
@@ -413,7 +428,7 @@ fn run_single_inference_retry(fen: &str) -> Option<([f32; 1858], f32)> {
         }
         if !has_finite { return None; }
         
-        return Some((policy, value));
+        return Some((policy, value, draw));
     }
     
     None
@@ -422,7 +437,8 @@ fn run_single_inference_retry(fen: &str) -> Option<([f32; 1858], f32)> {
 fn process_game(
     game: &mut GameRunner,
     policy_probs: &[f32; 1858],
-    lc0_value: f32,
+    lc0_q: f32,
+    lc0_d: f32,
     dest: &Arc<Mutex<Destination>>,
     stop: &AtomicBool,
     rng: &mut crate::rng::Rand,
@@ -577,7 +593,8 @@ fn process_game(
     // Use LC0 Value (Q is typically -1.0 to 1.0 from perspective of STM)
     // Monty expects score 0.0 (Loss) to 1.0 (Win).
     // So map: (q + 1.0) / 2.0
-    let score = (lc0_value + 1.0) / 2.0;
+    let q_value = ((lc0_q + 1.0) / 2.0 * 65535.0).clamp(0.0, 65535.0) as u16;
+    let d_value = (lc0_d * 65535.0).clamp(0.0, 65535.0) as u16;
 
     let mf_best_move = montyformat::chess::Move::from(u16::from(best_move));
 
@@ -585,7 +602,7 @@ fn process_game(
     /* if game.iters < 3 {
         println!("--- VERIFICATION [Game {} Iter {}] ---", game.searches / BATCH_SIZE, game.iters);
         println!("FEN: {}", game.position.board().as_fen());
-        println!("LC0 Value: {:.6} -> Score: {:.6}", lc0_value, score);
+        println!("LC0 Value: {:.6} Draw: {:.6}", lc0_q, lc0_d);
         
         println!("Max Legal Logit: {:.4}", max_legal_logit);
         let mut dist_sum = 0.0;
@@ -635,10 +652,10 @@ fn process_game(
     game.move_history.push(move_str);
     
     if output_policy {
-        let search_data = SearchData::new(mf_best_move, score, Some(dist));
+        let search_data = SearchData::new(mf_best_move, q_value, d_value, Some(dist));
         game.policy_game.push(search_data);
     } else {
-        game.value_game.push(game.position.stm(), mf_best_move, score);
+        game.value_game.push(game.position.stm(), mf_best_move, q_value, d_value);
     }
 
     game.searches += 1;

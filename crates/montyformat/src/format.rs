@@ -10,14 +10,16 @@ const GAME_HEADER_SIZE: usize = 43;
 
 pub struct SearchData {
     pub best_move: Move,
-    pub score: f32,
+    pub q_value: u16,
+    pub d_value: u16,
     pub visit_distribution: Option<Vec<(Move, u32)>>,
 }
 
 impl SearchData {
     pub fn new<T: Copy + Into<Move>>(
         best_move: T,
-        score: f32,
+        q_value: u16,
+        d_value: u16,
         visit_distribution: Option<Vec<(T, u32)>>,
     ) -> Self {
         let mut visit_distribution: Option<Vec<(Move, u32)>> = visit_distribution.map(|x| {
@@ -32,7 +34,8 @@ impl SearchData {
 
         Self {
             best_move: best_move.into(),
-            score,
+            q_value,
+            d_value,
             visit_distribution,
         }
     }
@@ -90,17 +93,9 @@ impl MontyFormat {
         writer.write_all(&result.to_le_bytes())?;
 
         for data in &self.moves {
-            if data.score.clamp(0.0, 1.0) != data.score {
-                return Err(Error::new(
-                    ErrorKind::InvalidData,
-                    "Score outside valid range!",
-                ));
-            }
-
-            let score = (data.score * f32::from(u16::MAX)) as u16;
-
             writer.write_all(&u16::from(data.best_move).to_le_bytes())?;
-            writer.write_all(&score.to_le_bytes())?;
+            writer.write_all(&data.q_value.to_le_bytes())?;
+            writer.write_all(&data.d_value.to_le_bytes())?;
 
             let num_moves = data
                 .visit_distribution
@@ -171,7 +166,8 @@ impl MontyFormat {
                 break;
             }
 
-            let score = f32::from(read_into_primitive!(reader, u16)) / f32::from(u16::MAX);
+            let q_value = read_into_primitive!(reader, u16);
+            let d_value = read_into_primitive!(reader, u16);
 
             let num_moves = read_into_primitive!(reader, u8);
 
@@ -200,7 +196,8 @@ impl MontyFormat {
 
             moves.push(SearchData {
                 best_move,
-                score,
+                q_value,
+                d_value,
                 visit_distribution,
             });
 

@@ -32,9 +32,11 @@ std::string Trim(const std::string& str) {
 // Output only legal moves to optimize bandwidth and parsing speed.
 void PrintOutput(NetworkComputation& computation, int sample_idx, const std::string& fen, int transform) {
     float value = computation.GetQVal(sample_idx);
+    float draw = computation.GetDVal(sample_idx);
     
     std::cout << "FEN: " << fen << "\n";
     std::cout << "Value: " << value << "\n";
+    std::cout << "Draw: " << draw << "\n";
     
     // Generate Legal Moves
     // Re-parse Position to avoid storing/copying Position objects which might be risky or large.
