@@ -1,4 +1,4 @@
-use std::io::{Error, ErrorKind, Write};
+use std::io::{Error, Write};
 
 use crate::{
     chess::{Castling, Move, Position},

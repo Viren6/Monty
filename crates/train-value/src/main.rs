@@ -1,6 +1,7 @@
 mod dataloader;
 mod input;
 mod structs;
+mod soft_loader;
 
 use dataloader::MontyBinpackLoader;
 use input::ThreatInputs;
@@ -40,24 +41,25 @@ fn main() {
     let dataloader_buffer_size_mb = 96000;
     let dataloader_threads = 8;
 
+    let quantisations = vec![
+        ("pst", SavedFormat::id("pst")),
+        ("l0w", SavedFormat::id("l0w").quantise::<i8>(128).round()),
+        ("l0b", SavedFormat::id("l0b").quantise::<i8>(128).round()),
+        ("l1w", SavedFormat::id("l1w").quantise::<i16>(1024).transpose().round()),
+        ("l1b", SavedFormat::id("l1b").quantise::<i16>(1024).round()),
+        ("l2w", SavedFormat::id("l2w")),
+        ("l2b", SavedFormat::id("l2b")),
+        ("l3w", SavedFormat::id("l3w")),
+        ("l3b", SavedFormat::id("l3b")),
+    ];
+
+    let trainer_formats: Vec<SavedFormat> = quantisations.iter().map(|(_, f)| f.clone()).collect();
+
     let mut trainer = ValueTrainerBuilder::default()
         .wdl_output()
         .inputs(input_features)
         .optimiser(AdamW)
-        .save_format(&[
-            SavedFormat::id("pst"),
-            SavedFormat::id("l0w").quantise::<i8>(128).round(),
-            SavedFormat::id("l0b").quantise::<i8>(128).round(),
-            SavedFormat::id("l1w")
-                .quantise::<i16>(1024)
-                .transpose()
-                .round(),
-            SavedFormat::id("l1b").quantise::<i16>(1024).round(),
-            SavedFormat::id("l2w"),
-            SavedFormat::id("l2b"),
-            SavedFormat::id("l3w"),
-            SavedFormat::id("l3b"),
-        ])
+        .save_format(&trainer_formats)
         .build_custom(|builder, inputs, targets| {
             let num_inputs = input_features.num_inputs();
 
@@ -107,6 +109,7 @@ fn main() {
             final_superbatch: superbatches,
         },
         save_rate: 200,
+        // note: removed save_rate/etc from builder context, handled manually
     };
 
     let settings = LocalSettings {
@@ -127,7 +130,49 @@ fn main() {
         filter,
     );
 
-    trainer.run(&schedule, &settings, &data_loader);
+    let loader = soft_loader::SoftWdlDataLoader::new(data_loader, input_features, 2);
+
+    let mut prev_loss = 0.0;
+    let mut batch_count = 0;
+    
+    let steps = schedule.steps;
+    let lr_scheduler = schedule.lr_scheduler;
+
+    trainer
+        .train_custom(
+            bullet_lib::acyclib::trainer::schedule::TrainingSchedule {
+                steps,
+                log_rate: 128,
+                lr_schedule: Box::new(move |a, b| {
+                    use bullet_lib::trainer::schedule::lr::LrScheduler;
+                    lr_scheduler.lr(a, b)
+                }),
+            },
+            loader,
+            |_trainer, superbatch, batch, loss| {
+                prev_loss += loss;
+                batch_count += 1;
+
+                if batch % 128 == 0 {
+                     println!("Superbatch {} Batch {} Loss {}", superbatch, batch, prev_loss / batch_count as f32);
+                     prev_loss = 0.0;
+                     batch_count = 0;
+                }
+            },
+            move |trainer, superbatch| {
+                let path = format!("{}/checkpoint-{}", settings.output_directory, superbatch);
+                std::fs::create_dir_all(&path).unwrap();
+                
+                for (name, fmt) in &quantisations {
+                    // Access graph via optimiser
+                    let graph = &trainer.optimiser.graph;
+                    let bytes = fmt.write_to_byte_buffer(graph).unwrap();
+                    std::fs::write(format!("{}/{}.bin", path, name), bytes).unwrap();
+                }
+                println!("Saved checkpoint to {}", path);
+            },
+        )
+        .unwrap();
 
     for fen in [
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",

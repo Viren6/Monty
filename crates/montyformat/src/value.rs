@@ -2,7 +2,7 @@ use crate::{
     chess::{Castling, Move, Position},
     format::CompressedChessBoard,
     interleave::{interleave, FastDeserialise},
-    read_into_primitive, read_primitive_into_vec,
+    read_into_primitive,
 };
 
 pub struct SearchResult {
@@ -138,7 +138,14 @@ impl FastDeserialise for MontyValueFormat {
         reader.read_exact(&mut buf)?;
         buffer.extend_from_slice(&buf);
 
-        while read_primitive_into_vec!(reader, buffer, u32) != 0 {}
+        loop {
+            let mut chunk = [0u8; 6];
+            reader.read_exact(&mut chunk)?;
+            buffer.extend_from_slice(&chunk);
+            if chunk == [0; 6] {
+                break;
+            }
+        }
 
         Ok(())
     }
