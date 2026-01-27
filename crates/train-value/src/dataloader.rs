@@ -195,7 +195,7 @@ fn parse_into_buffer<T: Fn(&Position, Move, u16, u16) -> bool>(
             let l = 1.0 - w - d;
             
             let board = ChessBoard::from_raw(pos.bbs(), pos.stm(), 0, 0.0).unwrap();
-            buffer.push(WdlPosition::new(board, [w, d, l]));
+            buffer.push(WdlPosition::new(board, [l, d, w]));
         }
 
         pos.make(data.best_move, &castling);

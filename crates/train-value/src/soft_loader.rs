@@ -68,10 +68,10 @@ where
                                 nstm_chunk[sparse_offset + k] = -1;
                             }
                             
-                            // Adjusting:
-                            let w = pos.wdl[0];
+                            // Targets (Structure is now [L, D, W])
+                            let l = pos.wdl[0];
                             let d = pos.wdl[1];
-                            let l = pos.wdl[2];
+                            let w = pos.wdl[2];
                             
                             target_chunk[output_size * i + 0] = l;
                             target_chunk[output_size * i + 1] = d;

@@ -45,7 +45,7 @@ impl BulletFormat for WdlPosition {
     }
 
     fn result(&self) -> f32 {
-        self.wdl[0] + 0.5 * self.wdl[1]
+        self.wdl[2] + 0.5 * self.wdl[1]
     }
 
     fn result_idx(&self) -> usize {
@@ -64,7 +64,7 @@ impl FromStr for WdlPosition {
         let board = ChessBoard::from_str(s)?;
         Ok(Self {
             board,
-            wdl: [0.33, 0.33, 0.33], // Default placeholder, will be overridden by loader or eval
+            wdl: [0.33, 0.33, 0.33], // Default: [L, D, W]
         })
     }
 }
