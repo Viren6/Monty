@@ -115,6 +115,11 @@ pub fn run_policy_datagen(
         command.arg("--chess960");
     }
 
+    if opts.onnx {
+        command.arg("--backend");
+        command.arg("onnx-trt");
+    }
+
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -125,11 +130,6 @@ pub fn run_policy_datagen(
     let mut stdin = child.stdin.take().expect("Failed to open stdin");
     let stdout = child.stdout.take().expect("Failed to open stdout");
     let mut reader = BufReader::new(stdout);
-
-    if opts.onnx {
-        println!("Overriding Backend to onnx-trt");
-        writeln!(stdin, "setoption name Backend value onnx-trt").unwrap();
-    }
 
     // Opening book
     let book = opts

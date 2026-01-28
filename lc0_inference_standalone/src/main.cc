@@ -127,11 +127,17 @@ int main(int argc, char* argv[]) {
             batch_size = std::stoi(argv[2]);
         }
         
+        std::string backend_name;
+
         // Simple flag parsing
         for (int i = 1; i < argc; ++i) {
              std::string arg = argv[i];
              if (arg == "--chess960") {
                  chess960 = true;
+             }
+             if (arg == "--backend" && i + 1 < argc) {
+                 backend_name = argv[i + 1];
+                 i++; // Skip next arg
              }
         }
 
@@ -148,15 +154,18 @@ int main(int argc, char* argv[]) {
             std::cerr << "Enabled Chess960 Mode.\n";
         }
 
-        // Auto-select backend
-        auto backends = NetworkFactory::Get()->GetBackendsList();
-        std::string backend_name;
-        if (!backends.empty()) {
-            backend_name = backends[0];
-            std::cerr << "Auto-selected backend: " << backend_name << "\n";
+        // Auto-select backend if not specified
+        if (backend_name.empty()) {
+            auto backends = NetworkFactory::Get()->GetBackendsList();
+            if (!backends.empty()) {
+                backend_name = backends[0];
+                std::cerr << "Auto-selected backend: " << backend_name << "\n";
+            } else {
+                std::cerr << "No backends found! Ensure you have compiled with backend support.\n";
+                return 1;
+            }
         } else {
-            std::cerr << "No backends found! Ensure you have compiled with backend support.\n";
-            return 1;
+            std::cerr << "Using requested backend: " << backend_name << "\n";
         }
 
         // Create network
@@ -176,21 +185,6 @@ int main(int argc, char* argv[]) {
                      // Trim is critical for Windows pipes and robustness
                      line = Trim(line);
                      if (!line.empty()) {
-                         if (line.find("setoption") == 0) {
-                             auto parts = Split(line);
-                             // setoption name Backend value onnx-trt
-                             if (parts.size() >= 5 && parts[1] == "name" && parts[2] == "Backend" && parts[3] == "value") {
-                                 std::string new_backend = parts[4];
-                                 if (new_backend != backend_name) {
-                                     backend_name = new_backend;
-                                     std::cerr << "Switching Backend to: " << backend_name << "\n";
-                                     network = NetworkFactory::Get()->Create(backend_name, weights, options);
-                                 }
-                             }
-                             i--; // Don't count as batch item
-                             continue;
-                         }
-
                         batch_lines.push_back(line);
                      } else {
                         i--; // retry
