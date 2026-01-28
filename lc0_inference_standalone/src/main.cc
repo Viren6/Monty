@@ -176,6 +176,21 @@ int main(int argc, char* argv[]) {
                      // Trim is critical for Windows pipes and robustness
                      line = Trim(line);
                      if (!line.empty()) {
+                         if (line.find("setoption") == 0) {
+                             auto parts = Split(line);
+                             // setoption name Backend value onnx-trt
+                             if (parts.size() >= 5 && parts[1] == "name" && parts[2] == "Backend" && parts[3] == "value") {
+                                 std::string new_backend = parts[4];
+                                 if (new_backend != backend_name) {
+                                     backend_name = new_backend;
+                                     std::cerr << "Switching Backend to: " << backend_name << "\n";
+                                     network = NetworkFactory::Get()->Create(backend_name, weights, options);
+                                 }
+                             }
+                             i--; // Don't count as batch item
+                             continue;
+                         }
+
                         batch_lines.push_back(line);
                      } else {
                         i--; // retry
