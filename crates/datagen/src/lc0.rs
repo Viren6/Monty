@@ -19,7 +19,7 @@ const BATCH_SIZE: usize = 1024;
 // In a real scenario, this path might be dynamic or configured via env var, 
 // but user requested variable to be in script.
 //const LC0_NETWORK_PATH: &str = r"C:\Users\viren\Documents\GitHub\Monty0\bt4-1024x15x32h-swa-6147500.pb.gz";
-const LC0_NETWORK_PATH: &str = "bt4-1024x15x32h-swa-6147500.pb.gz";
+const LC0_NETWORK_PATH: &str = "BT4-1024x15x32h-swa-6147500.pb.gz";
 
 struct GameRunner {
     #[allow(dead_code)]
@@ -125,6 +125,11 @@ pub fn run_policy_datagen(
     let mut stdin = child.stdin.take().expect("Failed to open stdin");
     let stdout = child.stdout.take().expect("Failed to open stdout");
     let mut reader = BufReader::new(stdout);
+
+    if opts.onnx {
+        println!("Overriding Backend to onnx-trt");
+        writeln!(stdin, "setoption name Backend value onnx-trt").unwrap();
+    }
 
     // Opening book
     let book = opts

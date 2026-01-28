@@ -11,6 +11,7 @@ NUM_GPUS="${NUM_GPUS:-4}"           # gpus 0..3
 PROCS_PER_GPU="${PROCS_PER_GPU:-2}" # 2 processes per gpu
 
 DFRC_MODE="${DFRC_MODE:-1}"         # set to 1/true/yes to append --dfrc
+ONNX_MODE="${ONNX_MODE:-0}"         # set to 1/true/yes to append --onnx
 
 # ---- Checks ----
 if ! command -v screen >/dev/null 2>&1; then
@@ -40,6 +41,11 @@ for gpu in $(seq 0 $((NUM_GPUS - 1))); do
     # If DFRC_MODE enabled, append --dfrc
     case "${DFRC_MODE,,}" in
       1|true|yes|y|on) cmd+=(--dfrc) ;;
+    esac
+
+    # If ONNX_MODE enabled, append --onnx
+    case "${ONNX_MODE,,}" in
+      1|true|yes|y|on) cmd+=(--onnx) ;;
     esac
 
     printf -v cmd_str '%q ' "${cmd[@]}"
