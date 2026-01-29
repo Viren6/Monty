@@ -161,9 +161,11 @@ fn main() {
                     let graph = &trainer.optimiser.graph;
                     let weights = GraphWeights::from(graph);
 
-                    for (name, fmt) in &quantisations {
+                    let mut file = std::fs::File::create(format!("{}/quantised.bin", path)).unwrap();
+
+                    for (_, fmt) in &quantisations {
                         let bytes = fmt.write_to_byte_buffer(&weights).unwrap();
-                        std::fs::write(format!("{}/{}.bin", path, name), bytes).unwrap();
+                        std::io::Write::write_all(&mut file, &bytes).unwrap();
                     }
                     println!("Saved checkpoint to {}", path);
                 }
