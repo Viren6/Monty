@@ -20,6 +20,8 @@ use bullet_lib::{
     value::ValueTrainerBuilder,
 };
 
+use bullet_lib::acyclib::graph::save::GraphWeights;
+
 use montyformat::chess::{Move, Position};
 
 fn main() {
@@ -163,10 +165,12 @@ fn main() {
                 let path = format!("{}/checkpoint-{}", settings.output_directory, superbatch);
                 std::fs::create_dir_all(&path).unwrap();
                 
+                println!("Saving Checkpoint");
+                let graph = &trainer.optimiser.graph;
+                let weights = GraphWeights::from(graph);
+
                 for (name, fmt) in &quantisations {
-                    // Access graph via optimiser
-                    let graph = &trainer.optimiser.graph;
-                    let bytes = fmt.write_to_byte_buffer(graph).unwrap();
+                    let bytes = fmt.write_to_byte_buffer(&weights).unwrap();
                     std::fs::write(format!("{}/{}.bin", path, name), bytes).unwrap();
                 }
                 println!("Saved checkpoint to {}", path);
