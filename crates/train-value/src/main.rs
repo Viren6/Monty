@@ -134,11 +134,11 @@ fn main() {
 
     let loader = soft_loader::SoftWdlDataLoader::new(data_loader, input_features, 2);
 
-    let mut prev_loss = 0.0;
-    let mut batch_count = 0;
+
     
     let steps = schedule.steps;
     let lr_scheduler = schedule.lr_scheduler;
+    let save_rate = schedule.save_rate;
 
     trainer
         .train_custom(
@@ -151,29 +151,22 @@ fn main() {
                 }),
             },
             loader,
-            |_trainer, superbatch, batch, loss| {
-                prev_loss += loss;
-                batch_count += 1;
-
-                if batch % 128 == 0 {
-                     println!("Superbatch {} Batch {} Loss {}", superbatch, batch, prev_loss / batch_count as f32);
-                     prev_loss = 0.0;
-                     batch_count = 0;
-                }
-            },
+            |_trainer, _superbatch, _batch, _loss| {},
             move |trainer, superbatch| {
-                let path = format!("{}/checkpoint-{}", settings.output_directory, superbatch);
-                std::fs::create_dir_all(&path).unwrap();
-                
-                println!("Saving Checkpoint");
-                let graph = &trainer.optimiser.graph;
-                let weights = GraphWeights::from(graph);
+                if superbatch % save_rate == 0 || superbatch == steps.end_superbatch {
+                    let path = format!("{}/checkpoint-{}", settings.output_directory, superbatch);
+                    std::fs::create_dir_all(&path).unwrap();
+                    
+                    println!("Saving Checkpoint");
+                    let graph = &trainer.optimiser.graph;
+                    let weights = GraphWeights::from(graph);
 
-                for (name, fmt) in &quantisations {
-                    let bytes = fmt.write_to_byte_buffer(&weights).unwrap();
-                    std::fs::write(format!("{}/{}.bin", path, name), bytes).unwrap();
+                    for (name, fmt) in &quantisations {
+                        let bytes = fmt.write_to_byte_buffer(&weights).unwrap();
+                        std::fs::write(format!("{}/{}.bin", path, name), bytes).unwrap();
+                    }
+                    println!("Saved checkpoint to {}", path);
                 }
-                println!("Saved checkpoint to {}", path);
             },
         )
         .unwrap();
