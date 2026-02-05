@@ -227,7 +227,8 @@ fn parse_into_buffer(game: &[u8], buffer: &mut Vec<DecompressedData>) {
             break;
         }
 
-        let _score = f32::from(read_into_primitive!(reader, u16)) / f32::from(u16::MAX);
+        let _q_value = f32::from(read_into_primitive!(reader, u16)) / f32::from(u16::MAX);
+        let _d_value = f32::from(read_into_primitive!(reader, u16)) / f32::from(u16::MAX);
 
         let num_moves = usize::from(read_into_primitive!(reader, u8));
 
