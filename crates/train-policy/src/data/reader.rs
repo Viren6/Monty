@@ -88,9 +88,7 @@ impl DataReader {
                                 let mut buf = Vec::with_capacity(160 * games_per_thread);
 
                                 for game_bytes in chunk {
-                                    if parse_into_buffer(game_bytes, &mut buf).is_err() {
-                                        continue;
-                                    }
+                                    parse_into_buffer(game_bytes, &mut buf);
                                 }
 
                                 this_sender.send(buf).is_err()
@@ -168,25 +166,24 @@ fn shuffle(data: &mut [DecompressedData]) {
 macro_rules! read_into_primitive {
     ($reader:expr, $t:ty) => {{
         let mut buf = [0u8; std::mem::size_of::<$t>()];
-        $reader
-            .read_exact(&mut buf)
-            .map(|()| <$t>::from_le_bytes(buf))
+        $reader.read_exact(&mut buf).unwrap();
+        <$t>::from_le_bytes(buf)
     }};
 }
 
-fn parse_into_buffer(game: &[u8], buffer: &mut Vec<DecompressedData>) -> std::io::Result<()> {
+fn parse_into_buffer(game: &[u8], buffer: &mut Vec<DecompressedData>) {
     let mut reader = Cursor::new(game);
 
     let mut qbbs = [0u64; 4];
     for bb in &mut qbbs {
-        *bb = read_into_primitive!(reader, u64)?;
+        *bb = read_into_primitive!(reader, u64);
     }
 
-    let stm = read_into_primitive!(reader, u8)?;
-    let enp_sq = read_into_primitive!(reader, u8)?;
-    let rights = read_into_primitive!(reader, u8)?;
-    let halfm = read_into_primitive!(reader, u8)?;
-    let fullm = read_into_primitive!(reader, u16)?;
+    let stm = read_into_primitive!(reader, u8);
+    let enp_sq = read_into_primitive!(reader, u8);
+    let rights = read_into_primitive!(reader, u8);
+    let halfm = read_into_primitive!(reader, u8);
+    let fullm = read_into_primitive!(reader, u16);
 
     let mut bbs = [0; 8];
 
@@ -215,24 +212,24 @@ fn parse_into_buffer(game: &[u8], buffer: &mut Vec<DecompressedData>) -> std::io
     let mut rook_files = [[0; 2]; 2];
     for side in &mut rook_files {
         for rook in side {
-            *rook = read_into_primitive!(reader, u8)?;
+            *rook = read_into_primitive!(reader, u8);
         }
     }
 
     let castling = Castling::from_raw(&pos, rook_files);
 
-    let _result = read_into_primitive!(reader, u8)? as f32 / 2.0;
+    let _result = read_into_primitive!(reader, u8) as f32 / 2.0;
 
     loop {
-        let best_move = Move::from(read_into_primitive!(reader, u16)?);
+        let best_move = Move::from(read_into_primitive!(reader, u16));
 
         if best_move == Move::NULL {
             break;
         }
 
-        let _score = f32::from(read_into_primitive!(reader, u16)?) / f32::from(u16::MAX);
+        let _score = f32::from(read_into_primitive!(reader, u16)) / f32::from(u16::MAX);
 
-        let num_moves = usize::from(read_into_primitive!(reader, u8)?);
+        let num_moves = usize::from(read_into_primitive!(reader, u8));
 
         if num_moves > 1 && num_moves <= MAX_MOVES {
             let mut policy_data = DecompressedData {
@@ -253,20 +250,18 @@ fn parse_into_buffer(game: &[u8], buffer: &mut Vec<DecompressedData>) -> std::io
             policy_data.moves[..num_moves].sort_by_key(|x| x.0);
 
             for entry in &mut policy_data.moves[..num_moves] {
-                entry.1 = u16::from(read_into_primitive!(reader, u8)?);
+                entry.1 = u16::from(read_into_primitive!(reader, u8));
             }
 
             buffer.push(policy_data);
         } else {
             for _ in 0..num_moves {
-                let _ = read_into_primitive!(reader, u8)?;
+                let _ = read_into_primitive!(reader, u8);
             }
         }
 
         pos.make(best_move, &castling);
     }
-
-    Ok(())
 }
 
 pub struct Rand(u64);
