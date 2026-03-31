@@ -1,4 +1,5 @@
 pub mod chess;
+pub mod lc0;
 pub mod mcts;
 pub mod networks;
 pub mod tree;

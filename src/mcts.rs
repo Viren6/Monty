@@ -9,6 +9,7 @@ pub use search_stats::SearchStats;
 
 use crate::{
     chess::{GameState, Move},
+    lc0::Lc0Coordinator,
     networks::{PolicyNetwork, ValueNetwork},
     tree::{Node, NodePtr, Tree},
 };
@@ -78,6 +79,7 @@ pub struct Searcher<'a> {
     policy: &'a PolicyNetwork,
     value: &'a ValueNetwork,
     abort: &'a AtomicBool,
+    lc0: Option<&'a Lc0Coordinator>,
 }
 
 impl<'a> Searcher<'a> {
@@ -94,7 +96,15 @@ impl<'a> Searcher<'a> {
             policy,
             value,
             abort,
+            lc0: None,
         }
+    }
+
+    pub fn with_lc0(mut self, lc0: &'a Lc0Coordinator) -> Self {
+        if lc0.is_enabled() {
+            self.lc0 = Some(lc0);
+        }
+        self
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -417,6 +427,10 @@ impl<'a> Searcher<'a> {
 
                 for i in 1..threads {
                     s.spawn(move || self.playout_until_full_worker(stats_ref, i));
+                }
+
+                if let Some(lc0) = self.lc0 {
+                    s.spawn(|| lc0.run_loop(self.tree, self.abort));
                 }
             });
 

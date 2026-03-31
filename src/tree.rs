@@ -1,7 +1,7 @@
 mod half;
 mod hash;
-mod lock;
-mod node;
+pub(crate) mod lock;
+pub mod node;
 
 use half::TreeHalf;
 use hash::{HashEntry, HashTable};

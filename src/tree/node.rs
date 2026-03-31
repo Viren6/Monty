@@ -104,6 +104,7 @@ pub struct Node {
     sum_sq_q: AtomicU64,
     draws: AtomicU64,
     gini_impurity: AtomicU8,
+    lc0_status: AtomicU8,
 }
 
 impl Node {
@@ -120,13 +121,37 @@ impl Node {
             sum_sq_q: AtomicU64::new(0),
             draws: AtomicU64::new(0),
             gini_impurity: AtomicU8::new(0),
+            lc0_status: AtomicU8::new(0),
         }
     }
+
+    pub const LC0_UNPROCESSED: u8 = 0;
+    pub const LC0_PENDING: u8 = 1;
+    pub const LC0_DONE: u8 = 2;
 
     pub fn set_new(&self, mov: Move, policy: f32) {
         self.clear();
         self.mov.store(u16::from(mov), Ordering::Relaxed);
         self.set_policy(policy);
+    }
+
+    pub fn lc0_status(&self) -> u8 {
+        self.lc0_status.load(Ordering::Relaxed)
+    }
+
+    pub fn try_mark_lc0_pending(&self) -> bool {
+        self.lc0_status
+            .compare_exchange(
+                Self::LC0_UNPROCESSED,
+                Self::LC0_PENDING,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+    }
+
+    pub fn mark_lc0_done(&self) {
+        self.lc0_status.store(Self::LC0_DONE, Ordering::Release);
     }
 
     pub fn is_terminal(&self) -> bool {
@@ -261,6 +286,8 @@ impl Node {
         self.sum_q.store(other.sum_q.load(Relaxed), Relaxed);
         self.sum_sq_q.store(other.sum_sq_q.load(Relaxed), Relaxed);
         self.draws.store(other.draws.load(Relaxed), Relaxed);
+        self.lc0_status
+            .store(other.lc0_status.load(Relaxed), Relaxed);
     }
 
     pub fn clear(&self) {
@@ -272,6 +299,7 @@ impl Node {
         self.sum_sq_q.store(0, Ordering::Relaxed);
         self.draws.store(0, Ordering::Relaxed);
         self.threads.store(0, Ordering::Relaxed);
+        self.lc0_status.store(Self::LC0_UNPROCESSED, Ordering::Relaxed);
     }
 
     pub fn update(&self, q: f32, draw: f32) {

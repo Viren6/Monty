@@ -1,5 +1,6 @@
 use crate::{
     chess::{ChessState, Move},
+    lc0::{Lc0Config, Lc0Coordinator},
     mcts::{Limits, MctsParams, SearchHelpers, Searcher, REPORT_ITERS},
     networks::{PolicyNetwork, ValueNetwork},
     tree::Tree,
@@ -26,6 +27,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
     let mut uci_rating_adv: Option<i32> = None;
     let mut contempt_override: Option<i32> = None;
     let mut contempt_analysis = false;
+    let mut lc0_config = Lc0Config::default();
 
     let mut stored_message: Option<String> = None;
 
@@ -64,6 +66,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
                 &mut uci_rating_adv,
                 &mut contempt_override,
                 &mut contempt_analysis,
+                &mut lc0_config,
             ),
             "position" => position(commands, &mut pos),
             "go" => {
@@ -85,6 +88,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
                     gui_compatibility,
                     contempt_analysis,
                     &mut stored_message,
+                    &lc0_config,
                     #[cfg(feature = "datagen")]
                     1.0,
                 );
@@ -271,6 +275,11 @@ fn preamble(tcec_mode: bool) {
         println!("option name UCI_RatingAdv type spin default 0");
     }
     println!("option name Contempt type spin default 0 min -1000 max 1000");
+    println!("option name Lc0Workers type spin default 0 min 0 max 8");
+    println!("option name Lc0Network type string default");
+    println!("option name Lc0Backend type string default onnx-trt");
+    println!("option name Lc0BatchSize type spin default 32 min 1 max 256");
+    println!("option name Lc0ValueWeight type spin default 128 min 1 max 10000");
 
     #[cfg(feature = "tunable")]
     MctsParams::info(MctsParams::default());
@@ -293,6 +302,7 @@ fn setoption(
     uci_rating_adv: &mut Option<i32>,
     contempt_override: &mut Option<i32>,
     disable_tree_reuse: &mut bool,
+    lc0_config: &mut Lc0Config,
 ) {
     let Some((name, value)) = parse_name_value(commands) else {
         return;
@@ -383,6 +393,37 @@ fn setoption(
                     let rating_adv = parsed.round() as i32;
                     *uci_rating_adv = Some(rating_adv);
                     apply_uci_contempt(params, *uci_opponent_rating, *uci_rating_adv);
+                }
+            }
+        }
+        "Lc0Workers" => {
+            if let Some(v) = value {
+                if let Ok(parsed) = v.parse::<usize>() {
+                    lc0_config.num_workers = parsed.min(8);
+                }
+            }
+        }
+        "Lc0Network" => {
+            if let Some(v) = value {
+                lc0_config.network_path = v;
+            }
+        }
+        "Lc0Backend" => {
+            if let Some(v) = value {
+                lc0_config.backend = v;
+            }
+        }
+        "Lc0BatchSize" => {
+            if let Some(v) = value {
+                if let Ok(parsed) = v.parse::<usize>() {
+                    lc0_config.batch_size = parsed.clamp(1, 256);
+                }
+            }
+        }
+        "Lc0ValueWeight" => {
+            if let Some(v) = value {
+                if let Ok(parsed) = v.parse::<u64>() {
+                    lc0_config.value_weight = parsed.clamp(1, 10000);
                 }
             }
         }
@@ -505,6 +546,7 @@ fn go(
     gui_compatibility: bool,
     disable_tree_reuse: bool,
     stored_message: &mut Option<String>,
+    lc0_config: &Lc0Config,
     #[cfg(feature = "datagen")] temp: f32,
 ) {
     let mut max_nodes = usize::MAX;
@@ -579,9 +621,19 @@ fn go(
         kld_min_gain: None,
     };
 
+    let lc0_coordinator = Lc0Coordinator::new(Lc0Config {
+        num_workers: lc0_config.num_workers,
+        network_path: lc0_config.network_path.clone(),
+        backend: lc0_config.backend.clone(),
+        batch_size: lc0_config.batch_size,
+        value_weight: lc0_config.value_weight,
+        chess960: lc0_config.chess960,
+    });
+
     std::thread::scope(|s| {
         s.spawn(|| {
-            let searcher = Searcher::new(tree, params, policy, value, &abort);
+            let searcher = Searcher::new(tree, params, policy, value, &abort)
+                .with_lc0(&lc0_coordinator);
             let mov = searcher
                 .search(
                     threads,
