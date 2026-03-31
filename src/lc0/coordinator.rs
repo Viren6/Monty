@@ -364,7 +364,9 @@ fn apply_results(
 
         // Inject value as value_weight virtual visits
         // LC0 value is -1..1 from STM perspective, convert to 0..1
-        let score = ((result.value + 1.0) / 2.0).clamp(0.0, 1.0);
+        // Nodes store Q from the parent's perspective, so flip: 1.0 - stm_score
+        let lc0_stm_score = ((result.value + 1.0) / 2.0).clamp(0.0, 1.0);
+        let score = 1.0 - lc0_stm_score;
         let draw = result.draw.clamp(0.0, 1.0);
 
         const QUANT: i32 = 16384 * 4;
