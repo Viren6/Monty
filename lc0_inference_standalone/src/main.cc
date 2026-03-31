@@ -172,6 +172,7 @@ int main(int argc, char* argv[]) {
         auto network = NetworkFactory::Get()->Create(backend_name, weights, options);
         
         std::cerr << "Network created. Batch size: " << batch_size << "\n";
+        std::cout << "READY" << std::endl;
 
         // Interactive loop
         std::vector<std::string> batch_lines;

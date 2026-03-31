@@ -27,7 +27,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
     let mut uci_rating_adv: Option<i32> = None;
     let mut contempt_override: Option<i32> = None;
     let mut contempt_analysis = false;
-    let mut lc0_config = Lc0Config::default();
+    let mut lc0_coordinator = Lc0Coordinator::new(Lc0Config::default());
 
     let mut stored_message: Option<String> = None;
 
@@ -51,7 +51,10 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
 
         let cmd = *commands.first().unwrap_or(&"oops");
         match cmd {
-            "isready" => println!("readyok"),
+            "isready" => {
+                lc0_coordinator.ensure_ready();
+                println!("readyok");
+            }
             "setoption" => setoption(
                 &commands,
                 &mut params,
@@ -66,7 +69,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
                 &mut uci_rating_adv,
                 &mut contempt_override,
                 &mut contempt_analysis,
-                &mut lc0_config,
+                &mut lc0_coordinator,
             ),
             "position" => position(commands, &mut pos),
             "go" => {
@@ -88,7 +91,7 @@ pub fn run(policy: &PolicyNetwork, value: &ValueNetwork, tcec_mode: bool) {
                     gui_compatibility,
                     contempt_analysis,
                     &mut stored_message,
-                    &lc0_config,
+                    &mut lc0_coordinator,
                     #[cfg(feature = "datagen")]
                     1.0,
                 );
@@ -302,7 +305,7 @@ fn setoption(
     uci_rating_adv: &mut Option<i32>,
     contempt_override: &mut Option<i32>,
     disable_tree_reuse: &mut bool,
-    lc0_config: &mut Lc0Config,
+    lc0_coordinator: &mut Lc0Coordinator,
 ) {
     let Some((name, value)) = parse_name_value(commands) else {
         return;
@@ -399,31 +402,31 @@ fn setoption(
         "Lc0Workers" => {
             if let Some(v) = value {
                 if let Ok(parsed) = v.parse::<usize>() {
-                    lc0_config.num_workers = parsed.min(8);
+                    lc0_coordinator.config.num_workers = parsed.min(8);
                 }
             }
         }
         "Lc0Network" => {
             if let Some(v) = value {
-                lc0_config.network_path = v;
+                lc0_coordinator.config.network_path = v;
             }
         }
         "Lc0Backend" => {
             if let Some(v) = value {
-                lc0_config.backend = v;
+                lc0_coordinator.config.backend = v;
             }
         }
         "Lc0BatchSize" => {
             if let Some(v) = value {
                 if let Ok(parsed) = v.parse::<usize>() {
-                    lc0_config.batch_size = parsed.clamp(1, 256);
+                    lc0_coordinator.config.batch_size = parsed.clamp(1, 256);
                 }
             }
         }
         "Lc0ValueWeight" => {
             if let Some(v) = value {
                 if let Ok(parsed) = v.parse::<u64>() {
-                    lc0_config.value_weight = parsed.clamp(1, 10000);
+                    lc0_coordinator.config.value_weight = parsed.clamp(1, 10000);
                 }
             }
         }
@@ -546,7 +549,7 @@ fn go(
     gui_compatibility: bool,
     disable_tree_reuse: bool,
     stored_message: &mut Option<String>,
-    lc0_config: &Lc0Config,
+    lc0_coordinator: &mut Lc0Coordinator,
     #[cfg(feature = "datagen")] temp: f32,
 ) {
     let mut max_nodes = usize::MAX;
@@ -621,19 +624,10 @@ fn go(
         kld_min_gain: None,
     };
 
-    let lc0_coordinator = Lc0Coordinator::new(Lc0Config {
-        num_workers: lc0_config.num_workers,
-        network_path: lc0_config.network_path.clone(),
-        backend: lc0_config.backend.clone(),
-        batch_size: lc0_config.batch_size,
-        value_weight: lc0_config.value_weight,
-        chess960: lc0_config.chess960,
-    });
-
     std::thread::scope(|s| {
         s.spawn(|| {
             let searcher = Searcher::new(tree, params, policy, value, &abort)
-                .with_lc0(&lc0_coordinator);
+                .with_lc0(lc0_coordinator);
             let mov = searcher
                 .search(
                     threads,

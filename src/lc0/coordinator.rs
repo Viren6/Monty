@@ -29,7 +29,7 @@ impl Default for Lc0Config {
             num_workers: 0,
             network_path: String::new(),
             backend: "onnx-trt".to_string(),
-            batch_size: 8,
+            batch_size: 32,
             value_weight: 128,
             chess960: false,
         }
@@ -44,50 +44,81 @@ struct PendingBatch {
 }
 
 pub struct Lc0Coordinator {
-    config: Lc0Config,
+    workers: Vec<Lc0Worker>,
+    pub config: Lc0Config,
 }
 
 impl Lc0Coordinator {
     pub fn new(config: Lc0Config) -> Self {
-        Self { config }
+        Self {
+            workers: Vec::new(),
+            config,
+        }
     }
 
     pub fn is_enabled(&self) -> bool {
         self.config.num_workers > 0 && !self.config.network_path.is_empty()
     }
 
-    pub fn run_loop(&self, tree: &Tree, abort: &AtomicBool) {
+    /// Spawn worker processes. Called when config changes.
+    /// Workers start loading the network immediately in the background.
+    pub fn prepare(&mut self) {
+        // Kill existing workers
+        self.workers.clear();
+
         if !self.is_enabled() {
             return;
         }
 
-        let mut workers: Vec<Lc0Worker> = (0..self.config.num_workers)
-            .map(|_| {
-                Lc0Worker::spawn(
-                    &self.config.network_path,
-                    &self.config.backend,
-                    self.config.batch_size,
-                    self.config.chess960,
-                )
-            })
-            .collect();
+        eprintln!(
+            "info string spawning {} lc0 workers (batch_size={})",
+            self.config.num_workers, self.config.batch_size
+        );
+
+        for _ in 0..self.config.num_workers {
+            self.workers.push(Lc0Worker::spawn(
+                &self.config.network_path,
+                &self.config.backend,
+                self.config.batch_size,
+                self.config.chess960,
+            ));
+        }
+    }
+
+    /// Spawn workers if needed and block until all are ready.
+    /// Called from `isready` handler.
+    pub fn ensure_ready(&mut self) {
+        if self.is_enabled() && self.workers.is_empty() {
+            self.prepare();
+        }
+        for worker in &self.workers {
+            worker.wait_ready();
+        }
+    }
+
+    pub fn run_loop(&self, tree: &Tree, abort: &AtomicBool) {
+        if self.workers.is_empty() {
+            return;
+        }
 
         let mut pending_batches: Vec<Option<PendingBatch>> =
-            (0..self.config.num_workers).map(|_| None).collect();
+            (0..self.workers.len()).map(|_| None).collect();
 
         let mut total_applied = 0usize;
+        let value_weight = self.config.value_weight;
+        let batch_size = self.config.batch_size;
 
         while !abort.load(Ordering::Relaxed) {
             let current_half = tree.half();
 
             // 1. Check workers for completed results
-            for (i, worker) in workers.iter_mut().enumerate() {
-                if !worker.busy {
+            for (i, worker) in self.workers.iter().enumerate() {
+                if !worker.is_busy() {
                     continue;
                 }
 
                 if let Some(results) = worker.try_recv() {
-                    worker.busy = false;
+                    worker.set_busy(false);
 
                     if let Some(pending) = pending_batches[i].take() {
                         // Discard if tree half changed
@@ -101,7 +132,7 @@ impl Lc0Coordinator {
                             &pending.node_ptrs,
                             &pending.positions,
                             pending.actual_count,
-                            self.config.value_weight,
+                            value_weight,
                         );
                         total_applied += applied;
 
@@ -116,15 +147,15 @@ impl Lc0Coordinator {
             }
 
             // 2. If a worker is idle, find candidates and dispatch
-            for (i, worker) in workers.iter_mut().enumerate() {
-                if worker.busy {
+            for (i, worker) in self.workers.iter().enumerate() {
+                if worker.is_busy() {
                     continue;
                 }
 
                 let candidates = find_candidates(
                     tree,
                     tree.root_position(),
-                    self.config.batch_size,
+                    batch_size,
                 );
 
                 if candidates.is_empty() {
@@ -153,11 +184,6 @@ impl Lc0Coordinator {
             }
 
             thread::sleep(Duration::from_millis(1));
-        }
-
-        // Cleanup
-        for worker in &mut workers {
-            worker.kill();
         }
     }
 }

@@ -1,7 +1,10 @@
 use std::{
     io::{BufRead, BufReader, Write},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread::{self, JoinHandle},
 };
 
@@ -13,12 +16,13 @@ pub struct Lc0Result {
 }
 
 pub struct Lc0Worker {
-    child: Child,
-    stdin: std::process::ChildStdin,
+    child: Mutex<Child>,
+    stdin: Mutex<std::process::ChildStdin>,
     result_slot: Arc<Mutex<Option<Vec<Lc0Result>>>>,
+    ready_signal: Arc<Mutex<bool>>,
     _reader_thread: JoinHandle<()>,
     batch_size: usize,
-    pub busy: bool,
+    busy: AtomicBool,
 }
 
 impl Lc0Worker {
@@ -31,7 +35,7 @@ impl Lc0Worker {
         let exe_path = if cfg!(target_os = "windows") {
             "./lc0_inference_standalone/lc0_inference.exe"
         } else {
-            "./lc0_inference_standalone/build/release/lc0_inference"
+            "./lc0_inference_standalone/lc0_inference"
         };
 
         let mut command = Command::new(exe_path);
@@ -56,35 +60,63 @@ impl Lc0Worker {
         let stdout = child.stdout.take().expect("Failed to open stdout");
 
         let result_slot: Arc<Mutex<Option<Vec<Lc0Result>>>> = Arc::new(Mutex::new(None));
+        let ready_signal: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
         let slot_clone = result_slot.clone();
+        let ready_clone = ready_signal.clone();
 
         let reader_thread = thread::spawn(move || {
-            reader_loop(stdout, slot_clone);
+            reader_loop(stdout, slot_clone, ready_clone);
         });
 
         Self {
-            child,
-            stdin,
+            child: Mutex::new(child),
+            stdin: Mutex::new(stdin),
             result_slot,
+            ready_signal,
             _reader_thread: reader_thread,
             batch_size,
-            busy: false,
+            busy: AtomicBool::new(false),
         }
     }
 
-    pub fn send_batch(&mut self, fens: &[String]) {
+    /// Block until the worker's lc0 process has loaded the network and is ready.
+    pub fn wait_ready(&self) {
+        loop {
+            if let Ok(ready) = self.ready_signal.lock() {
+                if *ready {
+                    return;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.ready_signal.try_lock().map_or(false, |r| *r)
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.busy.load(Ordering::Relaxed)
+    }
+
+    pub fn set_busy(&self, val: bool) {
+        self.busy.store(val, Ordering::Relaxed);
+    }
+
+    pub fn send_batch(&self, fens: &[String]) {
         assert!(fens.len() <= self.batch_size);
 
+        let mut stdin = self.stdin.lock().unwrap();
         // Pad to batch_size with startpos if needed (lc0_inference expects exactly batch_size lines)
         for fen in fens {
-            writeln!(self.stdin, "{}", fen).expect("Failed to write to lc0 stdin");
+            writeln!(stdin, "{}", fen).expect("Failed to write to lc0 stdin");
         }
         for _ in fens.len()..self.batch_size {
-            writeln!(self.stdin, "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+            writeln!(stdin, "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
                 .expect("Failed to write padding to lc0 stdin");
         }
-        self.stdin.flush().expect("Failed to flush lc0 stdin");
-        self.busy = true;
+        stdin.flush().expect("Failed to flush lc0 stdin");
+        self.busy.store(true, Ordering::Relaxed);
     }
 
     pub fn try_recv(&self) -> Option<Vec<Lc0Result>> {
@@ -92,24 +124,35 @@ impl Lc0Worker {
         slot.take()
     }
 
-    pub fn kill(&mut self) {
-        let _ = self.child.kill();
-    }
-}
-
-impl Drop for Lc0Worker {
-    fn drop(&mut self) {
-        self.kill();
+    pub fn kill(&self) {
+        let _ = self.child.lock().unwrap().kill();
     }
 }
 
 fn reader_loop(
     stdout: std::process::ChildStdout,
     result_slot: Arc<Mutex<Option<Vec<Lc0Result>>>>,
+    ready_signal: Arc<Mutex<bool>>,
 ) {
     let mut reader = BufReader::new(stdout);
     let mut buffer = String::new();
 
+    // Wait for READY signal from lc0 process
+    loop {
+        buffer.clear();
+        let bytes = reader.read_line(&mut buffer).unwrap_or(0);
+        if bytes == 0 {
+            return; // EOF
+        }
+        if buffer.trim() == "READY" {
+            if let Ok(mut ready) = ready_signal.lock() {
+                *ready = true;
+            }
+            break;
+        }
+    }
+
+    // Main batch reading loop
     loop {
         let mut batch_results: Vec<Lc0Result> = Vec::new();
         let mut current_value = 0.0f32;
