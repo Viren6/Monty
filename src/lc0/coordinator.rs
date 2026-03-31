@@ -201,18 +201,15 @@ impl Lc0Coordinator {
 
 /// BFS from root to find highest-visit expanded nodes with lc0_status == 0.
 /// Returns up to `batch_size` candidates sorted by visits descending.
-/// Only marks the selected nodes as pending (not all traversed nodes).
+///
+/// Two-phase approach for performance:
+///   Phase 1: Lightweight scan storing move-paths (no position cloning)
+///   Phase 2: Replay paths to reconstruct positions only for selected nodes
 fn find_candidates(
     tree: &Tree,
     root_pos: &ChessState,
     batch_size: usize,
 ) -> Vec<(NodePtr, ChessState)> {
-    struct Candidate {
-        ptr: NodePtr,
-        pos: ChessState,
-        visits: u64,
-    }
-
     let root_ptr = tree.root_node();
     let root_node = &tree[root_ptr];
 
@@ -220,57 +217,66 @@ fn find_candidates(
         return Vec::new();
     }
 
-    // BFS with depth limit - collect candidates WITHOUT marking them
-    let mut queue: VecDeque<(NodePtr, ChessState, usize)> = VecDeque::new();
-    queue.push_back((root_ptr, root_pos.clone(), 0));
+    // Phase 1: Lightweight BFS - store (NodePtr, visits, path_from_root)
+    // path is indices into parent's children array - cheap to store
+    let mut queue: VecDeque<(NodePtr, Vec<u16>)> = VecDeque::new();
+    queue.push_back((root_ptr, Vec::new()));
 
-    let mut candidates: Vec<Candidate> = Vec::new();
-    let max_depth = 6;
+    let mut candidates: Vec<(NodePtr, u64, Vec<u16>)> = Vec::new();
+    let max_depth = 8;
 
-    while let Some((ptr, pos, depth)) = queue.pop_front() {
+    while let Some((ptr, path)) = queue.pop_front() {
         let node = &tree[ptr];
 
         if !node.has_children() {
             continue;
         }
 
-        // This node is expanded - check if it's a candidate (don't mark yet)
         if node.lc0_status() == Node::LC0_UNPROCESSED {
-            candidates.push(Candidate {
-                ptr,
-                pos: pos.clone(),
-                visits: node.visits(),
-            });
+            candidates.push((ptr, node.visits(), path.clone()));
         }
 
-        // Expand children into BFS if within depth limit
-        if depth < max_depth {
+        if path.len() < max_depth {
             let first_child = node.actions();
-            let num_actions = node.num_actions();
-
-            for action in 0..num_actions {
+            for action in 0..node.num_actions() {
                 let child_ptr = first_child + action;
-                let child = &tree[child_ptr];
-
-                if child.has_children() {
-                    let mut child_pos = pos.clone();
-                    child_pos.make_move(child.parent_move());
-                    queue.push_back((child_ptr, child_pos, depth + 1));
+                if tree[child_ptr].has_children() {
+                    let mut child_path = path.clone();
+                    child_path.push(action as u16);
+                    queue.push_back((child_ptr, child_path));
                 }
             }
         }
     }
 
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+
     // Sort by visits descending, take top batch_size
-    candidates.sort_unstable_by(|a, b| b.visits.cmp(&a.visits));
+    candidates.sort_unstable_by(|a, b| b.1.cmp(&a.1));
     candidates.truncate(batch_size);
 
-    // NOW mark only the selected candidates as pending via CAS
-    candidates.retain(|c| tree[c.ptr].try_mark_lc0_pending());
+    // Mark via CAS, keep only successfully marked
+    candidates.retain(|(ptr, _, _)| tree[*ptr].try_mark_lc0_pending());
 
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+
+    // Phase 2: Reconstruct positions by replaying paths from root
     candidates
         .into_iter()
-        .map(|c| (c.ptr, c.pos))
+        .filter_map(|(ptr, _, path)| {
+            let mut pos = root_pos.clone();
+            let mut cur = root_ptr;
+            for &action_idx in &path {
+                let child_ptr = tree[cur].actions() + action_idx as usize;
+                pos.make_move(tree[child_ptr].parent_move());
+                cur = child_ptr;
+            }
+            Some((ptr, pos))
+        })
         .collect()
 }
 
