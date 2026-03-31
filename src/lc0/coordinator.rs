@@ -147,40 +147,51 @@ impl Lc0Coordinator {
             }
 
             // 2. If a worker is idle, find candidates and dispatch
-            for (i, worker) in self.workers.iter().enumerate() {
-                if worker.is_busy() {
-                    continue;
-                }
-
+            let idle_count = self.workers.iter().filter(|w| !w.is_busy()).count();
+            if idle_count > 0 {
                 let candidates = find_candidates(
                     tree,
                     tree.root_position(),
-                    batch_size,
+                    batch_size * idle_count,
                 );
 
-                if candidates.is_empty() {
-                    break;
+                if !candidates.is_empty() {
+                    // Split candidates across idle workers
+                    let mut candidate_iter = candidates.into_iter();
+
+                    for (i, worker) in self.workers.iter().enumerate() {
+                        if worker.is_busy() {
+                            continue;
+                        }
+
+                        let batch: Vec<(NodePtr, ChessState)> =
+                            candidate_iter.by_ref().take(batch_size).collect();
+
+                        if batch.is_empty() {
+                            break;
+                        }
+
+                        let actual_count = batch.len();
+                        let mut fens: Vec<String> = Vec::with_capacity(actual_count);
+                        let mut node_ptrs: Vec<NodePtr> = Vec::with_capacity(actual_count);
+                        let mut positions: Vec<ChessState> = Vec::with_capacity(actual_count);
+
+                        for (ptr, pos) in &batch {
+                            fens.push(pos.board().as_fen());
+                            node_ptrs.push(*ptr);
+                            positions.push(pos.clone());
+                        }
+
+                        worker.send_batch(&fens);
+
+                        pending_batches[i] = Some(PendingBatch {
+                            node_ptrs,
+                            positions,
+                            tree_half: current_half,
+                            actual_count,
+                        });
+                    }
                 }
-
-                let actual_count = candidates.len();
-                let mut fens: Vec<String> = Vec::with_capacity(actual_count);
-                let mut node_ptrs: Vec<NodePtr> = Vec::with_capacity(actual_count);
-                let mut positions: Vec<ChessState> = Vec::with_capacity(actual_count);
-
-                for (ptr, pos) in &candidates {
-                    fens.push(pos.board().as_fen());
-                    node_ptrs.push(*ptr);
-                    positions.push(pos.clone());
-                }
-
-                worker.send_batch(&fens);
-
-                pending_batches[i] = Some(PendingBatch {
-                    node_ptrs,
-                    positions,
-                    tree_half: current_half,
-                    actual_count,
-                });
             }
 
             thread::sleep(Duration::from_millis(1));
@@ -190,6 +201,7 @@ impl Lc0Coordinator {
 
 /// BFS from root to find highest-visit expanded nodes with lc0_status == 0.
 /// Returns up to `batch_size` candidates sorted by visits descending.
+/// Only marks the selected nodes as pending (not all traversed nodes).
 fn find_candidates(
     tree: &Tree,
     root_pos: &ChessState,
@@ -208,34 +220,22 @@ fn find_candidates(
         return Vec::new();
     }
 
-    // BFS with depth limit
-    let mut queue: VecDeque<(NodePtr, ChessState)> = VecDeque::new();
-    queue.push_back((root_ptr, root_pos.clone()));
+    // BFS with depth limit - collect candidates WITHOUT marking them
+    let mut queue: VecDeque<(NodePtr, ChessState, usize)> = VecDeque::new();
+    queue.push_back((root_ptr, root_pos.clone(), 0));
 
     let mut candidates: Vec<Candidate> = Vec::new();
     let max_depth = 6;
-    let mut depth_markers: VecDeque<usize> = VecDeque::new();
-    depth_markers.push_back(1);
-    let mut current_depth = 0;
 
-    while let Some((ptr, pos)) = queue.pop_front() {
-        // Track depth
-        if let Some(front) = depth_markers.front_mut() {
-            *front -= 1;
-            if *front == 0 {
-                depth_markers.pop_front();
-                current_depth += 1;
-            }
-        }
-
+    while let Some((ptr, pos, depth)) = queue.pop_front() {
         let node = &tree[ptr];
 
         if !node.has_children() {
             continue;
         }
 
-        // This node is expanded - check if it's a candidate
-        if node.lc0_status() == Node::LC0_UNPROCESSED && node.try_mark_lc0_pending() {
+        // This node is expanded - check if it's a candidate (don't mark yet)
+        if node.lc0_status() == Node::LC0_UNPROCESSED {
             candidates.push(Candidate {
                 ptr,
                 pos: pos.clone(),
@@ -244,10 +244,9 @@ fn find_candidates(
         }
 
         // Expand children into BFS if within depth limit
-        if current_depth < max_depth {
+        if depth < max_depth {
             let first_child = node.actions();
             let num_actions = node.num_actions();
-            let mut children_count = 0;
 
             for action in 0..num_actions {
                 let child_ptr = first_child + action;
@@ -256,13 +255,8 @@ fn find_candidates(
                 if child.has_children() {
                     let mut child_pos = pos.clone();
                     child_pos.make_move(child.parent_move());
-                    queue.push_back((child_ptr, child_pos));
-                    children_count += 1;
+                    queue.push_back((child_ptr, child_pos, depth + 1));
                 }
-            }
-
-            if children_count > 0 {
-                depth_markers.push_back(children_count);
             }
         }
     }
@@ -270,6 +264,9 @@ fn find_candidates(
     // Sort by visits descending, take top batch_size
     candidates.sort_unstable_by(|a, b| b.visits.cmp(&a.visits));
     candidates.truncate(batch_size);
+
+    // NOW mark only the selected candidates as pending via CAS
+    candidates.retain(|c| tree[c.ptr].try_mark_lc0_pending());
 
     candidates
         .into_iter()
