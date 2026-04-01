@@ -200,17 +200,17 @@ impl Lc0Coordinator {
                         }
 
                         let actual_count = batch.len();
-                        let mut fens: Vec<String> = Vec::with_capacity(actual_count);
+                        let mut boards: Vec<Position> = Vec::with_capacity(actual_count);
                         let mut node_ptrs: Vec<NodePtr> = Vec::with_capacity(actual_count);
                         let mut positions: Vec<(Position, Castling)> = Vec::with_capacity(actual_count);
 
                         for &(ptr, board, castling) in &batch {
-                            fens.push(board.as_fen());
+                            boards.push(board);
                             node_ptrs.push(ptr);
                             positions.push((board, castling));
                         }
 
-                        worker.send_batch(&fens);
+                        worker.send_batch(&boards);
 
                         pending_batches[i] = Some(PendingBatch {
                             node_ptrs,

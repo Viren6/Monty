@@ -4,6 +4,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
+use crate::chess::Position;
 use super::worker::Lc0Result;
 
 type Lc0HandleRaw = *mut c_void;
@@ -95,7 +96,7 @@ fn run_batch(context: Lc0Handle, fens: &[String]) -> Vec<Lc0Result> {
 /// FFI-based lc0 worker with a persistent background thread.
 /// Multiple workers share a single Lc0Handle (one network copy on GPU).
 pub struct Lc0FfiWorker {
-    work_tx: mpsc::Sender<Vec<String>>,
+    work_tx: mpsc::Sender<Vec<Position>>,
     result_cache: Arc<Mutex<Option<Vec<Lc0Result>>>>,
     busy: AtomicBool,
     _thread: JoinHandle<()>,
@@ -104,12 +105,13 @@ pub struct Lc0FfiWorker {
 impl Lc0FfiWorker {
     /// Create a worker with a persistent thread that shares the given network handle.
     pub fn new(shared_context: Lc0Handle) -> Self {
-        let (work_tx, work_rx) = mpsc::channel::<Vec<String>>();
+        let (work_tx, work_rx) = mpsc::channel::<Vec<Position>>();
         let result_cache: Arc<Mutex<Option<Vec<Lc0Result>>>> = Arc::new(Mutex::new(None));
         let cache_clone = result_cache.clone();
 
         let handle = thread::spawn(move || {
-            while let Ok(fens) = work_rx.recv() {
+            while let Ok(positions) = work_rx.recv() {
+                let fens: Vec<String> = positions.iter().map(|p| p.as_fen()).collect();
                 let results = run_batch(shared_context, &fens);
                 *cache_clone.lock().unwrap() = Some(results);
             }
@@ -135,10 +137,10 @@ impl Lc0FfiWorker {
         self.busy.store(val, Ordering::Relaxed);
     }
 
-    /// Send a batch of FENs to the persistent worker thread.
-    pub fn send_batch(&self, fens: &[String]) {
+    /// Send a batch of positions to the persistent worker thread.
+    pub fn send_batch(&self, positions: &[Position]) {
         self.busy.store(true, Ordering::Relaxed);
-        let _ = self.work_tx.send(fens.to_vec());
+        let _ = self.work_tx.send(positions.to_vec());
     }
 
     pub fn try_recv(&self) -> Option<Vec<Lc0Result>> {
