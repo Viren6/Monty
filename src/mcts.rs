@@ -400,6 +400,11 @@ impl<'a> Searcher<'a> {
         #[cfg(feature = "datagen")]
         let mut previous_kld = Vec::new();
 
+        // reset lc0 counter for this search
+        if let Some(lc0) = self.lc0 {
+            lc0.reset_refined();
+        }
+
         // search loop
         while !self.abort.load(Ordering::Relaxed) {
             thread::scope(|s| {
@@ -440,6 +445,13 @@ impl<'a> Searcher<'a> {
         }
 
         self.tree.flush_root_accumulator();
+
+        if let Some(lc0) = self.lc0 {
+            let total = lc0.total_refined();
+            if total > 0 {
+                eprintln!("info string lc0 search complete: refined {} nodes", total);
+            }
+        }
 
         *update_nodes += search_stats.total_nodes();
 

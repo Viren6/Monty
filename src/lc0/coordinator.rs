@@ -1,7 +1,7 @@
 use std::{
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::{
@@ -45,6 +45,7 @@ struct PendingBatch {
 pub struct Lc0Coordinator {
     workers: Vec<Lc0Worker>,
     pub config: Lc0Config,
+    total_refined: AtomicUsize,
 }
 
 impl Lc0Coordinator {
@@ -52,7 +53,16 @@ impl Lc0Coordinator {
         Self {
             workers: Vec::new(),
             config,
+            total_refined: AtomicUsize::new(0),
         }
+    }
+
+    pub fn reset_refined(&self) {
+        self.total_refined.store(0, Ordering::Relaxed);
+    }
+
+    pub fn total_refined(&self) -> usize {
+        self.total_refined.load(Ordering::Relaxed)
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -103,9 +113,9 @@ impl Lc0Coordinator {
         let mut pending_batches: Vec<Option<PendingBatch>> =
             (0..self.workers.len()).map(|_| None).collect();
 
-        let mut total_applied = 0usize;
         let value_weight = self.config.value_weight;
         let batch_size = self.config.batch_size;
+        let mut last_report = Instant::now();
 
         while !abort.load(Ordering::Relaxed) && !tree.is_full() {
             let current_half = tree.half();
@@ -133,13 +143,16 @@ impl Lc0Coordinator {
                             pending.actual_count,
                             value_weight,
                         );
-                        total_applied += applied;
 
-                        if applied > 0 && total_applied % 50 == 0 {
-                            eprintln!(
-                                "info string lc0 refined {} nodes total",
-                                total_applied
-                            );
+                        if applied > 0 {
+                            self.total_refined.fetch_add(applied, Ordering::Relaxed);
+                            if last_report.elapsed() >= Duration::from_secs(1) {
+                                eprintln!(
+                                    "info string lc0 refined {} nodes total",
+                                    self.total_refined.load(Ordering::Relaxed)
+                                );
+                                last_report = Instant::now();
+                            }
                         }
                     }
                 }
