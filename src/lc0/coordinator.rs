@@ -1,5 +1,4 @@
 use std::{
-    collections::VecDeque,
     sync::atomic::{AtomicBool, Ordering},
     thread,
     time::Duration,
@@ -108,7 +107,7 @@ impl Lc0Coordinator {
         let value_weight = self.config.value_weight;
         let batch_size = self.config.batch_size;
 
-        while !abort.load(Ordering::Relaxed) {
+        while !abort.load(Ordering::Relaxed) && !tree.is_full() {
             let current_half = tree.half();
 
             // 1. Check workers for completed results
@@ -153,6 +152,7 @@ impl Lc0Coordinator {
                     tree,
                     tree.root_position(),
                     batch_size * idle_count,
+                    abort,
                 );
 
                 if !candidates.is_empty() {
@@ -199,84 +199,91 @@ impl Lc0Coordinator {
     }
 }
 
-/// BFS from root to find highest-visit expanded nodes with lc0_status == 0.
-/// Returns up to `batch_size` candidates sorted by visits descending.
+/// DFS from root to find highest-visit expanded nodes with lc0_status == 0.
+/// Returns up to `limit` candidates sorted by visits descending.
 ///
-/// Two-phase approach for performance:
-///   Phase 1: Lightweight scan storing move-paths (no position cloning)
-///   Phase 2: Replay paths to reconstruct positions only for selected nodes
+/// Prunes subtrees with fewer visits than the current worst candidate,
+/// so we only explore the high-visit portion of the tree near the root.
+/// Checks abort to avoid blocking thread::scope on search termination.
 fn find_candidates(
     tree: &Tree,
     root_pos: &ChessState,
-    batch_size: usize,
+    limit: usize,
+    abort: &AtomicBool,
 ) -> Vec<(NodePtr, ChessState)> {
     let root_ptr = tree.root_node();
-    let root_node = &tree[root_ptr];
-
-    if !root_node.has_children() {
+    if !tree[root_ptr].has_children() {
         return Vec::new();
     }
 
-    // Phase 1: Lightweight BFS - store (NodePtr, visits, path_from_root)
-    // path is indices into parent's children array - cheap to store
-    let mut queue: VecDeque<(NodePtr, Vec<u16>)> = VecDeque::new();
-    queue.push_back((root_ptr, Vec::new()));
+    let mut candidates: Vec<(NodePtr, ChessState, u64)> = Vec::new();
+    let mut min_visits = 0u64;
 
-    let mut candidates: Vec<(NodePtr, u64, Vec<u16>)> = Vec::new();
-    let max_depth = 8;
+    fn dfs(
+        tree: &Tree,
+        ptr: NodePtr,
+        pos: &ChessState,
+        depth: usize,
+        candidates: &mut Vec<(NodePtr, ChessState, u64)>,
+        min_visits: &mut u64,
+        limit: usize,
+        abort: &AtomicBool,
+    ) {
+        if abort.load(Ordering::Relaxed) {
+            return;
+        }
 
-    while let Some((ptr, path)) = queue.pop_front() {
         let node = &tree[ptr];
 
         if !node.has_children() {
-            continue;
+            return;
+        }
+
+        let visits = node.visits();
+
+        // Prune: skip subtrees with fewer visits than our worst candidate
+        if candidates.len() >= limit && visits < *min_visits {
+            return;
         }
 
         if node.lc0_status() == Node::LC0_UNPROCESSED {
-            candidates.push((ptr, node.visits(), path.clone()));
+            candidates.push((ptr, pos.clone(), visits));
+
+            // Periodically trim to keep candidates small
+            if candidates.len() >= limit * 2 {
+                candidates.sort_unstable_by(|a, b| b.2.cmp(&a.2));
+                candidates.truncate(limit);
+                *min_visits = candidates.last().map_or(0, |c| c.2);
+            }
         }
 
-        if path.len() < max_depth {
+        if depth < 8 {
             let first_child = node.actions();
             for action in 0..node.num_actions() {
                 let child_ptr = first_child + action;
                 if tree[child_ptr].has_children() {
-                    let mut child_path = path.clone();
-                    child_path.push(action as u16);
-                    queue.push_back((child_ptr, child_path));
+                    let mut child_pos = pos.clone();
+                    child_pos.make_move(tree[child_ptr].parent_move());
+                    dfs(tree, child_ptr, &child_pos, depth + 1,
+                        candidates, min_visits, limit, abort);
                 }
             }
         }
     }
 
-    if candidates.is_empty() {
-        return Vec::new();
-    }
+    dfs(tree, root_ptr, root_pos, 0,
+        &mut candidates, &mut min_visits, limit, abort);
 
-    // Sort by visits descending, take top batch_size
-    candidates.sort_unstable_by(|a, b| b.1.cmp(&a.1));
-    candidates.truncate(batch_size);
+    // Final sort and truncate
+    candidates.sort_unstable_by(|a, b| b.2.cmp(&a.2));
+    candidates.truncate(limit);
 
-    // Mark via CAS, keep only successfully marked
+    // CAS-mark only the selected candidates
     candidates.retain(|(ptr, _, _)| tree[*ptr].try_mark_lc0_pending());
 
-    if candidates.is_empty() {
-        return Vec::new();
-    }
-
-    // Phase 2: Reconstruct positions by replaying paths from root
     candidates
         .into_iter()
-        .filter_map(|(ptr, _, path)| {
-            let mut pos = root_pos.clone();
-            let mut cur = root_ptr;
-            for &action_idx in &path {
-                let child_ptr = tree[cur].actions() + action_idx as usize;
-                pos.make_move(tree[child_ptr].parent_move());
-                cur = child_ptr;
-            }
-            Some((ptr, pos))
-        })
+        .map(|(ptr, pos, _)| (ptr, pos))
         .collect()
 }
 
