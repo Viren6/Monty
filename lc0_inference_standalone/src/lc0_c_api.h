@@ -9,17 +9,7 @@ extern "C" {
 typedef void* Lc0Handle;
 typedef void* Lc0BatchHandle;
 
-// Results for a single position
-typedef struct {
-    float value;     // Q-value (-1 to 1, from STM perspective)
-    float draw;      // Draw probability
-    int num_moves;   // Number of legal moves with policy
-    int* move_indices;   // Array of lc0 policy indices (canonical, transform=0)
-    float* move_logits;  // Array of corresponding logits
-} Lc0Result;
-
 // Initialize lc0 backend. Returns NULL on failure.
-// Must be called once before any other calls. Thread-safe for multiple handles.
 Lc0Handle lc0_init(const char* weights_path, const char* backend_name, int chess960);
 
 // Destroy handle and free resources.
@@ -29,20 +19,24 @@ void lc0_destroy(Lc0Handle handle);
 Lc0BatchHandle lc0_new_batch(Lc0Handle handle);
 
 // Add a FEN position to the batch. Returns the sample index (0-based).
-// `fen` is the position FEN string.
+// Legal moves and their canonical indices are cached at this point.
 int lc0_batch_add_fen(Lc0BatchHandle batch, const char* fen);
 
 // Run inference on the batch (blocking).
 void lc0_batch_compute(Lc0BatchHandle batch);
 
-// Get the number of positions in the batch.
-int lc0_batch_size(Lc0BatchHandle batch);
+// Get Q-value for a position (-1 to 1, from STM perspective).
+float lc0_batch_get_q(Lc0BatchHandle batch, int sample_idx);
 
-// Get result for a position. Caller must free the result with lc0_free_result.
-Lc0Result lc0_batch_get_result(Lc0BatchHandle batch, int sample_idx);
+// Get draw probability for a position.
+float lc0_batch_get_d(Lc0BatchHandle batch, int sample_idx);
 
-// Free a result's internal arrays.
-void lc0_free_result(Lc0Result* result);
+// Get number of legal moves for a position.
+int lc0_batch_get_num_moves(Lc0BatchHandle batch, int sample_idx);
+
+// Get all legal move canonical indices and logits in one call.
+// out_indices and out_logits must have space for at least lc0_batch_get_num_moves entries.
+void lc0_batch_get_moves(Lc0BatchHandle batch, int sample_idx, int* out_indices, float* out_logits);
 
 // Free a batch.
 void lc0_free_batch(Lc0BatchHandle batch);

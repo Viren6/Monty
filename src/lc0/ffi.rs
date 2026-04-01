@@ -19,15 +19,6 @@ impl Lc0Handle {
     pub fn is_null(self) -> bool { self.0.is_null() }
 }
 
-#[repr(C)]
-struct Lc0ResultRaw {
-    value: c_float,
-    draw: c_float,
-    num_moves: c_int,
-    move_indices: *mut c_int,
-    move_logits: *mut c_float,
-}
-
 extern "C" {
     fn lc0_init(weights_path: *const c_char, backend_name: *const c_char, chess960: c_int) -> Lc0HandleRaw;
     #[allow(dead_code)]
@@ -35,8 +26,10 @@ extern "C" {
     fn lc0_new_batch(handle: Lc0HandleRaw) -> Lc0BatchHandleRaw;
     fn lc0_batch_add_fen(batch: Lc0BatchHandleRaw, fen: *const c_char) -> c_int;
     fn lc0_batch_compute(batch: Lc0BatchHandleRaw);
-    fn lc0_batch_get_result(batch: Lc0BatchHandleRaw, sample_idx: c_int) -> Lc0ResultRaw;
-    fn lc0_free_result(result: *mut Lc0ResultRaw);
+    fn lc0_batch_get_q(batch: Lc0BatchHandleRaw, sample_idx: c_int) -> c_float;
+    fn lc0_batch_get_d(batch: Lc0BatchHandleRaw, sample_idx: c_int) -> c_float;
+    fn lc0_batch_get_num_moves(batch: Lc0BatchHandleRaw, sample_idx: c_int) -> c_int;
+    fn lc0_batch_get_moves(batch: Lc0BatchHandleRaw, sample_idx: c_int, out_indices: *mut c_int, out_logits: *mut c_float);
     fn lc0_free_batch(batch: Lc0BatchHandleRaw);
 }
 
@@ -108,24 +101,25 @@ impl Lc0FfiWorker {
 
             let mut results = Vec::with_capacity(fens_owned.len());
             for i in 0..fens_owned.len() {
-                let mut raw = unsafe { lc0_batch_get_result(batch, i as c_int) };
+                let idx = i as c_int;
+                let value = unsafe { lc0_batch_get_q(batch, idx) };
+                let draw = unsafe { lc0_batch_get_d(batch, idx) };
 
-                let mut policy_logits = Vec::with_capacity(raw.num_moves as usize);
-                if raw.num_moves > 0 && !raw.move_indices.is_null() && !raw.move_logits.is_null() {
-                    for j in 0..raw.num_moves as usize {
-                        unsafe {
-                            let idx = *raw.move_indices.add(j) as usize;
-                            let logit = *raw.move_logits.add(j);
-                            policy_logits.push((idx, logit));
-                        }
-                    }
+                let num_moves = unsafe { lc0_batch_get_num_moves(batch, idx) } as usize;
+                let mut indices = vec![0i32; num_moves];
+                let mut logits = vec![0.0f32; num_moves];
+                unsafe {
+                    lc0_batch_get_moves(batch, idx, indices.as_mut_ptr(), logits.as_mut_ptr());
                 }
-
-                unsafe { lc0_free_result(&mut raw) };
+                let policy_logits: Vec<(usize, f32)> = indices
+                    .iter()
+                    .zip(logits.iter())
+                    .map(|(&i, &l)| (i as usize, l))
+                    .collect();
 
                 results.push(Lc0Result {
-                    value: raw.value,
-                    draw: raw.draw,
+                    value,
+                    draw,
                     policy_logits,
                 });
             }

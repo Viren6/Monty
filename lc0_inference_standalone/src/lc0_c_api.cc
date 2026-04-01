@@ -3,8 +3,6 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include <sstream>
-#include <cstring>
 #include <mutex>
 
 #include "neural/network.h"
@@ -25,21 +23,18 @@ struct Lc0Context {
     bool chess960;
 };
 
+// Per-position move info cached at add_fen time
+struct MoveInfo {
+    int nn_idx;        // Index in the NN output (transformed space)
+    int canonical_idx; // Index in canonical space (transform=0)
+};
+
 struct Lc0Batch {
     Lc0Context* ctx;
     std::unique_ptr<NetworkComputation> computation;
-    std::vector<int> transforms;
-    std::vector<std::string> fens;  // final FENs for legal move generation
+    std::vector<std::vector<MoveInfo>> move_infos; // per-sample
     int count;
 };
-
-static std::vector<std::string> split(const std::string& str) {
-    std::istringstream iss(str);
-    std::vector<std::string> tokens;
-    std::string token;
-    while (iss >> token) tokens.push_back(token);
-    return tokens;
-}
 
 extern "C" {
 
@@ -83,7 +78,6 @@ Lc0BatchHandle lc0_new_batch(Lc0Handle handle) {
         ctx,
         ctx->network->NewComputation(),
         {},
-        {},
         0
     };
     return static_cast<Lc0BatchHandle>(batch);
@@ -97,8 +91,6 @@ int lc0_batch_add_fen(Lc0BatchHandle batch_handle, const char* fen_str) {
         PositionHistory history;
         history.Reset(pos);
 
-        batch->fens.push_back(PositionToFen(pos));
-
         int transform = 0;
         auto input_format = batch->ctx->network->GetCapabilities().input_format;
 
@@ -111,7 +103,21 @@ int lc0_batch_add_fen(Lc0BatchHandle batch_handle, const char* fen_str) {
         );
 
         batch->computation->AddInput(std::move(planes));
-        batch->transforms.push_back(transform);
+
+        // Cache legal moves and their index mappings now
+        const ChessBoard& board = pos.GetBoard();
+        MoveList moves = board.GenerateLegalMoves();
+
+        std::vector<MoveInfo> infos;
+        infos.reserve(moves.size());
+        for (const auto& move : moves) {
+            int nn_idx = MoveToNNIndex(move, transform);
+            int canonical_idx = MoveToNNIndex(move, 0);
+            if (nn_idx >= 0 && nn_idx < 1858 && canonical_idx >= 0 && canonical_idx < 1858) {
+                infos.push_back({nn_idx, canonical_idx});
+            }
+        }
+        batch->move_infos.push_back(std::move(infos));
 
         return batch->count++;
     } catch (...) {
@@ -124,64 +130,27 @@ void lc0_batch_compute(Lc0BatchHandle batch_handle) {
     batch->computation->ComputeBlocking();
 }
 
-int lc0_batch_size(Lc0BatchHandle batch_handle) {
+float lc0_batch_get_q(Lc0BatchHandle batch_handle, int sample_idx) {
     auto* batch = static_cast<Lc0Batch*>(batch_handle);
-    return batch->count;
+    return batch->computation->GetQVal(sample_idx);
 }
 
-Lc0Result lc0_batch_get_result(Lc0BatchHandle batch_handle, int sample_idx) {
+float lc0_batch_get_d(Lc0BatchHandle batch_handle, int sample_idx) {
     auto* batch = static_cast<Lc0Batch*>(batch_handle);
-    Lc0Result result = {};
-
-    try {
-        result.value = batch->computation->GetQVal(sample_idx);
-        result.draw = batch->computation->GetDVal(sample_idx);
-
-        // Generate legal moves and extract policy logits
-        Position pos = Position::FromFen(batch->fens[sample_idx]);
-        const ChessBoard& board = pos.GetBoard();
-        MoveList moves = board.GenerateLegalMoves();
-        int transform = batch->transforms[sample_idx];
-
-        std::vector<int> indices;
-        std::vector<float> logits;
-        indices.reserve(moves.size());
-        logits.reserve(moves.size());
-
-        for (const auto& move : moves) {
-            int nn_idx = MoveToNNIndex(move, transform);
-            int canonical_idx = MoveToNNIndex(move, 0);
-
-            if (nn_idx >= 0 && nn_idx < 1858 && canonical_idx >= 0) {
-                float logit = batch->computation->GetPVal(sample_idx, nn_idx);
-                indices.push_back(canonical_idx);
-                logits.push_back(logit);
-            }
-        }
-
-        result.num_moves = static_cast<int>(indices.size());
-        if (result.num_moves > 0) {
-            result.move_indices = new int[result.num_moves];
-            result.move_logits = new float[result.num_moves];
-            std::memcpy(result.move_indices, indices.data(), result.num_moves * sizeof(int));
-            std::memcpy(result.move_logits, logits.data(), result.num_moves * sizeof(float));
-        }
-    } catch (...) {
-        result.value = 0.0f;
-        result.draw = 0.5f;
-        result.num_moves = 0;
-    }
-
-    return result;
+    return batch->computation->GetDVal(sample_idx);
 }
 
-void lc0_free_result(Lc0Result* result) {
-    if (result) {
-        delete[] result->move_indices;
-        delete[] result->move_logits;
-        result->move_indices = nullptr;
-        result->move_logits = nullptr;
-        result->num_moves = 0;
+int lc0_batch_get_num_moves(Lc0BatchHandle batch_handle, int sample_idx) {
+    auto* batch = static_cast<Lc0Batch*>(batch_handle);
+    return static_cast<int>(batch->move_infos[sample_idx].size());
+}
+
+void lc0_batch_get_moves(Lc0BatchHandle batch_handle, int sample_idx, int* out_indices, float* out_logits) {
+    auto* batch = static_cast<Lc0Batch*>(batch_handle);
+    const auto& infos = batch->move_infos[sample_idx];
+    for (size_t i = 0; i < infos.size(); ++i) {
+        out_indices[i] = infos[i].canonical_idx;
+        out_logits[i] = batch->computation->GetPVal(sample_idx, infos[i].nn_idx);
     }
 }
 
