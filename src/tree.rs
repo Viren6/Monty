@@ -13,7 +13,10 @@ use std::{
     mem::MaybeUninit,
     ops::Index,
     ptr,
-    sync::atomic::{AtomicBool, AtomicI16, AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicI16, AtomicU64, Ordering},
+        Mutex,
+    },
 };
 
 use crate::{
@@ -296,6 +299,7 @@ pub struct Tree {
     hash: HashTable,
     butterfly: ButterflyTable,
     root_accumulator: RootAccumulator,
+    lc0_expansion_queue: Mutex<Vec<(NodePtr, crate::chess::Position, crate::chess::Castling)>>,
 }
 
 impl Index<NodePtr> for Tree {
@@ -331,6 +335,7 @@ impl Tree {
             hash: HashTable::new(hash_cap / 4, threads),
             butterfly: ButterflyTable::new(),
             root_accumulator: RootAccumulator::new(threads),
+            lc0_expansion_queue: Mutex::new(Vec::new()),
         };
 
         tree.reset_root_accumulator();
@@ -551,6 +556,11 @@ impl Tree {
         node.set_num_actions(count);
         self.tree[self.half()].register_cross_link(node_ptr, new_ptr);
 
+        // Notify lc0 coordinator of newly expanded node (no heap alloc - Position and Castling are Copy)
+        if let Ok(mut q) = self.lc0_expansion_queue.try_lock() {
+            q.push((node_ptr, pos.board(), pos.castling()));
+        }
+
         Some(())
     }
 
@@ -607,6 +617,15 @@ impl Tree {
 
     pub fn clear_butterfly_table(&self) {
         self.butterfly.clear();
+    }
+
+    /// Drain the lc0 expansion notification queue.
+    pub fn drain_lc0_queue(&self) -> Vec<(NodePtr, crate::chess::Position, crate::chess::Castling)> {
+        if let Ok(mut q) = self.lc0_expansion_queue.try_lock() {
+            std::mem::take(&mut *q)
+        } else {
+            Vec::new()
+        }
     }
 
     pub fn propogate_proven_mates(&self, ptr: NodePtr, child_state: GameState) {

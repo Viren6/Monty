@@ -1,8 +1,6 @@
-use montyformat::chess::{Move, consts::Piece};
+use montyformat::chess::{Move, consts::Piece, frc::Castling, position::Position};
 use std::collections::HashMap;
 use std::sync::OnceLock;
-
-use crate::chess::ChessState;
 
 static LC0_INDICES: OnceLock<HashMap<String, usize>> = OnceLock::new();
 
@@ -274,9 +272,8 @@ pub fn get_lc0_index(mov: &Move) -> Option<usize> {
 /// Convert a Monty move to an LC0 policy index, handling:
 /// - Perspective flipping for Black (LC0 is always from White's perspective)
 /// - Castling king-takes-rook conversion for FRC/DFRC
-pub fn monty_move_to_lc0_index(mov: Move, pos: &ChessState) -> Option<usize> {
-    let stm = pos.stm();
-    let castling = pos.castling();
+pub fn monty_move_to_lc0_index(mov: Move, board: &Position, castling: &Castling) -> Option<usize> {
+    let stm = board.stm();
 
     // LC0 output is always from White's perspective.
     // If Black to move, mirror the move vertically (sq ^ 56).
@@ -293,7 +290,7 @@ pub fn monty_move_to_lc0_index(mov: Move, pos: &ChessState) -> Option<usize> {
     let lookup_move = if flag == 2 || flag == 3 {
         let dest_sq = u16::from(mov.to());
         let bit = 1u64 << dest_sq;
-        let is_rook = pos.board().get_pc(bit) == Piece::ROOK;
+        let is_rook = board.get_pc(bit) == Piece::ROOK;
 
         if is_rook {
             // Already in king-takes-rook format

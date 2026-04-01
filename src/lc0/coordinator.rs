@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    chess::ChessState,
+    chess::{Castling, Position},
     lc0::{
         mapping::monty_move_to_lc0_index,
         worker::{Lc0Result, Lc0Worker},
@@ -37,7 +37,7 @@ impl Default for Lc0Config {
 
 struct PendingBatch {
     node_ptrs: Vec<NodePtr>,
-    positions: Vec<ChessState>,
+    positions: Vec<(Position, Castling)>,
     tree_half: usize,
     actual_count: usize,
 }
@@ -117,6 +117,9 @@ impl Lc0Coordinator {
         let batch_size = self.config.batch_size;
         let mut last_report = Instant::now();
 
+        // Local buffer of candidates, fed by the expansion queue
+        let mut candidate_pool: Vec<(NodePtr, Position, Castling)> = Vec::new();
+
         while !abort.load(Ordering::Relaxed) && !tree.is_full() {
             let current_half = tree.half();
 
@@ -158,27 +161,36 @@ impl Lc0Coordinator {
                 }
             }
 
-            // 2. If a worker is idle, find candidates and dispatch
-            let idle_count = self.workers.iter().filter(|w| !w.is_busy()).count();
-            if idle_count > 0 {
-                let candidates = find_candidates(
-                    tree,
-                    tree.root_position(),
-                    batch_size * idle_count,
-                    abort,
-                );
+            // 2. Drain newly expanded nodes from the tree's queue
+            let new_nodes = tree.drain_lc0_queue();
+            candidate_pool.extend(new_nodes);
 
-                if !candidates.is_empty() {
-                    // Split candidates across idle workers
-                    let mut candidate_iter = candidates.into_iter();
+            // Cap pool size to avoid unbounded growth
+            const MAX_POOL: usize = 1024;
+            if candidate_pool.len() > MAX_POOL * 2 {
+                // O(n) partial sort to keep the top MAX_POOL by visits
+                candidate_pool.select_nth_unstable_by(MAX_POOL, |a, b| {
+                    tree[b.0].visits().cmp(&tree[a.0].visits())
+                });
+                candidate_pool.truncate(MAX_POOL);
+            }
+
+            // 3. If a worker is idle, pick best candidates and dispatch
+            let idle_count = self.workers.iter().filter(|w| !w.is_busy()).count();
+            if idle_count > 0 && !candidate_pool.is_empty() {
+                let needed = batch_size * idle_count;
+                let selected = select_top_candidates(tree, &mut candidate_pool, needed);
+
+                if !selected.is_empty() {
+                    let mut resolved_iter = selected.into_iter();
 
                     for (i, worker) in self.workers.iter().enumerate() {
                         if worker.is_busy() {
                             continue;
                         }
 
-                        let batch: Vec<(NodePtr, ChessState)> =
-                            candidate_iter.by_ref().take(batch_size).collect();
+                        let batch: Vec<(NodePtr, Position, Castling)> =
+                            resolved_iter.by_ref().take(batch_size).collect();
 
                         if batch.is_empty() {
                             break;
@@ -187,12 +199,12 @@ impl Lc0Coordinator {
                         let actual_count = batch.len();
                         let mut fens: Vec<String> = Vec::with_capacity(actual_count);
                         let mut node_ptrs: Vec<NodePtr> = Vec::with_capacity(actual_count);
-                        let mut positions: Vec<ChessState> = Vec::with_capacity(actual_count);
+                        let mut positions: Vec<(Position, Castling)> = Vec::with_capacity(actual_count);
 
-                        for (ptr, pos) in &batch {
-                            fens.push(pos.board().as_fen());
-                            node_ptrs.push(*ptr);
-                            positions.push(pos.clone());
+                        for &(ptr, board, castling) in &batch {
+                            fens.push(board.as_fen());
+                            node_ptrs.push(ptr);
+                            positions.push((board, castling));
                         }
 
                         worker.send_batch(&fens);
@@ -212,91 +224,36 @@ impl Lc0Coordinator {
     }
 }
 
-/// DFS from root to find highest-visit expanded nodes with lc0_status == 0.
-/// Returns up to `limit` candidates sorted by visits descending.
-///
-/// Prunes subtrees with fewer visits than the current worst candidate,
-/// so we only explore the high-visit portion of the tree near the root.
-/// Checks abort to avoid blocking thread::scope on search termination.
-fn find_candidates(
+/// Select top candidates by visit count from the pool.
+/// Removes selected ones from the pool. Pool is bounded to ~1024 entries.
+fn select_top_candidates(
     tree: &Tree,
-    root_pos: &ChessState,
+    pool: &mut Vec<(NodePtr, Position, Castling)>,
     limit: usize,
-    abort: &AtomicBool,
-) -> Vec<(NodePtr, ChessState)> {
-    let root_ptr = tree.root_node();
-    if !tree[root_ptr].has_children() {
+) -> Vec<(NodePtr, Position, Castling)> {
+    if pool.is_empty() {
         return Vec::new();
     }
 
-    let mut candidates: Vec<(NodePtr, ChessState, u64)> = Vec::new();
-    let mut min_visits = 0u64;
-
-    fn dfs(
-        tree: &Tree,
-        ptr: NodePtr,
-        pos: &ChessState,
-        depth: usize,
-        candidates: &mut Vec<(NodePtr, ChessState, u64)>,
-        min_visits: &mut u64,
-        limit: usize,
-        abort: &AtomicBool,
-    ) {
-        if abort.load(Ordering::Relaxed) {
-            return;
-        }
-
-        let node = &tree[ptr];
-
-        if !node.has_children() {
-            return;
-        }
-
-        let visits = node.visits();
-
-        // Prune: skip subtrees with fewer visits than our worst candidate
-        if candidates.len() >= limit && visits < *min_visits {
-            return;
-        }
-
-        if node.lc0_status() == Node::LC0_UNPROCESSED {
-            candidates.push((ptr, pos.clone(), visits));
-
-            // Periodically trim to keep candidates small
-            if candidates.len() >= limit * 2 {
-                candidates.sort_unstable_by(|a, b| b.2.cmp(&a.2));
-                candidates.truncate(limit);
-                *min_visits = candidates.last().map_or(0, |c| c.2);
-            }
-        }
-
-        if depth < 8 {
-            let first_child = node.actions();
-            for action in 0..node.num_actions() {
-                let child_ptr = first_child + action;
-                if tree[child_ptr].has_children() {
-                    let mut child_pos = pos.clone();
-                    child_pos.make_move(tree[child_ptr].parent_move());
-                    dfs(tree, child_ptr, &child_pos, depth + 1,
-                        candidates, min_visits, limit, abort);
-                }
-            }
-        }
+    if pool.len() <= limit {
+        return pool
+            .drain(..)
+            .filter(|(ptr, _, _)| {
+                tree[*ptr].lc0_status() == Node::LC0_UNPROCESSED
+                    && tree[*ptr].try_mark_lc0_pending()
+            })
+            .collect();
     }
 
-    dfs(tree, root_ptr, root_pos, 0,
-        &mut candidates, &mut min_visits, limit, abort);
+    // O(n) partial sort: partition so top `limit` by visits are at the front
+    let pivot = limit.min(pool.len() - 1);
+    pool.select_nth_unstable_by(pivot, |a, b| tree[b.0].visits().cmp(&tree[a.0].visits()));
 
-    // Final sort and truncate
-    candidates.sort_unstable_by(|a, b| b.2.cmp(&a.2));
-    candidates.truncate(limit);
-
-    // CAS-mark only the selected candidates
-    candidates.retain(|(ptr, _, _)| tree[*ptr].try_mark_lc0_pending());
-
-    candidates
-        .into_iter()
-        .map(|(ptr, pos, _)| (ptr, pos))
+    pool.drain(..=pivot)
+        .filter(|(ptr, _, _)| {
+            tree[*ptr].lc0_status() == Node::LC0_UNPROCESSED
+                && tree[*ptr].try_mark_lc0_pending()
+        })
         .collect()
 }
 
@@ -305,7 +262,7 @@ fn apply_results(
     tree: &Tree,
     results: &[Lc0Result],
     node_ptrs: &[NodePtr],
-    positions: &[ChessState],
+    positions: &[(Position, Castling)],
     actual_count: usize,
     value_weight: u64,
 ) -> usize {
@@ -313,7 +270,7 @@ fn apply_results(
 
     for i in 0..actual_count.min(results.len()).min(node_ptrs.len()) {
         let ptr = node_ptrs[i];
-        let pos = &positions[i];
+        let (board, castling) = &positions[i];
         let result = &results[i];
         let node = &tree[ptr];
 
@@ -348,7 +305,7 @@ fn apply_results(
             let child = &tree[first_child + action];
             let mov = child.parent_move();
 
-            if let Some(lc0_idx) = monty_move_to_lc0_index(mov, pos) {
+            if let Some(lc0_idx) = monty_move_to_lc0_index(mov, board, castling) {
                 let logit = lc0_logits[lc0_idx];
                 child_logits[action] = logit;
                 if logit > max_logit {
