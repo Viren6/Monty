@@ -281,7 +281,7 @@ fn preamble(tcec_mode: bool) {
     println!("option name Lc0Workers type spin default 0 min 0 max 8");
     println!("option name Lc0Network type string default");
     println!("option name Lc0Backend type string default onnx-trt");
-    println!("option name Lc0BatchSize type spin default 32 min 1 max 256");
+    println!("option name Lc0BatchSize type spin default 32 min 1 max 1024");
     println!("option name Lc0ValueWeight type spin default 128 min 1 max 10000");
 
     #[cfg(feature = "tunable")]
@@ -419,7 +419,7 @@ fn setoption(
         "Lc0BatchSize" => {
             if let Some(v) = value {
                 if let Ok(parsed) = v.parse::<usize>() {
-                    lc0_coordinator.config.batch_size = parsed.clamp(1, 256);
+                    lc0_coordinator.config.batch_size = parsed.clamp(1, 1024);
                 }
             }
         }
