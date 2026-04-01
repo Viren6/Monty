@@ -7,8 +7,9 @@ use std::{
 use crate::{
     chess::{Castling, Position},
     lc0::{
+        ffi::Lc0FfiWorker,
         mapping::monty_move_to_lc0_index,
-        worker::{Lc0Result, Lc0Worker},
+        worker::Lc0Result,
     },
     tree::{Node, NodePtr, Tree},
 };
@@ -43,7 +44,7 @@ struct PendingBatch {
 }
 
 pub struct Lc0Coordinator {
-    workers: Vec<Lc0Worker>,
+    workers: Vec<Lc0FfiWorker>,
     pub config: Lc0Config,
     total_refined: AtomicUsize,
 }
@@ -85,7 +86,7 @@ impl Lc0Coordinator {
         );
 
         for _ in 0..self.config.num_workers {
-            self.workers.push(Lc0Worker::spawn(
+            self.workers.push(Lc0FfiWorker::spawn(
                 &self.config.network_path,
                 &self.config.backend,
                 self.config.batch_size,

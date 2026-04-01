@@ -880,7 +880,9 @@ if get_option('lc0')
   executable('lc0_inference', 'src/main.cc',
        files, include_directories: includes, dependencies: deps, install: true)
 
-
+  shared_library('lc0_inference_api', 'src/lc0_c_api.cc',
+       files, include_directories: includes, dependencies: deps, install: true,
+       name_prefix: 'lib')
 endif
 
 #############################################################################

@@ -1,4 +1,5 @@
 pub mod coordinator;
+pub mod ffi;
 pub mod mapping;
 pub mod worker;
 

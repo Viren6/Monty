@@ -9,6 +9,16 @@ use std::path::Path;
 
 use std::process::Command;
 
+fn link_lc0() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let lib_dir = format!("{}/lc0_inference_standalone", manifest_dir);
+    println!("cargo:rustc-link-search=native={}", lib_dir);
+    println!("cargo:rustc-link-lib=dylib=lc0_inference_api");
+    // Set rpath so the binary finds the .so at runtime
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir);
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/tmp/onnxruntime-linux-x64-gpu-1.22.0/lib");
+}
+
 fn get_name() {
     // Try to obtain the first 8 characters of the current Git commit hash.
     let git_commit_hash = Command::new("git")
@@ -34,6 +44,7 @@ fn get_name() {
 fn main() {
     // Get the build version name
     get_name();
+    link_lc0();
 
     // Declare variables for file names
     let value_file_name;
@@ -98,6 +109,7 @@ fn should_validate(dest_path: &str) -> bool {
 fn main() {
     // Get the build version name
     get_name();
+    link_lc0();
 }
 
 #[cfg(feature = "embed")]
