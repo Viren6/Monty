@@ -10,13 +10,13 @@ type Lc0BatchHandleRaw = *mut c_void;
 /// Wrapper to make the raw pointer Send+Sync.
 /// Safety: lc0 Network objects are thread-safe for creating new computations.
 #[derive(Clone, Copy)]
-struct Lc0Handle(Lc0HandleRaw);
+pub struct Lc0Handle(Lc0HandleRaw);
 unsafe impl Send for Lc0Handle {}
 unsafe impl Sync for Lc0Handle {}
 
 impl Lc0Handle {
     fn raw(self) -> Lc0HandleRaw { self.0 }
-    fn is_null(self) -> bool { self.0.is_null() }
+    pub fn is_null(self) -> bool { self.0.is_null() }
 }
 
 #[repr(C)]
@@ -30,6 +30,7 @@ struct Lc0ResultRaw {
 
 extern "C" {
     fn lc0_init(weights_path: *const c_char, backend_name: *const c_char, chess960: c_int) -> Lc0HandleRaw;
+    #[allow(dead_code)]
     fn lc0_destroy(handle: Lc0HandleRaw);
     fn lc0_new_batch(handle: Lc0HandleRaw) -> Lc0BatchHandleRaw;
     fn lc0_batch_add_fen(batch: Lc0BatchHandleRaw, fen: *const c_char) -> c_int;
@@ -39,34 +40,36 @@ extern "C" {
     fn lc0_free_batch(batch: Lc0BatchHandleRaw);
 }
 
-/// FFI-based lc0 worker. Calls the shared library directly instead of
-/// managing a subprocess with pipes. Same interface as Lc0Worker.
+/// Initialize a single lc0 network. Returns a shared handle that can be
+/// used by multiple workers concurrently (one network copy on GPU).
+pub fn lc0_init_shared(network_path: &str, backend: &str, chess960: bool) -> Lc0Handle {
+    let weights = CString::new(network_path).expect("invalid network path");
+    let backend_c = CString::new(backend).expect("invalid backend name");
+
+    let raw = unsafe {
+        lc0_init(weights.as_ptr(), backend_c.as_ptr(), chess960 as c_int)
+    };
+
+    if raw.is_null() {
+        panic!("Failed to initialize lc0 via FFI. Check network path and backend.");
+    }
+
+    Lc0Handle(raw)
+}
+
+/// FFI-based lc0 worker. Multiple workers share a single Lc0Handle
+/// (one network copy on GPU), each creating independent batch computations.
 pub struct Lc0FfiWorker {
-    context: Lc0Handle,  // Send+Sync via wrapper
+    context: Lc0Handle,
     busy: AtomicBool,
     result_cache: Arc<Mutex<Option<Vec<Lc0Result>>>>,
 }
 
 impl Lc0FfiWorker {
-    pub fn spawn(
-        network_path: &str,
-        backend: &str,
-        _batch_size: usize,
-        chess960: bool,
-    ) -> Self {
-        let weights = CString::new(network_path).expect("invalid network path");
-        let backend_c = CString::new(backend).expect("invalid backend name");
-
-        let raw = unsafe {
-            lc0_init(weights.as_ptr(), backend_c.as_ptr(), chess960 as c_int)
-        };
-
-        if raw.is_null() {
-            panic!("Failed to initialize lc0 via FFI. Check network path and backend.");
-        }
-
+    /// Create a worker that shares the given network handle.
+    pub fn new(shared_context: Lc0Handle) -> Self {
         Self {
-            context: Lc0Handle(raw),
+            context: shared_context,
             busy: AtomicBool::new(false),
             result_cache: Arc::new(Mutex::new(None)),
         }
@@ -138,14 +141,6 @@ impl Lc0FfiWorker {
     }
 
     pub fn kill(&self) {
-        // No-op for FFI - cleanup happens in Drop
-    }
-}
-
-impl Drop for Lc0FfiWorker {
-    fn drop(&mut self) {
-        // Intentionally leak the lc0 context on drop.
-        // TensorRT's destructor can corrupt the heap when mixed with Rust's allocator.
-        // This only happens at process exit, so the OS reclaims memory anyway.
+        // No-op for FFI
     }
 }

@@ -7,7 +7,7 @@ use std::{
 use crate::{
     chess::{Castling, Position},
     lc0::{
-        ffi::Lc0FfiWorker,
+        ffi::{Lc0FfiWorker, lc0_init_shared},
         mapping::monty_move_to_lc0_index,
         worker::Lc0Result,
     },
@@ -81,17 +81,19 @@ impl Lc0Coordinator {
         }
 
         eprintln!(
-            "info string spawning {} lc0 workers (batch_size={})",
+            "info string loading lc0 network, spawning {} workers (batch_size={})",
             self.config.num_workers, self.config.batch_size
         );
 
+        // Single network init - one copy on GPU shared by all workers
+        let shared_handle = lc0_init_shared(
+            &self.config.network_path,
+            &self.config.backend,
+            self.config.chess960,
+        );
+
         for _ in 0..self.config.num_workers {
-            self.workers.push(Lc0FfiWorker::spawn(
-                &self.config.network_path,
-                &self.config.backend,
-                self.config.batch_size,
-                self.config.chess960,
-            ));
+            self.workers.push(Lc0FfiWorker::new(shared_handle));
         }
     }
 
