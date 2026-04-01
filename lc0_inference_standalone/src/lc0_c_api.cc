@@ -130,28 +130,29 @@ void lc0_batch_compute(Lc0BatchHandle batch_handle) {
     batch->computation->ComputeBlocking();
 }
 
-float lc0_batch_get_q(Lc0BatchHandle batch_handle, int sample_idx) {
+int lc0_batch_extract_all(Lc0BatchHandle batch_handle, int batch_count,
+                          Lc0SampleHeader* headers,
+                          int* out_indices, float* out_logits) {
     auto* batch = static_cast<Lc0Batch*>(batch_handle);
-    return batch->computation->GetQVal(sample_idx);
-}
+    int total_moves = 0;
 
-float lc0_batch_get_d(Lc0BatchHandle batch_handle, int sample_idx) {
-    auto* batch = static_cast<Lc0Batch*>(batch_handle);
-    return batch->computation->GetDVal(sample_idx);
-}
+    for (int s = 0; s < batch_count; ++s) {
+        headers[s].value = batch->computation->GetQVal(s);
+        headers[s].draw = batch->computation->GetDVal(s);
 
-int lc0_batch_get_num_moves(Lc0BatchHandle batch_handle, int sample_idx) {
-    auto* batch = static_cast<Lc0Batch*>(batch_handle);
-    return static_cast<int>(batch->move_infos[sample_idx].size());
-}
+        const auto& infos = batch->move_infos[s];
+        int n = static_cast<int>(infos.size());
+        headers[s].num_moves = n;
 
-void lc0_batch_get_moves(Lc0BatchHandle batch_handle, int sample_idx, int* out_indices, float* out_logits) {
-    auto* batch = static_cast<Lc0Batch*>(batch_handle);
-    const auto& infos = batch->move_infos[sample_idx];
-    for (size_t i = 0; i < infos.size(); ++i) {
-        out_indices[i] = infos[i].canonical_idx;
-        out_logits[i] = batch->computation->GetPVal(sample_idx, infos[i].nn_idx);
+        for (int m = 0; m < n; ++m) {
+            out_indices[total_moves + m] = infos[m].canonical_idx;
+            out_logits[total_moves + m] = batch->computation->GetPVal(s, infos[m].nn_idx);
+        }
+
+        total_moves += n;
     }
+
+    return total_moves;
 }
 
 void lc0_free_batch(Lc0BatchHandle batch_handle) {

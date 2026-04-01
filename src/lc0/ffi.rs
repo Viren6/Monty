@@ -22,6 +22,14 @@ impl Lc0Handle {
     pub fn is_null(self) -> bool { self.0.is_null() }
 }
 
+#[repr(C)]
+#[derive(Clone)]
+struct Lc0SampleHeader {
+    value: c_float,
+    draw: c_float,
+    num_moves: c_int,
+}
+
 extern "C" {
     fn lc0_init(weights_path: *const c_char, backend_name: *const c_char, chess960: c_int) -> Lc0HandleRaw;
     #[allow(dead_code)]
@@ -29,10 +37,9 @@ extern "C" {
     fn lc0_new_batch(handle: Lc0HandleRaw) -> Lc0BatchHandleRaw;
     fn lc0_batch_add_fen(batch: Lc0BatchHandleRaw, fen: *const c_char) -> c_int;
     fn lc0_batch_compute(batch: Lc0BatchHandleRaw);
-    fn lc0_batch_get_q(batch: Lc0BatchHandleRaw, sample_idx: c_int) -> c_float;
-    fn lc0_batch_get_d(batch: Lc0BatchHandleRaw, sample_idx: c_int) -> c_float;
-    fn lc0_batch_get_num_moves(batch: Lc0BatchHandleRaw, sample_idx: c_int) -> c_int;
-    fn lc0_batch_get_moves(batch: Lc0BatchHandleRaw, sample_idx: c_int, out_indices: *mut c_int, out_logits: *mut c_float);
+    fn lc0_batch_extract_all(batch: Lc0BatchHandleRaw, batch_count: c_int,
+                             headers: *mut Lc0SampleHeader,
+                             out_indices: *mut c_int, out_logits: *mut c_float) -> c_int;
     fn lc0_free_batch(batch: Lc0BatchHandleRaw);
 }
 
@@ -55,6 +62,7 @@ pub fn lc0_init_shared(network_path: &str, backend: &str, chess960: bool) -> Lc0
 
 fn run_batch(context: Lc0Handle, fens: &[String]) -> Vec<Lc0Result> {
     let batch = unsafe { lc0_new_batch(context.raw()) };
+    let count = fens.len();
 
     for fen in fens {
         let fen_c = CString::new(fen.as_str()).unwrap();
@@ -63,29 +71,40 @@ fn run_batch(context: Lc0Handle, fens: &[String]) -> Vec<Lc0Result> {
 
     unsafe { lc0_batch_compute(batch) };
 
-    let mut results = Vec::with_capacity(fens.len());
-    for i in 0..fens.len() {
-        let idx = i as c_int;
-        let value = unsafe { lc0_batch_get_q(batch, idx) };
-        let draw = unsafe { lc0_batch_get_d(batch, idx) };
+    // Bulk extract: one FFI call for all samples
+    let mut headers = vec![Lc0SampleHeader { value: 0.0, draw: 0.0, num_moves: 0 }; count];
+    // Upper bound: ~30 legal moves per position
+    let max_total_moves = count * 220;
+    let mut all_indices = vec![0i32; max_total_moves];
+    let mut all_logits = vec![0.0f32; max_total_moves];
 
-        let num_moves = unsafe { lc0_batch_get_num_moves(batch, idx) } as usize;
-        let mut indices = vec![0i32; num_moves];
-        let mut logits = vec![0.0f32; num_moves];
-        unsafe {
-            lc0_batch_get_moves(batch, idx, indices.as_mut_ptr(), logits.as_mut_ptr());
-        }
-        let policy_logits: Vec<(usize, f32)> = indices
+    let total_moves = unsafe {
+        lc0_batch_extract_all(
+            batch, count as c_int,
+            headers.as_mut_ptr(),
+            all_indices.as_mut_ptr(),
+            all_logits.as_mut_ptr(),
+        )
+    } as usize;
+    _ = total_moves;
+
+    // Unpack into per-sample results
+    let mut results = Vec::with_capacity(count);
+    let mut offset = 0;
+    for h in &headers {
+        let n = h.num_moves as usize;
+        let policy_logits: Vec<(usize, f32)> = all_indices[offset..offset + n]
             .iter()
-            .zip(logits.iter())
+            .zip(&all_logits[offset..offset + n])
             .map(|(&i, &l)| (i as usize, l))
             .collect();
 
         results.push(Lc0Result {
-            value,
-            draw,
+            value: h.value,
+            draw: h.draw,
             policy_logits,
         });
+        offset += n;
     }
 
     unsafe { lc0_free_batch(batch) };

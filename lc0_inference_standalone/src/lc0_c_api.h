@@ -25,18 +25,22 @@ int lc0_batch_add_fen(Lc0BatchHandle batch, const char* fen);
 // Run inference on the batch (blocking).
 void lc0_batch_compute(Lc0BatchHandle batch);
 
-// Get Q-value for a position (-1 to 1, from STM perspective).
-float lc0_batch_get_q(Lc0BatchHandle batch, int sample_idx);
+// Result for a single position (used by bulk extraction).
+typedef struct {
+    float value;
+    float draw;
+    int num_moves;
+} Lc0SampleHeader;
 
-// Get draw probability for a position.
-float lc0_batch_get_d(Lc0BatchHandle batch, int sample_idx);
-
-// Get number of legal moves for a position.
-int lc0_batch_get_num_moves(Lc0BatchHandle batch, int sample_idx);
-
-// Get all legal move canonical indices and logits in one call.
-// out_indices and out_logits must have space for at least lc0_batch_get_num_moves entries.
-void lc0_batch_get_moves(Lc0BatchHandle batch, int sample_idx, int* out_indices, float* out_logits);
+// Extract all results for the entire batch in one call.
+// headers: array of batch_count Lc0SampleHeader structs (written by this function)
+// out_indices: flat array for all move indices across all samples
+// out_logits: flat array for all move logits across all samples
+// Returns total number of moves written across all samples.
+// Caller must pre-allocate: sum of all num_moves (or use max_moves_per_position * batch_count).
+int lc0_batch_extract_all(Lc0BatchHandle batch, int batch_count,
+                          Lc0SampleHeader* headers,
+                          int* out_indices, float* out_logits);
 
 // Free a batch.
 void lc0_free_batch(Lc0BatchHandle batch);
