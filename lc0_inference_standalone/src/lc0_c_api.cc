@@ -38,7 +38,7 @@ struct Lc0Batch {
 
 extern "C" {
 
-Lc0Handle lc0_init(const char* weights_path, const char* backend_name, int chess960) {
+Lc0Handle lc0_init(const char* weights_path, const char* backend_name, int chess960, int batch_size) {
     try {
         std::call_once(init_flag, []() {
             InitializeMagicBitboards();
@@ -49,6 +49,9 @@ Lc0Handle lc0_init(const char* weights_path, const char* backend_name, int chess
         OptionsDict options;
         if (chess960) {
             options.Set<bool>("chess960", true);
+        }
+        if (batch_size > 0) {
+            options.Set<int>("batch", batch_size);
         }
 
         std::string backend(backend_name);

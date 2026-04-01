@@ -31,7 +31,7 @@ struct Lc0SampleHeader {
 }
 
 extern "C" {
-    fn lc0_init(weights_path: *const c_char, backend_name: *const c_char, chess960: c_int) -> Lc0HandleRaw;
+    fn lc0_init(weights_path: *const c_char, backend_name: *const c_char, chess960: c_int, batch_size: c_int) -> Lc0HandleRaw;
     #[allow(dead_code)]
     fn lc0_destroy(handle: Lc0HandleRaw);
     fn lc0_new_batch(handle: Lc0HandleRaw) -> Lc0BatchHandleRaw;
@@ -45,12 +45,12 @@ extern "C" {
 
 /// Initialize a single lc0 network. Returns a shared handle that can be
 /// used by multiple workers concurrently (one network copy on GPU).
-pub fn lc0_init_shared(network_path: &str, backend: &str, chess960: bool) -> Lc0Handle {
+pub fn lc0_init_shared(network_path: &str, backend: &str, chess960: bool, batch_size: usize) -> Lc0Handle {
     let weights = CString::new(network_path).expect("invalid network path");
     let backend_c = CString::new(backend).expect("invalid backend name");
 
     let raw = unsafe {
-        lc0_init(weights.as_ptr(), backend_c.as_ptr(), chess960 as c_int)
+        lc0_init(weights.as_ptr(), backend_c.as_ptr(), chess960 as c_int, batch_size as c_int)
     };
 
     if raw.is_null() {

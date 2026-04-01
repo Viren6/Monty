@@ -90,6 +90,7 @@ impl Lc0Coordinator {
             &self.config.network_path,
             &self.config.backend,
             self.config.chess960,
+            self.config.batch_size,
         );
 
         for _ in 0..self.config.num_workers {

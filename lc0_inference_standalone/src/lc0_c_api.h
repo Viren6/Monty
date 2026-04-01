@@ -10,7 +10,8 @@ typedef void* Lc0Handle;
 typedef void* Lc0BatchHandle;
 
 // Initialize lc0 backend. Returns NULL on failure.
-Lc0Handle lc0_init(const char* weights_path, const char* backend_name, int chess960);
+// batch_size: fixed batch size for TRT optimization. 0 or negative = variable.
+Lc0Handle lc0_init(const char* weights_path, const char* backend_name, int chess960, int batch_size);
 
 // Destroy handle and free resources.
 void lc0_destroy(Lc0Handle handle);
