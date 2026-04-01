@@ -1,6 +1,8 @@
 use std::ffi::{CString, c_char, c_float, c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 
 use super::worker::Lc0Result;
 
@@ -50,21 +52,74 @@ pub fn lc0_init_shared(network_path: &str, backend: &str, chess960: bool) -> Lc0
     Lc0Handle(raw)
 }
 
-/// FFI-based lc0 worker. Multiple workers share a single Lc0Handle
-/// (one network copy on GPU), each creating independent batch computations.
+fn run_batch(context: Lc0Handle, fens: &[String]) -> Vec<Lc0Result> {
+    let batch = unsafe { lc0_new_batch(context.raw()) };
+
+    for fen in fens {
+        let fen_c = CString::new(fen.as_str()).unwrap();
+        unsafe { lc0_batch_add_fen(batch, fen_c.as_ptr()) };
+    }
+
+    unsafe { lc0_batch_compute(batch) };
+
+    let mut results = Vec::with_capacity(fens.len());
+    for i in 0..fens.len() {
+        let idx = i as c_int;
+        let value = unsafe { lc0_batch_get_q(batch, idx) };
+        let draw = unsafe { lc0_batch_get_d(batch, idx) };
+
+        let num_moves = unsafe { lc0_batch_get_num_moves(batch, idx) } as usize;
+        let mut indices = vec![0i32; num_moves];
+        let mut logits = vec![0.0f32; num_moves];
+        unsafe {
+            lc0_batch_get_moves(batch, idx, indices.as_mut_ptr(), logits.as_mut_ptr());
+        }
+        let policy_logits: Vec<(usize, f32)> = indices
+            .iter()
+            .zip(logits.iter())
+            .map(|(&i, &l)| (i as usize, l))
+            .collect();
+
+        results.push(Lc0Result {
+            value,
+            draw,
+            policy_logits,
+        });
+    }
+
+    unsafe { lc0_free_batch(batch) };
+
+    results
+}
+
+/// FFI-based lc0 worker with a persistent background thread.
+/// Multiple workers share a single Lc0Handle (one network copy on GPU).
 pub struct Lc0FfiWorker {
-    context: Lc0Handle,
-    busy: AtomicBool,
+    work_tx: mpsc::Sender<Vec<String>>,
     result_cache: Arc<Mutex<Option<Vec<Lc0Result>>>>,
+    busy: AtomicBool,
+    _thread: JoinHandle<()>,
 }
 
 impl Lc0FfiWorker {
-    /// Create a worker that shares the given network handle.
+    /// Create a worker with a persistent thread that shares the given network handle.
     pub fn new(shared_context: Lc0Handle) -> Self {
+        let (work_tx, work_rx) = mpsc::channel::<Vec<String>>();
+        let result_cache: Arc<Mutex<Option<Vec<Lc0Result>>>> = Arc::new(Mutex::new(None));
+        let cache_clone = result_cache.clone();
+
+        let handle = thread::spawn(move || {
+            while let Ok(fens) = work_rx.recv() {
+                let results = run_batch(shared_context, &fens);
+                *cache_clone.lock().unwrap() = Some(results);
+            }
+        });
+
         Self {
-            context: shared_context,
+            work_tx,
+            result_cache,
             busy: AtomicBool::new(false),
-            result_cache: Arc::new(Mutex::new(None)),
+            _thread: handle,
         }
     }
 
@@ -80,54 +135,10 @@ impl Lc0FfiWorker {
         self.busy.store(val, Ordering::Relaxed);
     }
 
-    /// Send a batch of FENs for inference on a background thread.
-    /// Results are cached and retrievable via try_recv().
+    /// Send a batch of FENs to the persistent worker thread.
     pub fn send_batch(&self, fens: &[String]) {
         self.busy.store(true, Ordering::Relaxed);
-
-        let context = self.context;
-        let fens_owned: Vec<String> = fens.to_vec();
-        let result_cache = self.result_cache.clone();
-
-        std::thread::spawn(move || {
-            let batch = unsafe { lc0_new_batch(context.raw()) };
-
-            for fen in &fens_owned {
-                let fen_c = CString::new(fen.as_str()).unwrap();
-                unsafe { lc0_batch_add_fen(batch, fen_c.as_ptr()) };
-            }
-
-            unsafe { lc0_batch_compute(batch) };
-
-            let mut results = Vec::with_capacity(fens_owned.len());
-            for i in 0..fens_owned.len() {
-                let idx = i as c_int;
-                let value = unsafe { lc0_batch_get_q(batch, idx) };
-                let draw = unsafe { lc0_batch_get_d(batch, idx) };
-
-                let num_moves = unsafe { lc0_batch_get_num_moves(batch, idx) } as usize;
-                let mut indices = vec![0i32; num_moves];
-                let mut logits = vec![0.0f32; num_moves];
-                unsafe {
-                    lc0_batch_get_moves(batch, idx, indices.as_mut_ptr(), logits.as_mut_ptr());
-                }
-                let policy_logits: Vec<(usize, f32)> = indices
-                    .iter()
-                    .zip(logits.iter())
-                    .map(|(&i, &l)| (i as usize, l))
-                    .collect();
-
-                results.push(Lc0Result {
-                    value,
-                    draw,
-                    policy_logits,
-                });
-            }
-
-            unsafe { lc0_free_batch(batch) };
-
-            *result_cache.lock().unwrap() = Some(results);
-        });
+        let _ = self.work_tx.send(fens.to_vec());
     }
 
     pub fn try_recv(&self) -> Option<Vec<Lc0Result>> {
@@ -135,6 +146,6 @@ impl Lc0FfiWorker {
     }
 
     pub fn kill(&self) {
-        // No-op for FFI
+        // Thread exits when work_tx is dropped
     }
 }
