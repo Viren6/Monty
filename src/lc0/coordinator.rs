@@ -270,6 +270,7 @@ fn apply_results(
     actual_count: usize,
     value_weight: u64,
 ) -> usize {
+    let root_ptr = tree.root_node();
     let mut applied = 0;
 
     for i in 0..actual_count.min(results.len()).min(node_ptrs.len()) {
@@ -323,12 +324,13 @@ fn apply_results(
             continue;
         }
 
-        // Softmax
+        // Softmax (with temperature 1.5 at root to broaden exploration)
+        let temperature = if ptr == root_ptr { 1.5 } else { 1.0 };
         let mut sum_exp = 0.0f32;
         let mut probs = vec![0.0f32; num_actions];
         for (action, logit) in child_logits.iter().enumerate() {
             if *logit > f32::NEG_INFINITY {
-                let p = (*logit - max_logit).exp();
+                let p = ((*logit - max_logit) / temperature).exp();
                 probs[action] = p;
                 sum_exp += p;
             }
